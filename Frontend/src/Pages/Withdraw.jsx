@@ -19,16 +19,20 @@ const Withdraw = () => {
   const [amount, setAmount] = useState('');
   const [upiId, setUpiId] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
+  const [confirmAccountNumber, setConfirmAccountNumber] = useState(''); // NEW
   const [ifscCode, setIfscCode] = useState('');
   const [bankName, setBankName] = useState('');
-  const [method, setMethod] = useState('upi'); // 'upi' or 'bank'
+  const [method, setMethod] = useState('upi');
 
-  const [loading, setLoading] = useState(true); // Combined loading state
-  const [submitLoading, setSubmitLoading] = useState(false); // For withdrawal submission
+  const [loading, setLoading] = useState(true);
+  const [submitLoading, setSubmitLoading] = useState(false);
   const [error, setError] = useState('');
   const [winningMoney, setWinningMoney] = useState(0);
-
   const [withdrawals, setWithdrawals] = useState([]);
+
+  // Account number match status
+  const accountsMatch = accountNumber && confirmAccountNumber && accountNumber === confirmAccountNumber;
+  const accountsMismatch = accountNumber && confirmAccountNumber && accountNumber !== confirmAccountNumber;
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -72,54 +76,44 @@ const Withdraw = () => {
 
   useEffect(() => {
     if (!user) {
-        setWithdrawals([]);
-        return;
+      setWithdrawals([]);
+      return;
     }
 
     const q = query(
-        collection(db, "withdrawals"),
-        where("userId", "==", user.uid),
-        limit(20) // Fetch a larger batch to ensure we get recent ones
+      collection(db, "withdrawals"),
+      where("userId", "==", user.uid),
+      limit(20)
     );
 
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
-        const now = new Date();
-        const fetchedWithdrawals = querySnapshot.docs
-            .map(doc => ({
-                ...doc.data(),
-                id: doc.id
-            }))
-            // Sort client-side to avoid requiring a Firestore composite index
-            .sort((a, b) => {
-                const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt);
-                const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt);
-                return dateB - dateA;
-            })
-            .filter(w => {
-                // Safely handle both Timestamp and Date objects
-                let createdAtDate = null;
-                if (w.createdAt?.toDate) {
-                    createdAtDate = w.createdAt.toDate();
-                } else if (w.createdAt instanceof Date) {
-                    createdAtDate = w.createdAt;
-                } else if (typeof w.createdAt === 'string') {
-                    createdAtDate = new Date(w.createdAt);
-                }
+      const now = new Date();
+      const fetchedWithdrawals = querySnapshot.docs
+        .map(doc => ({ ...doc.data(), id: doc.id }))
+        .sort((a, b) => {
+          const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt);
+          const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt);
+          return dateB - dateA;
+        })
+        .filter(w => {
+          let createdAtDate = null;
+          if (w.createdAt?.toDate) createdAtDate = w.createdAt.toDate();
+          else if (w.createdAt instanceof Date) createdAtDate = w.createdAt;
+          else if (typeof w.createdAt === 'string') createdAtDate = new Date(w.createdAt);
 
-                if (!createdAtDate) return w.status === 'pending';
-
-                const diffInHours = (now - createdAtDate) / (1000 * 60 * 60);
-                return w.status === 'pending' || diffInHours < 24;
-            })
-            .slice(0, 5); // Only show the latest 5 after sorting and filtering
-        setWithdrawals(fetchedWithdrawals);
+          if (!createdAtDate) return w.status === 'pending';
+          const diffInHours = (now - createdAtDate) / (1000 * 60 * 60);
+          return w.status === 'pending' || diffInHours < 24;
+        })
+        .slice(0, 5);
+      setWithdrawals(fetchedWithdrawals);
     }, (err) => {
-        console.error("Error fetching withdrawals:", err);
-        if (err.code === 'failed-precondition') {
-            toast.error("Query index missing. Check console for link to create it.");
-        } else {
-            toast.error("Could not load recent withdrawals.");
-        }
+      console.error("Error fetching withdrawals:", err);
+      if (err.code === 'failed-precondition') {
+        toast.error("Query index missing. Check console for link to create it.");
+      } else {
+        toast.error("Could not load recent withdrawals.");
+      }
     });
 
     return () => unsubscribe();
@@ -128,6 +122,23 @@ const Withdraw = () => {
   const validateUPI = (upi) => {
     const upiRegex = /^[\w.-]+@[\w.-]+$/;
     return upiRegex.test(upi);
+  };
+
+  const validateIFSC = (ifsc) => {
+    const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+    return ifscRegex.test(ifsc.toUpperCase());
+  };
+
+  const handleAccountNumberChange = (e) => {
+    // Only allow numbers
+    const val = e.target.value.replace(/\D/g, '');
+    setAccountNumber(val);
+  };
+
+  const handleConfirmAccountNumberChange = (e) => {
+    // Only allow numbers
+    const val = e.target.value.replace(/\D/g, '');
+    setConfirmAccountNumber(val);
   };
 
   const handleSubmit = async (e) => {
@@ -141,12 +152,12 @@ const Withdraw = () => {
     }
 
     if (withdrawalAmount > winningMoney) {
-        toast.error('Insufficient winning money.');
-        return;
+      toast.error('Insufficient winning money.');
+      return;
     }
     if (withdrawalAmount < 200) {
-        toast.error('Minimum withdrawal amount is ₹200.');
-        return;
+      toast.error('Minimum withdrawal amount is ₹200.');
+      return;
     }
 
     if (method === 'upi' && !validateUPI(upiId)) {
@@ -154,9 +165,23 @@ const Withdraw = () => {
       return;
     }
 
-    if (method === 'bank' && (!accountNumber || !ifscCode || !bankName)) {
-      toast.error('Please fill in all bank details.');
-      return;
+    if (method === 'bank') {
+      if (!accountNumber || !confirmAccountNumber || !ifscCode || !bankName) {
+        toast.error('Please fill in all bank details.');
+        return;
+      }
+
+      // Account number match check
+      if (accountNumber !== confirmAccountNumber) {
+        toast.error('Account numbers do not match! Please check and try again.');
+        return;
+      }
+
+      // IFSC validation
+      if (!validateIFSC(ifscCode)) {
+        toast.error('Invalid IFSC Code format (e.g., SBIN0001234).');
+        return;
+      }
     }
 
     if (!user) {
@@ -182,10 +207,8 @@ const Withdraw = () => {
           throw new Error("Insufficient winning money for withdrawal.");
         }
 
-        // Deduct winning money
         transaction.update(userRef, { winningMoney: currentWinningMoney - withdrawalAmount });
 
-        // Record withdrawal request
         const withdrawalsCollectionRef = collection(db, 'withdrawals');
         transaction.set(doc(withdrawalsCollectionRef), {
           userId: user.uid,
@@ -194,17 +217,18 @@ const Withdraw = () => {
           method,
           upiId: method === 'upi' ? upiId : '',
           accountNumber: method === 'bank' ? accountNumber : '',
-          ifscCode: method === 'bank' ? ifscCode : '',
+          ifscCode: method === 'bank' ? ifscCode.toUpperCase() : '',
           bankName: method === 'bank' ? bankName : '',
           status: 'pending',
           createdAt: new Date(),
         });
       });
-      
+
       toast.success('Withdrawal request submitted successfully!');
       setAmount('');
       setUpiId('');
       setAccountNumber('');
+      setConfirmAccountNumber('');
       setIfscCode('');
       setBankName('');
     } catch (err) {
@@ -238,8 +262,8 @@ const Withdraw = () => {
       ) : (
         <main className="max-w-6xl mx-auto w-full pt-4">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-            
-            {/* Withdrawal Form - Left side on PC */}
+
+            {/* Withdrawal Form */}
             <div className="lg:col-span-7 xl:col-span-8 order-1">
               <div className="bg-[#0a2d55] rounded-xl p-6 lg:p-10 shadow-lg space-y-6 border border-white/5">
                 <div className="text-center lg:text-left mb-4">
@@ -291,39 +315,88 @@ const Withdraw = () => {
 
                   {method === 'bank' && (
                     <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      
+                      {/* Account Number */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-300 mb-2">Bank Account Number</label>
                         <input
                           type="text"
-                          placeholder="Bank Account Number"
+                          inputMode="numeric"
+                          placeholder="Enter Account Number"
                           value={accountNumber}
-                          onChange={(e) => setAccountNumber(e.target.value)}
-                          required={method === 'bank'}
-                          className="w-full bg-[#042346] border border-gray-600 px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 text-white"
-                        />
-                        <input
-                          type="text"
-                          placeholder="IFSC Code"
-                          value={ifscCode}
-                          onChange={(e) => setIfscCode(e.target.value)}
+                          onChange={handleAccountNumberChange}
                           required={method === 'bank'}
                           className="w-full bg-[#042346] border border-gray-600 px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 text-white"
                         />
                       </div>
-                      <input
-                        type="text"
-                        placeholder="Bank Name"
-                        value={bankName}
-                        onChange={(e) => setBankName(e.target.value)}
-                        required={method === 'bank'}
-                        className="w-full bg-[#042346] border border-gray-600 px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 text-white"
-                      />
+
+                      {/* Confirm Account Number */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                          Confirm Account Number
+                          {accountsMatch && (
+                            <span className="ml-2 text-green-400 text-xs font-semibold">✓ Match</span>
+                          )}
+                          {accountsMismatch && (
+                            <span className="ml-2 text-red-400 text-xs font-semibold">✗ Not Matching</span>
+                          )}
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="Re-enter Account Number"
+                          value={confirmAccountNumber}
+                          onChange={handleConfirmAccountNumberChange}
+                          required={method === 'bank'}
+                          onPaste={(e) => e.preventDefault()} // Prevent paste for security
+                          className={`w-full bg-[#042346] border px-4 py-3 rounded-lg focus:outline-none focus:ring-2 text-white transition-colors ${
+                            accountsMatch
+                              ? 'border-green-500 focus:ring-green-500'
+                              : accountsMismatch
+                              ? 'border-red-500 focus:ring-red-500'
+                              : 'border-gray-600 focus:ring-yellow-500'
+                          }`}
+                        />
+                        {accountsMismatch && (
+                          <p className="text-red-400 text-xs mt-1">⚠️ Account numbers do not match!</p>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* IFSC Code */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-300 mb-2">IFSC Code</label>
+                          <input
+                            type="text"
+                            placeholder="e.g., SBIN0001234"
+                            value={ifscCode}
+                            onChange={(e) => setIfscCode(e.target.value.toUpperCase())}
+                            required={method === 'bank'}
+                            maxLength={11}
+                            className="w-full bg-[#042346] border border-gray-600 px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 text-white uppercase"
+                          />
+                        </div>
+
+                        {/* Bank Name */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-300 mb-2">Bank Name</label>
+                          <input
+                            type="text"
+                            placeholder="e.g., State Bank of India"
+                            value={bankName}
+                            onChange={(e) => setBankName(e.target.value)}
+                            required={method === 'bank'}
+                            className="w-full bg-[#042346] border border-gray-600 px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 text-white"
+                          />
+                        </div>
+                      </div>
                     </div>
                   )}
 
                   <button
                     type="submit"
-                    disabled={submitLoading}
-                    className="w-full bg-yellow-500 text-black font-bold py-4 rounded-lg hover:bg-yellow-600 transition-all text-lg shadow-lg shadow-yellow-500/20 disabled:bg-gray-500"
+                    disabled={submitLoading || (method === 'bank' && accountsMismatch)}
+                    className="w-full bg-yellow-500 text-black font-bold py-4 rounded-lg hover:bg-yellow-600 transition-all text-lg shadow-lg shadow-yellow-500/20 disabled:bg-gray-500 disabled:cursor-not-allowed"
                   >
                     {submitLoading ? 'Processing...' : 'Request Withdrawal'}
                   </button>
@@ -331,7 +404,7 @@ const Withdraw = () => {
               </div>
             </div>
 
-            {/* Recent Withdrawals - Sidebar on PC, Bottom on Mobile */}
+            {/* Recent Withdrawals */}
             <div className="lg:col-span-5 xl:col-span-4 order-2 space-y-4">
               {withdrawals.length > 0 ? (
                 <>
@@ -345,8 +418,8 @@ const Withdraw = () => {
                             <p className="text-[10px] text-gray-400">{w.createdAt?.toDate().toLocaleString()}</p>
                           </div>
                           <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
-                            w.status === 'approved' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 
-                            w.status === 'rejected' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 
+                            w.status === 'approved' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
+                            w.status === 'rejected' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
                             'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
                           }`}>
                             {w.status}
@@ -372,7 +445,7 @@ const Withdraw = () => {
         </main>
       )}
       <div className="mt-8">
-        <SocialButtons/>
+        <SocialButtons />
       </div>
     </div>
   );
