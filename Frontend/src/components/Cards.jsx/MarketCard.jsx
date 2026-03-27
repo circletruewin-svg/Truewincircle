@@ -1,17 +1,16 @@
 import React, { useState, useEffect } from "react";
 import HarufGrid from "../../Pages/Haruf";
-import { Play, BarChart2, X } from "lucide-react";
+import { Play, X } from "lucide-react";
 import ResultChart from "../ResultChart";
 import { db } from "../../firebase";
 import { collection, query, where, doc, onSnapshot } from "firebase/firestore";
 import { toast } from "react-toastify";
 import { markets } from "../../marketData";
 
-// 🔥 FIXED: format function (avoid double AM/PM)
+// ✅ TIME FORMAT FIX
 const formatTime12h = (timeString) => {
   if (!timeString || timeString === "..") return "..";
 
-  // अगर already AM/PM है → direct return
   if (timeString.includes("AM") || timeString.includes("PM")) {
     return timeString;
   }
@@ -97,9 +96,7 @@ const MarketCard = ({ marketName }) => {
     if (isMarketOpen) {
       setOpen(true);
     } else {
-      toast.info(
-        `Betting closed. Opens at ${formatTime12h(openTime)}`
-      );
+      toast.info(`Betting closed. Opens at ${formatTime12h(openTime)}`);
     }
   };
 
@@ -169,38 +166,30 @@ const MarketCard = ({ marketName }) => {
             {isMarketOpen ? "Market is Running" : "Market Closed"}
           </p>
 
-          {/* 🔥 RED ANIMATED BARS */}
-          <div className="flex gap-1 items-end mt-2">
-            <div className="w-1 h-6 bg-red-500 animate-bounce"></div>
-            <div className="w-1 h-8 bg-red-500 animate-bounce delay-150"></div>
-            <div className="w-1 h-5 bg-red-500 animate-bounce delay-300"></div>
-          </div>
-
-          <p
+          {/* ✅ CLICKABLE ANIMATED BARS */}
+          <div
             onClick={(e) => {
               e.stopPropagation();
               setShowChart(true);
             }}
-            className="text-xs text-gray-500 cursor-pointer hover:text-blue-600"
+            className="flex flex-col items-center cursor-pointer group mt-2"
           >
-            Past Result
-          </p>
+            <div className="flex gap-1 items-end">
+              <div className="w-1 h-6 bg-red-500 animate-bounce"></div>
+              <div className="w-1 h-8 bg-red-500 animate-bounce delay-150"></div>
+              <div className="w-1 h-5 bg-red-500 animate-bounce delay-300"></div>
+            </div>
 
-          {/* ACTIONS */}
-          <div className="flex justify-between w-full px-3 mt-2">
+            <span className="text-xs text-gray-500 mt-1 group-hover:text-blue-600">
+              Past Result
+            </span>
+          </div>
 
-            <BarChart2
-              size={30}
-              className="text-red-500 cursor-pointer"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowChart(true);
-              }}
-            />
-
+          {/* PLAY BUTTON */}
+          <div className="flex justify-end w-full px-3 mt-2">
             <div className="flex flex-col items-center">
               <button
-                className="bg-[#042346] p-3 rounded-full hover:bg-yellow-600"
+                className="bg-[#042346] p-3 rounded-full hover:bg-yellow-600 transition"
                 onClick={(e) => {
                   e.stopPropagation();
                   handleCardClick();
