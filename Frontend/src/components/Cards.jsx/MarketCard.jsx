@@ -154,39 +154,41 @@ const MarketCard = ({ marketName }) => {
         </div>
 
         {/* BODY */}
-        <div className="flex flex-col items-center py-4 px-3 gap-2">
+        <div className="py-4 px-3">
 
           {/* RESULT */}
-          <div className="text-red-600 font-bold text-lg">
+          <div className="text-center text-red-600 font-bold text-lg">
             {loading ? "..." : `{ ${yesterdayResult} } → [ ${todayResult} ]`}
           </div>
 
           {/* STATUS */}
-          <p className={`${isMarketOpen ? "text-green-600" : "text-red-600"} font-semibold text-sm`}>
+          <p className={`${isMarketOpen ? "text-green-600" : "text-red-600"} font-semibold text-sm text-center`}>
             {isMarketOpen ? "Market is Running" : "Market Closed"}
           </p>
 
-          {/* ✅ CLICKABLE ANIMATED BARS */}
-          <div
-            onClick={(e) => {
-              e.stopPropagation();
-              setShowChart(true);
-            }}
-            className="flex flex-col items-center cursor-pointer group mt-2"
-          >
-            <div className="flex gap-1 items-end">
-              <div className="w-1 h-6 bg-red-500 animate-bounce"></div>
-              <div className="w-1 h-8 bg-red-500 animate-bounce delay-150"></div>
-              <div className="w-1 h-5 bg-red-500 animate-bounce delay-300"></div>
+          {/* 🔥 LEFT + RIGHT LAYOUT */}
+          <div className="flex justify-between items-center w-full px-3 mt-4">
+
+            {/* LEFT: Animated Bars */}
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowChart(true);
+              }}
+              className="flex flex-col items-center cursor-pointer group"
+            >
+              <div className="flex gap-1 items-end">
+                <div className="w-1 h-6 bg-red-500 animate-bounce"></div>
+                <div className="w-1 h-8 bg-red-500 animate-bounce delay-150"></div>
+                <div className="w-1 h-5 bg-red-500 animate-bounce delay-300"></div>
+              </div>
+
+              <span className="text-xs text-gray-500 mt-1 group-hover:text-blue-600">
+                Past Result
+              </span>
             </div>
 
-            <span className="text-xs text-gray-500 mt-1 group-hover:text-blue-600">
-              Past Result
-            </span>
-          </div>
-
-          {/* PLAY BUTTON */}
-          <div className="flex justify-end w-full px-3 mt-2">
+            {/* RIGHT: Play Button */}
             <div className="flex flex-col items-center">
               <button
                 className="bg-[#042346] p-3 rounded-full hover:bg-yellow-600 transition"
@@ -199,13 +201,15 @@ const MarketCard = ({ marketName }) => {
               </button>
               <span className="text-xs text-gray-500 mt-1">Play Now</span>
             </div>
+
           </div>
 
           {/* TIME */}
-          <div className="flex justify-between w-full text-sm mt-3">
+          <div className="flex justify-between w-full text-sm mt-4 px-2">
             <p><b>Open:</b> {formatTime12h(openTime)}</p>
             <p><b>Close:</b> {formatTime12h(closeTime)}</p>
           </div>
+
         </div>
       </div>
     </div>
