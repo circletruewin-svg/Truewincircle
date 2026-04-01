@@ -1,6 +1,4 @@
-// ═══════════════════════════════════════════════
-// DragonTiger.jsx — Auto House Edge Version
-// ═══════════════════════════════════════════════
+// ════════════════ DragonTiger.jsx ════════════════
 import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
 import { doc, onSnapshot, updateDoc, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
@@ -8,62 +6,70 @@ import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getBiasedWinner } from "../utils/houseEdge";
 
-const SUITS = ["♠","♥","♦","♣"];
-const RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
-const RANK_VALS = {A:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,J:11,Q:12,K:13};
-const rnd = () => { const r=RANKS[~~(Math.random()*13)]; return {suit:SUITS[~~(Math.random()*4)],rank:r,val:RANK_VALS[r]}; };
+const SUITS=["♠","♥","♦","♣"],RANKS=["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+const RANK_VALS={A:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,J:11,Q:12,K:13};
+const rnd=()=>{const r=RANKS[~~(Math.random()*13)];return{suit:SUITS[~~(Math.random()*4)],rank:r,val:RANK_VALS[r]};};
 
-function BigCard({ card, hidden, side }) {
-  const red = card?.suit === "♥" || card?.suit === "♦";
-  const glow = side === "dragon" ? "border-red-500 shadow-red-900" : "border-blue-500 shadow-blue-900";
-  return (
+function BigCard({card,hidden,side}){
+  const red=card?.suit==="♥"||card?.suit==="♦";
+  return(
     <div className={`w-24 h-36 rounded-2xl border-4 flex flex-col items-center justify-center shadow-xl
-      ${hidden ? `bg-indigo-900 ${glow}` : `bg-white ${glow}`}`}>
-      {hidden ? <span className="text-5xl">🂠</span> :
+      ${hidden?"bg-indigo-900 border-indigo-500":"bg-white"}
+      ${side==="dragon"?"border-red-500":"border-blue-500"}`}>
+      {hidden?<span className="text-5xl">🂠</span>:
         <><div className={`text-3xl font-black ${red?"text-red-600":"text-gray-900"}`}>{card?.rank}</div>
           <div className={`text-5xl ${red?"text-red-600":"text-gray-900"}`}>{card?.suit}</div></>}
     </div>
   );
 }
 
-const ROUND_SEC = 12;
+const ROUND_SEC=12;
 
-export function DragonTiger() {
-  const auth = getAuth();
-  const user = auth.currentUser;
-  const [balance,setBalance]=useState(0);
-  const [betAmount,setBetAmount]=useState("");
-  const [betSide,setBetSide]=useState(null);
-  const [phase,setPhase]=useState("betting");
-  const [dc,setDc]=useState(null);
-  const [tc,setTc]=useState(null);
-  const [winner,setWinner]=useState(null);
-  const [msg,setMsg]=useState("");
-  const [history,setHistory]=useState([]);
-  const [timeLeft,setTimeLeft]=useState(ROUND_SEC);
-  const [revealed,setRevealed]=useState(false);
-
+export default function DragonTiger(){
+  const auth=getAuth(),user=auth.currentUser;
+  const[balance,setBalance]=useState(0);
+  const[betAmount,setBetAmount]=useState("");
+  const[betSide,setBetSide]=useState(null);
+  const[phase,setPhase]=useState("betting");
+  const[dc,setDc]=useState(null);
+  const[tc,setTc]=useState(null);
+  const[winner,setWinner]=useState(null);
+  const[msg,setMsg]=useState("");
+  const[history,setHistory]=useState([]);
+  const[timeLeft,setTimeLeft]=useState(ROUND_SEC);
+  const[revealed,setRevealed]=useState(false);
   const bsRef=useRef(null),baRef=useRef(null),hbRef=useRef(false),blRef=useRef(0),timerRef=useRef(null);
+
   useEffect(()=>{bsRef.current=betSide;},[betSide]);
   useEffect(()=>{blRef.current=balance;},[balance]);
 
-  useEffect(()=>{ if(!user)return; return onSnapshot(doc(db,"users",user.uid),(s)=>{ if(s.exists())setBalance(s.data().walletBalance||0); }); },[user]);
-  useEffect(()=>{ return onSnapshot(query(collection(db,"dtHistory"),orderBy("createdAt","desc"),limit(15)),(s)=>setHistory(s.docs.map(d=>d.data()))); },[]);
-  useEffect(()=>{ startRound(); return ()=>clearInterval(timerRef.current); },[]);
+  useEffect(()=>{
+    if(!user)return;
+    return onSnapshot(doc(db,"users",user.uid),(s)=>{
+      if(s.exists()){const d=s.data();const b=d.balance??d.walletBalance??0;setBalance(b);blRef.current=b;}
+    });
+  },[user]);
+
+  useEffect(()=>{
+    return onSnapshot(query(collection(db,"dtHistory"),orderBy("createdAt","desc"),limit(15)),
+      (s)=>setHistory(s.docs.map(d=>d.data())));
+  },[]);
+
+  useEffect(()=>{startRound();return()=>clearInterval(timerRef.current);},[]);
 
   const startRound=()=>{
+    clearInterval(timerRef.current);
     setPhase("betting");setBetSide(null);bsRef.current=null;baRef.current=null;hbRef.current=false;
     setWinner(null);setMsg("");setRevealed(false);setDc(null);setTc(null);setTimeLeft(ROUND_SEC);
     let t=ROUND_SEC;
-    timerRef.current=setInterval(()=>{ t--;setTimeLeft(t); if(t<=0){clearInterval(timerRef.current);dealRound();} },1000);
+    timerRef.current=setInterval(()=>{t--;setTimeLeft(t);if(t<=0){clearInterval(timerRef.current);dealRound();}},1000);
   };
 
   const dealRound=async()=>{
     setPhase("dealing");
-    const d=rnd(),t=rnd(); setDc(d);setTc(t);
+    const d=rnd(),t=rnd();setDc(d);setTc(t);
     const userBet=bsRef.current;
-    const w=userBet ? getBiasedWinner(userBet,["dragon","tiger","tie"]) : ["dragon","tiger"][~~(Math.random()*2)];
-
+    const w=userBet?getBiasedWinner(userBet,["dragon","tiger","tie"]):["dragon","tiger"][~~(Math.random()*2)];
     setTimeout(async()=>{
       setRevealed(true);setWinner(w);setPhase("result");
       if(hbRef.current&&userBet){
@@ -71,11 +77,9 @@ export function DragonTiger() {
         const mult=userBet==="tie"?8:1.9;
         const winAmt=won?parseFloat((amt*mult).toFixed(2)):0;
         won?setMsg(`🎉 ${w.toUpperCase()} wins! +₹${winAmt}`):setMsg(`😞 ${w.toUpperCase()} wins. Lost ₹${amt}`);
-        if(won) await updateDoc(doc(db,"users",user.uid),{walletBalance:blRef.current+winAmt});
+        if(won)await updateDoc(doc(db,"users",user.uid),{balance:blRef.current+winAmt});
         await addDoc(collection(db,"dtHistory"),{userId:user.uid,betSide:userBet,winner:w,betAmount:amt,won,createdAt:serverTimestamp()});
-      } else {
-        await addDoc(collection(db,"dtHistory"),{winner:w,createdAt:serverTimestamp()});
-      }
+      }else{await addDoc(collection(db,"dtHistory"),{winner:w,createdAt:serverTimestamp()});}
       setTimeout(()=>startRound(),4000);
     },2000);
   };
@@ -83,19 +87,19 @@ export function DragonTiger() {
   const placeBet=async(side)=>{
     const amt=parseFloat(betAmount);
     if(!amt||amt<10)return setMsg("Min bet ₹10");
-    if(amt>blRef.current)return setMsg("Insufficient balance");
+    if(amt>blRef.current)return setMsg("Insufficient balance ❌");
     if(phase!=="betting"||hbRef.current)return;
     setBetSide(side);bsRef.current=side;baRef.current=amt;hbRef.current=true;
-    await updateDoc(doc(db,"users",user.uid),{walletBalance:balance-amt});
     setMsg(`✅ Bet ₹${amt} on ${side.toUpperCase()}!`);
+    await updateDoc(doc(db,"users",user.uid),{balance:blRef.current-amt});
   };
 
-  return (
+  return(
     <div className="min-h-screen bg-[#0d1117] text-white">
-      <Navbar />
+      <Navbar/>
       <div className="max-w-lg mx-auto px-4 pb-8">
         <h1 className="text-2xl font-black text-center py-4">🐉 DRAGON <span className="text-gray-500">vs</span> 🐯 TIGER</h1>
-        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3 scrollbar-hide">
+        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3">
           {history.map((h,i)=>(
             <span key={i} className={`w-7 h-7 rounded-full text-xs font-bold flex items-center justify-center flex-shrink-0
               ${h.winner==="dragon"?"bg-red-700":h.winner==="tiger"?"bg-blue-700":"bg-green-700"}`}>
@@ -126,7 +130,7 @@ export function DragonTiger() {
             ))}
           </div>
           <div className="grid grid-cols-3 gap-2">
-            {[{s:"dragon",l:"🐉 Dragon",c:"bg-red-700 hover:bg-red-600"},{s:"tiger",l:"🐯 Tiger",c:"bg-blue-700 hover:bg-blue-600"},{s:"tie",l:"🤝 Tie 8x",c:"bg-green-700 hover:bg-green-600"}].map(({s,l,c})=>(
+            {[{s:"dragon",l:"🐉 Dragon",c:"bg-red-700"},{s:"tiger",l:"🐯 Tiger",c:"bg-blue-700"},{s:"tie",l:"🤝 Tie 8x",c:"bg-green-700"}].map(({s,l,c})=>(
               <button key={s} onClick={()=>placeBet(s)} disabled={phase!=="betting"||hbRef.current}
                 className={`${c} ${betSide===s?"ring-2 ring-yellow-400":""} rounded-xl py-2.5 text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed`}>
                 {l}{betSide===s?" ✅":""}
@@ -138,5 +142,3 @@ export function DragonTiger() {
     </div>
   );
 }
-
-export default DragonTiger;
