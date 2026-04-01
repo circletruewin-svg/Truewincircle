@@ -19,7 +19,6 @@ import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import Withdraw from './Pages/Withdraw';
 import AdminDashboard from './Admin/Admin';
-
 import AdminRoute from './Admin/AdminRoute';
 import Spinner from './components/Loader';
 import Profile from './Pages/Profile';
@@ -32,17 +31,22 @@ import PhoneSignIn from './Pages/PhoneSignIn';
 import GameSummary from './Admin/components/ProfitLoss';
 import Referrals from './Pages/Referrals';
 
+import Aviator from './Pages/Aviator';
+import TeenPatti from './Pages/TeenPatti';
+import DragonTiger from './Pages/DragonTiger';
+import AndarBahar from './Pages/AndarBahar';
+import ColorPrediction from './Pages/ColorPrediction';
+import CoinFlip from './Pages/CoinFlip';
+import DiceRoll from './Pages/DiceRoll';
+
 const AppContent = () => {
   const location = useLocation();
-  // The Navbar will not be shown on the /Admin route
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const showNavbar = location.pathname.toLowerCase() !== '/admin';
 
   useEffect(() => {
-    if (user && user.role === 'admin') {
-      navigate('/Admin');
-    }
+    if (user && user.role === 'admin') navigate('/Admin');
   }, [user, navigate]);
 
   return (
@@ -60,10 +64,8 @@ const AppContent = () => {
         pauseOnHover
         theme="dark"
       />
-    
-    
-        <Routes>
-          <Route path="/" element={<Home />} />
+      <Routes>
+        <Route path="/" element={<Home />} />
         <Route path="/spinwheel" element={<SpinWheel />} />
         <Route path="/fixnumber" element={<FixNumber />} />
         <Route path="/wingame" element={<WinGame />} />
@@ -77,19 +79,23 @@ const AppContent = () => {
         <Route path="/Wallet" element={<MyWallet />} />
         <Route path="/Support" element={<Support />} />
         <Route path="/History" element={<History />} />
-        <Route path="/Privacy" element={<PrivacyPolicy/>} />
-        <Route path="/Profile" element={<ProfileCard />} />
-        <Route path="/p" element={<GameSummary />} />
+        <Route path="/Privacy" element={<PrivacyPolicy />} />
         <Route path="/p" element={<GameSummary />} />
         <Route path="/refer" element={<Referrals />} />
         <Route path="/BettingHistory" element={<BettingHistory />} />
         <Route path="/Admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
-        {/*  */}
+
+        <Route path="/aviator" element={<Aviator />} />
+        <Route path="/teen-patti" element={<TeenPatti />} />
+        <Route path="/dragon-tiger" element={<DragonTiger />} />
+        <Route path="/andar-bahar" element={<AndarBahar />} />
+        <Route path="/color-prediction" element={<ColorPrediction />} />
+        <Route path="/coin-flip" element={<CoinFlip />} />
+        <Route path="/dice-roll" element={<DiceRoll />} />
       </Routes>
-    
     </>
   );
-}
+};
 
 const App = () => {
   const { login, user } = useAuthStore();
@@ -109,9 +115,8 @@ const App = () => {
       } else {
         login(null);
       }
-      setLoadingAuth(false); // Auth state determined
+      setLoadingAuth(false);
     });
-
     return () => unsubscribe();
   }, [auth, login]);
 
