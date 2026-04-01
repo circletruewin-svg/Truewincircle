@@ -17,10 +17,11 @@ import {
   Menu,
   Link as LinkIcon,
   TrendingUp,
-  UserPlus, // Added
+  UserPlus,
+  Gamepad2,
 } from 'lucide-react';
 import { db, auth } from '../firebase';
-import { collection, query, onSnapshot, doc, runTransaction, getDocs, getDoc, where, deleteDoc, updateDoc, addDoc } from 'firebase/firestore'; // Added getDoc
+import { collection, query, onSnapshot, doc, runTransaction, getDocs, getDoc, where, deleteDoc, updateDoc, addDoc } from 'firebase/firestore';
 import useAuthStore from '../store/authStore';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -28,7 +29,6 @@ import 'react-toastify/dist/ReactToastify.css';
 // Component Imports
 import AllUsers from './components/AllUsers';
 import BarCodeUpdate from './components/BarCodeUpdate';
-
 import Bets from './components/Bets';
 import DashboardView from './components/DashboardView';
 import Links from './components/Links';
@@ -41,7 +41,9 @@ import WithdrawApproval from './components/WithdrawApproval';
 import ReferralComponent from './components/Refferal';
 import Table from './components/Table';
 
-
+// ── NEW: Games Stats ──────────────────────────────────────────────
+import GamesStats from './components/GamesStats';
+// ─────────────────────────────────────────────────────────────────
 
 
 const AdminDashboard = () => {
@@ -50,10 +52,10 @@ const AdminDashboard = () => {
   
   const [truewinUserMap, setTruewinUserMap] = useState({});
   const [payments, setPayments] = useState([]);
-  const [allPayments, setAllPayments] = useState([]); // New state for all payments
+  const [allPayments, setAllPayments] = useState([]);
   const [withdrawals, setWithdrawals] = useState([]);
-  const [allWithdrawals, setAllWithdrawals] = useState([]); // New state for all withdrawals
-  const [winners, setWinners] = useState([ // Sample data
+  const [allWithdrawals, setAllWithdrawals] = useState([]);
+  const [winners, setWinners] = useState([
     { id: 1, user: 'Alice Brown', prize: 'iPhone 15', status: 'announced', date: '2024-01-15' },
     { id: 2, user: 'Bob Wilson', prize: 'Cash Prize ₹10000', status: 'pending', date: '2024-01-16' },
     { id: 3, user: 'Carol Davis', prize: 'Laptop', status: 'announced', date: '2024-01-17' }
@@ -68,27 +70,35 @@ const AdminDashboard = () => {
   useEffect(() => {
     if (!isAdmin) return;
 
-    // Fetch all truewin users and build a map for quick lookup
     const truewinUsersQuery = query(collection(db, 'users'), where('appName', '==', 'truewin'));
     const unsubscribeTruewinUsers = onSnapshot(truewinUsersQuery, (snapshot) => {
       const newTruewinUserMap = {};
       snapshot.docs.forEach(d => {
-        newTruewinUserMap[d.id] = true; // Use a boolean for existence check
+        newTruewinUserMap[d.id] = true;
       });
       setTruewinUserMap(newTruewinUserMap);
-      setTotalUsers(snapshot.size); // This is now directly the count of truewin users
-      console.log("Truewin User Map:", newTruewinUserMap); // Debug log
+      setTotalUsers(snapshot.size);
     });
 
     const paymentsQuery = query(collection(db, 'top-ups'));
     const unsubscribePayments = onSnapshot(paymentsQuery, (snapshot) => {
-      const fetchedPayments = snapshot.docs.map(d => ({ id: d.id, ...d.data(), date: d.data().createdAt ? new Date(d.data().createdAt).toLocaleDateString() : 'N/A', userId: d.data().userId }));
+      const fetchedPayments = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data(),
+        date: d.data().createdAt ? new Date(d.data().createdAt).toLocaleDateString() : 'N/A',
+        userId: d.data().userId
+      }));
       setAllPayments(fetchedPayments);
     });
 
     const withdrawalsQuery = query(collection(db, 'withdrawals'));
     const unsubscribeWithdrawals = onSnapshot(withdrawalsQuery, (snapshot) => {
-      const fetchedWithdrawals = snapshot.docs.map(d => ({ id: d.id, ...d.data(), date: d.data().createdAt ? new Date(d.data().createdAt).toLocaleDateString() : 'N/A', userId: d.data().userId }));
+      const fetchedWithdrawals = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data(),
+        date: d.data().createdAt ? new Date(d.data().createdAt).toLocaleDateString() : 'N/A',
+        userId: d.data().userId
+      }));
       setAllWithdrawals(fetchedWithdrawals);
     });
 
@@ -109,39 +119,28 @@ const AdminDashboard = () => {
 
     const truewinPayments = allPayments.filter(p => truewinUserMap[p.userId]);
     setPayments(truewinPayments);
-    console.log("Truewin Payments:", truewinPayments); // Debug log
 
     const truewinWithdrawals = allWithdrawals.filter(w => truewinUserMap[w.userId]);
     setWithdrawals(truewinWithdrawals);
-    console.log("Truewin Withdrawals:", truewinWithdrawals); // Debug log
 
-    // Collect all unique user IDs from filtered payments and withdrawals to fetch their details
     const paymentUserIds = [...new Set(truewinPayments.map(p => p.userId))];
     const withdrawalUserIds = [...new Set(truewinWithdrawals.map(w => w.userId))];
     const userIdsToFetch = [...new Set([...paymentUserIds, ...withdrawalUserIds])];
-    console.log("User IDs to Fetch:", userIdsToFetch); // Debug log
 
     fetchMissingUserDetails(userIdsToFetch);
-
   }, [isAdmin, allPayments, allWithdrawals, truewinUserMap]);
 
   const fetchMissingUserDetails = (userIds) => {
     userIds.forEach(async (userId) => {
-      // The truewinUserMap check ensures we only fetch details for users where appName is 'truewin'.
       if (!userDetails[userId] && truewinUserMap[userId]) {
         try {
-          // Fetch the user document directly by its ID, which is the correct and most efficient way.
           const userDocRef = doc(db, 'users', userId);
           const userSnap = await getDoc(userDocRef);
-
           if (userSnap.exists()) {
-            // The userSnap.data() contains all fields, including name and phoneNumber.
             setUserDetails(prev => ({ ...prev, [userId]: userSnap.data() }));
-          } else {
-            console.warn("User document not found for userId:", userId);
           }
         } catch (error) {
-            console.error("Error fetching user details for userId:", userId, error);
+          console.error("Error fetching user details for userId:", userId, error);
         }
       }
     });
@@ -154,9 +153,9 @@ const AdminDashboard = () => {
         const paymentRef = doc(db, 'top-ups', paymentId);
         const userRef = doc(db, 'users', userId);
 
-        let userSnap = await transaction.get(userRef); // Get user data inside transaction
+        let userSnap = await transaction.get(userRef);
         if (!userSnap.exists()) {
-            throw new Error("User not found for payment approval.");
+          throw new Error("User not found for payment approval.");
         }
         const userData = userSnap.data();
 
@@ -170,7 +169,6 @@ const AdminDashboard = () => {
           const currentBalance = userData.balance || 0;
           transaction.update(userRef, { balance: currentBalance + amount });
 
-          // Referral bonus logic
           if (amount >= 50 && userData.referredBy && userData.referralBonusAwarded === false) {
             const referrerRef = doc(db, "users", userData.referredBy);
             const referrerSnap = await transaction.get(referrerRef);
@@ -179,7 +177,6 @@ const AdminDashboard = () => {
               const referrerData = referrerSnap.data();
               const referrerBalance = referrerData.balance || 0;
               transaction.update(referrerRef, { balance: referrerBalance + 50 });
-              
               transaction.update(userRef, { referralBonusAwarded: true });
 
               const newTransactionRef = doc(collection(db, "transactions"));
@@ -191,8 +188,6 @@ const AdminDashboard = () => {
                 referredUserName: userData.name,
                 createdAt: new Date(),
               });
-            } else {
-                console.warn("Referrer user not found for referredBy:", userData.referredBy);
             }
           }
         }
@@ -225,7 +220,7 @@ const AdminDashboard = () => {
       toast.error(`Failed to ${action} withdrawal.`);
     }
   };
-  
+
   const handleDeletePayment = async (paymentId) => {
     try {
       await deleteDoc(doc(db, 'top-ups', paymentId));
@@ -245,7 +240,7 @@ const AdminDashboard = () => {
         if (!winnerSnap.exists() || winnerSnap.data().status !== 'pending_approval') {
           throw new Error('Winner not found or already processed.');
         }
-        
+
         const winnerData = winnerSnap.data();
         const { userId, prize } = winnerData;
 
@@ -256,10 +251,8 @@ const AdminDashboard = () => {
           throw new Error('User not found.');
         }
 
-        // Update winner status
         transaction.update(winnerRef, { status: 'announced' });
 
-        // Credit user's winningMoney
         const currentWinnings = userSnap.data().winningMoney || 0;
         transaction.update(userRef, { winningMoney: currentWinnings + prize });
       });
@@ -273,7 +266,7 @@ const AdminDashboard = () => {
   const handleLogout = async () => {
     try {
       await auth.signOut();
-      setUser(null); // Clear user from Zustand store
+      setUser(null);
       toast.success("Logged out successfully!");
     } catch (error) {
       console.error("Error logging out:", error);
@@ -281,7 +274,7 @@ const AdminDashboard = () => {
     }
   };
 
-  // --- CHILD COMPONENTS ---
+  // --- SIDEBAR ---
   const Sidebar = () => (
     <div className={`fixed inset-y-0 left-0 z-30 w-72 bg-gray-900 text-white p-4 transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-300 ease-in-out md:translate-x-0 md:w-72 flex flex-col`}>
       <div className="mb-8 flex justify-center items-center flex-shrink-0">
@@ -297,32 +290,37 @@ const AdminDashboard = () => {
           )}
         </div>
       </div>
+
       <nav className="space-y-2 overflow-y-auto">
         {[
-          { id: 'dashboard', label: 'Dashboard', icon: Settings },
-          { id: 'allUsers', label: 'All Users', icon: Users },
-
-          { id: 'barcodes', label: 'Barcode Management', icon: QrCode },
-          { id: 'payments', label: 'Payment Approvals', icon: CreditCard },
-        
-          { id: 'withdrawals', label: 'Withdrawal Approval', icon: DollarSign },
-          { id: 'marquee', label: 'Screen Text', icon: Edit },
-          { id: 'harufUpdate', label: 'Market Results', icon: Edit },
-          { id: 'sliderUpdate', label: 'Carousel Slides', icon: Edit },
-          { id: 'socialLinks', label: 'Social Links', icon: LinkIcon },
-          { id: 'winGameBets', label: 'Win Game Bets', icon: Trophy },
-          { id: 'profitLoss', label: 'Profit & Loss', icon: TrendingUp },
+          { id: 'dashboard',    label: 'Dashboard',          icon: Settings    },
+          { id: 'allUsers',     label: 'All Users',           icon: Users       },
+          { id: 'barcodes',     label: 'Barcode Management',  icon: QrCode      },
+          { id: 'payments',     label: 'Payment Approvals',   icon: CreditCard  },
+          { id: 'withdrawals',  label: 'Withdrawal Approval', icon: DollarSign  },
+          { id: 'marquee',      label: 'Screen Text',         icon: Edit        },
+          { id: 'harufUpdate',  label: 'Market Results',      icon: Edit        },
+          { id: 'sliderUpdate', label: 'Carousel Slides',     icon: Edit        },
+          { id: 'socialLinks',  label: 'Social Links',        icon: LinkIcon    },
+          { id: 'winGameBets',  label: 'Win Game Bets',       icon: Trophy      },
+          { id: 'profitLoss',   label: 'Profit & Loss',       icon: TrendingUp  },
+          // ── NEW ─────────────────────────────────────────────────────────
+          { id: 'gamesStats',   label: '🎮 Games Stats',      icon: Gamepad2    },
+          // ────────────────────────────────────────────────────────────────
         ].map(item => (
           <button
             key={item.id}
             onClick={() => { setActiveTab(item.id); setSidebarOpen(false); }}
-            className={`w-full flex items-center justify-start space-x-3 p-3 rounded-lg transition-colors ${activeTab === item.id ? 'bg-blue-600' : 'hover:bg-gray-800'}`}
+            className={`w-full flex items-center justify-start space-x-3 p-3 rounded-lg transition-colors ${
+              activeTab === item.id ? 'bg-blue-600' : 'hover:bg-gray-800'
+            }`}
           >
             <item.icon className="h-5 w-5 flex-shrink-0" />
             <span>{item.label}</span>
           </button>
         ))}
-        <button 
+
+        <button
           onClick={handleLogout}
           className="w-full flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-800 text-red-400"
         >
@@ -333,62 +331,71 @@ const AdminDashboard = () => {
     </div>
   );
 
+  // --- HEADER ---
   const Header = () => (
     <div className="bg-white shadow-sm border-b p-4 flex items-center justify-between">
       <div className="flex items-center space-x-4">
         <button onClick={() => setSidebarOpen(!isSidebarOpen)} className="md:hidden p-2">
-            {isSidebarOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+          {isSidebarOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
         </button>
         <h2 className="text-2xl font-semibold capitalize">
           {activeTab
-            .replace('allUsers', 'All Users')
+            .replace('allUsers',    'All Users')
             .replace('harufUpdate', 'Market Results')
-            .replace('sliderUpdate', 'Carousel Slides')
+            .replace('sliderUpdate','Carousel Slides')
             .replace('socialLinks', 'Social Links')
             .replace('winGameBets', 'Win Game Bets')
-            .replace('profitLoss', 'Profit & Loss')
-            .replace('referrals', 'Referrals') // Added
+            .replace('profitLoss',  'Profit & Loss')
+            .replace('referrals',   'Referrals')
+            .replace('gamesStats',  '🎮 Games Stats') // ── NEW
           }
         </h2>
       </div>
     </div>
   );
 
+  // --- CONTENT ROUTER ---
   const renderContent = () => {
     const stats = {
-        totalUsers: totalUsers,
-        pendingPayments: payments.filter(p => p.status === 'pending').length,
-        winnersAnnounced: winners.filter(w => w.status === 'announced').length,
-        pendingWithdrawals: withdrawals.filter(w => w.status === 'pending').length
+      totalUsers:        totalUsers,
+      pendingPayments:   payments.filter(p => p.status === 'pending').length,
+      winnersAnnounced:  winners.filter(w => w.status === 'announced').length,
+      pendingWithdrawals:withdrawals.filter(w => w.status === 'pending').length,
     };
 
     switch (activeTab) {
-      case 'dashboard': 
+      case 'dashboard':
         return <DashboardView stats={stats} />;
       case 'allUsers':
         return <AllUsers />;
-      case 'referrals': // Added
+      case 'referrals':
         return <ReferralComponent />;
-      case 'barcodes': 
+      case 'barcodes':
         return <BarCodeUpdate />;
-      case 'payments': 
-        return <PaymentApproval 
-                  payments={payments} 
-                  userDetails={userDetails} 
-                  handlePaymentApproval={handlePaymentApproval} 
-                  handleDeletePayment={handleDeletePayment} 
-                />;
-      case 'winners': 
-        return <WinnerApprove 
-                  winners={winners}
-                  handleWinnerAnnouncement={handleWinnerAnnouncement}
-                />;
-      case 'withdrawals': 
-        return <WithdrawApproval 
-                  withdrawals={withdrawals}
-                  userDetails={userDetails}
-                  handleWithdrawalApproval={handleWithdrawalApproval}
-                />;
+      case 'payments':
+        return (
+          <PaymentApproval
+            payments={payments}
+            userDetails={userDetails}
+            handlePaymentApproval={handlePaymentApproval}
+            handleDeletePayment={handleDeletePayment}
+          />
+        );
+      case 'winners':
+        return (
+          <WinnerApprove
+            winners={winners}
+            handleWinnerAnnouncement={handleWinnerAnnouncement}
+          />
+        );
+      case 'withdrawals':
+        return (
+          <WithdrawApproval
+            withdrawals={withdrawals}
+            userDetails={userDetails}
+            handleWithdrawalApproval={handleWithdrawalApproval}
+          />
+        );
       case 'marquee':
         return <MarqueeUpdate />;
       case 'harufUpdate':
@@ -401,7 +408,13 @@ const AdminDashboard = () => {
         return <Bets />;
       case 'profitLoss':
         return <ProfitLoss />;
-      default: 
+
+      // ── NEW ────────────────────────────────────────────────────────────
+      case 'gamesStats':
+        return <GamesStats />;
+      // ──────────────────────────────────────────────────────────────────
+
+      default:
         return <DashboardView stats={stats} />;
     }
   };
@@ -409,14 +422,13 @@ const AdminDashboard = () => {
   return (
     <div className="flex h-screen bg-gray-100">
       <Sidebar />
-      {/* Overlay for mobile */}
       {isSidebarOpen && (
-        <div 
+        <div
           className="fixed inset-0 z-10 bg-black bg-opacity-50 md:hidden"
           onClick={() => setSidebarOpen(false)}
-        ></div>
+        />
       )}
-      <div className="flex-1 flex flex-col overflow-hidden md:ml-72" >
+      <div className="flex-1 flex flex-col overflow-hidden md:ml-72">
         <ToastContainer />
         <Header />
         <main className="flex-1 overflow-y-auto">
