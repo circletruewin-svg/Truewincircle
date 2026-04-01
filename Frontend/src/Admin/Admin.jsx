@@ -18,7 +18,7 @@ import {
   Link as LinkIcon,
   TrendingUp,
   UserPlus,
-  Gamepad2,
+  Star,
 } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, query, onSnapshot, doc, runTransaction, getDocs, getDoc, where, deleteDoc, updateDoc, addDoc } from 'firebase/firestore';
@@ -41,7 +41,7 @@ import WithdrawApproval from './components/WithdrawApproval';
 import ReferralComponent from './components/Refferal';
 import Table from './components/Table';
 
-// ── NEW: Games Stats ──────────────────────────────────────────────
+// ── NEW ──────────────────────────────────────────────────────────
 import GamesStats from './components/GamesStats';
 // ─────────────────────────────────────────────────────────────────
 
@@ -73,9 +73,7 @@ const AdminDashboard = () => {
     const truewinUsersQuery = query(collection(db, 'users'), where('appName', '==', 'truewin'));
     const unsubscribeTruewinUsers = onSnapshot(truewinUsersQuery, (snapshot) => {
       const newTruewinUserMap = {};
-      snapshot.docs.forEach(d => {
-        newTruewinUserMap[d.id] = true;
-      });
+      snapshot.docs.forEach(d => { newTruewinUserMap[d.id] = true; });
       setTruewinUserMap(newTruewinUserMap);
       setTotalUsers(snapshot.size);
     });
@@ -83,8 +81,7 @@ const AdminDashboard = () => {
     const paymentsQuery = query(collection(db, 'top-ups'));
     const unsubscribePayments = onSnapshot(paymentsQuery, (snapshot) => {
       const fetchedPayments = snapshot.docs.map(d => ({
-        id: d.id,
-        ...d.data(),
+        id: d.id, ...d.data(),
         date: d.data().createdAt ? new Date(d.data().createdAt).toLocaleDateString() : 'N/A',
         userId: d.data().userId
       }));
@@ -94,8 +91,7 @@ const AdminDashboard = () => {
     const withdrawalsQuery = query(collection(db, 'withdrawals'));
     const unsubscribeWithdrawals = onSnapshot(withdrawalsQuery, (snapshot) => {
       const fetchedWithdrawals = snapshot.docs.map(d => ({
-        id: d.id,
-        ...d.data(),
+        id: d.id, ...d.data(),
         date: d.data().createdAt ? new Date(d.data().createdAt).toLocaleDateString() : 'N/A',
         userId: d.data().userId
       }));
@@ -109,7 +105,6 @@ const AdminDashboard = () => {
     };
   }, [isAdmin]);
 
-  // --- Filtering and User Details Fetching ---
   useEffect(() => {
     if (!isAdmin || !Object.keys(truewinUserMap).length) {
       setPayments([]);
@@ -140,7 +135,7 @@ const AdminDashboard = () => {
             setUserDetails(prev => ({ ...prev, [userId]: userSnap.data() }));
           }
         } catch (error) {
-          console.error("Error fetching user details for userId:", userId, error);
+          console.error("Error fetching user details:", userId, error);
         }
       }
     });
@@ -152,17 +147,12 @@ const AdminDashboard = () => {
       await runTransaction(db, async (transaction) => {
         const paymentRef = doc(db, 'top-ups', paymentId);
         const userRef = doc(db, 'users', userId);
-
         let userSnap = await transaction.get(userRef);
-        if (!userSnap.exists()) {
-          throw new Error("User not found for payment approval.");
-        }
+        if (!userSnap.exists()) throw new Error("User not found.");
         const userData = userSnap.data();
 
         const paymentUpdateData = { status: action };
-        if (action === 'rejected' && reason) {
-          paymentUpdateData.adminComment = reason;
-        }
+        if (action === 'rejected' && reason) paymentUpdateData.adminComment = reason;
         transaction.update(paymentRef, paymentUpdateData);
 
         if (action === 'approved') {
@@ -172,13 +162,10 @@ const AdminDashboard = () => {
           if (amount >= 50 && userData.referredBy && userData.referralBonusAwarded === false) {
             const referrerRef = doc(db, "users", userData.referredBy);
             const referrerSnap = await transaction.get(referrerRef);
-
             if (referrerSnap.exists()) {
-              const referrerData = referrerSnap.data();
-              const referrerBalance = referrerData.balance || 0;
+              const referrerBalance = referrerSnap.data().balance || 0;
               transaction.update(referrerRef, { balance: referrerBalance + 50 });
               transaction.update(userRef, { referralBonusAwarded: true });
-
               const newTransactionRef = doc(collection(db, "transactions"));
               transaction.set(newTransactionRef, {
                 userId: userData.referredBy,
@@ -194,7 +181,6 @@ const AdminDashboard = () => {
       });
       toast.success(`Payment ${action} successfully!`);
     } catch (error) {
-      console.error(`Error ${action} payment:`, error);
       toast.error(`Failed to ${action} payment. ${error.message}`);
     }
   };
@@ -204,7 +190,6 @@ const AdminDashboard = () => {
       await runTransaction(db, async (transaction) => {
         const withdrawalRef = doc(db, 'withdrawals', withdrawalId);
         transaction.update(withdrawalRef, { status: action });
-
         if (action === 'rejected') {
           const userRef = doc(db, 'users', userId);
           const userSnap = await transaction.get(userRef);
@@ -216,7 +201,6 @@ const AdminDashboard = () => {
       });
       toast.success(`Withdrawal ${action} successfully!`);
     } catch (error) {
-      console.error(`Error ${action} withdrawal:`, error);
       toast.error(`Failed to ${action} withdrawal.`);
     }
   };
@@ -226,7 +210,6 @@ const AdminDashboard = () => {
       await deleteDoc(doc(db, 'top-ups', paymentId));
       toast.success('Payment record deleted successfully!');
     } catch (error) {
-      console.error('Error deleting payment record:', error);
       toast.error('Failed to delete payment record.');
     }
   };
@@ -236,29 +219,19 @@ const AdminDashboard = () => {
       await runTransaction(db, async (transaction) => {
         const winnerRef = doc(db, 'winners', winnerId);
         const winnerSnap = await transaction.get(winnerRef);
-
         if (!winnerSnap.exists() || winnerSnap.data().status !== 'pending_approval') {
           throw new Error('Winner not found or already processed.');
         }
-
-        const winnerData = winnerSnap.data();
-        const { userId, prize } = winnerData;
-
+        const { userId, prize } = winnerSnap.data();
         const userRef = doc(db, 'users', userId);
         const userSnap = await transaction.get(userRef);
-
-        if (!userSnap.exists()) {
-          throw new Error('User not found.');
-        }
-
+        if (!userSnap.exists()) throw new Error('User not found.');
         transaction.update(winnerRef, { status: 'announced' });
-
         const currentWinnings = userSnap.data().winningMoney || 0;
         transaction.update(userRef, { winningMoney: currentWinnings + prize });
       });
       toast.success('Winner announced and credited successfully!');
     } catch (error) {
-      console.error('Error announcing winner:', error);
       toast.error(error.message || 'Failed to announce winner.');
     }
   };
@@ -269,7 +242,6 @@ const AdminDashboard = () => {
       setUser(null);
       toast.success("Logged out successfully!");
     } catch (error) {
-      console.error("Error logging out:", error);
       toast.error("Failed to log out.");
     }
   };
@@ -293,20 +265,20 @@ const AdminDashboard = () => {
 
       <nav className="space-y-2 overflow-y-auto">
         {[
-          { id: 'dashboard',    label: 'Dashboard',          icon: Settings    },
-          { id: 'allUsers',     label: 'All Users',           icon: Users       },
-          { id: 'barcodes',     label: 'Barcode Management',  icon: QrCode      },
-          { id: 'payments',     label: 'Payment Approvals',   icon: CreditCard  },
-          { id: 'withdrawals',  label: 'Withdrawal Approval', icon: DollarSign  },
-          { id: 'marquee',      label: 'Screen Text',         icon: Edit        },
-          { id: 'harufUpdate',  label: 'Market Results',      icon: Edit        },
-          { id: 'sliderUpdate', label: 'Carousel Slides',     icon: Edit        },
-          { id: 'socialLinks',  label: 'Social Links',        icon: LinkIcon    },
-          { id: 'winGameBets',  label: 'Win Game Bets',       icon: Trophy      },
-          { id: 'profitLoss',   label: 'Profit & Loss',       icon: TrendingUp  },
-          // ── NEW ─────────────────────────────────────────────────────────
-          { id: 'gamesStats',   label: '🎮 Games Stats',      icon: Gamepad2    },
-          // ────────────────────────────────────────────────────────────────
+          { id: 'dashboard',    label: 'Dashboard',          icon: Settings   },
+          { id: 'allUsers',     label: 'All Users',           icon: Users      },
+          { id: 'barcodes',     label: 'Barcode Management',  icon: QrCode     },
+          { id: 'payments',     label: 'Payment Approvals',   icon: CreditCard },
+          { id: 'withdrawals',  label: 'Withdrawal Approval', icon: DollarSign },
+          { id: 'marquee',      label: 'Screen Text',         icon: Edit       },
+          { id: 'harufUpdate',  label: 'Market Results',      icon: Edit       },
+          { id: 'sliderUpdate', label: 'Carousel Slides',     icon: Edit       },
+          { id: 'socialLinks',  label: 'Social Links',        icon: LinkIcon   },
+          { id: 'winGameBets',  label: 'Win Game Bets',       icon: Trophy     },
+          { id: 'profitLoss',   label: 'Profit & Loss',       icon: TrendingUp },
+          // ── NEW ──────────────────────────────────────────────────────
+          { id: 'gamesStats',   label: '🎮 Games Stats',      icon: Star       },
+          // ─────────────────────────────────────────────────────────────
         ].map(item => (
           <button
             key={item.id}
@@ -347,7 +319,7 @@ const AdminDashboard = () => {
             .replace('winGameBets', 'Win Game Bets')
             .replace('profitLoss',  'Profit & Loss')
             .replace('referrals',   'Referrals')
-            .replace('gamesStats',  '🎮 Games Stats') // ── NEW
+            .replace('gamesStats',  '🎮 Games Stats')
           }
         </h2>
       </div>
@@ -357,21 +329,17 @@ const AdminDashboard = () => {
   // --- CONTENT ROUTER ---
   const renderContent = () => {
     const stats = {
-      totalUsers:        totalUsers,
-      pendingPayments:   payments.filter(p => p.status === 'pending').length,
-      winnersAnnounced:  winners.filter(w => w.status === 'announced').length,
-      pendingWithdrawals:withdrawals.filter(w => w.status === 'pending').length,
+      totalUsers:         totalUsers,
+      pendingPayments:    payments.filter(p => p.status === 'pending').length,
+      winnersAnnounced:   winners.filter(w => w.status === 'announced').length,
+      pendingWithdrawals: withdrawals.filter(w => w.status === 'pending').length,
     };
 
     switch (activeTab) {
-      case 'dashboard':
-        return <DashboardView stats={stats} />;
-      case 'allUsers':
-        return <AllUsers />;
-      case 'referrals':
-        return <ReferralComponent />;
-      case 'barcodes':
-        return <BarCodeUpdate />;
+      case 'dashboard':   return <DashboardView stats={stats} />;
+      case 'allUsers':    return <AllUsers />;
+      case 'referrals':   return <ReferralComponent />;
+      case 'barcodes':    return <BarCodeUpdate />;
       case 'payments':
         return (
           <PaymentApproval
@@ -396,26 +364,18 @@ const AdminDashboard = () => {
             handleWithdrawalApproval={handleWithdrawalApproval}
           />
         );
-      case 'marquee':
-        return <MarqueeUpdate />;
-      case 'harufUpdate':
-        return <Table />;
-      case 'sliderUpdate':
-        return <SliderUpdate />;
-      case 'socialLinks':
-        return <Links />;
-      case 'winGameBets':
-        return <Bets />;
-      case 'profitLoss':
-        return <ProfitLoss />;
+      case 'marquee':       return <MarqueeUpdate />;
+      case 'harufUpdate':   return <Table />;
+      case 'sliderUpdate':  return <SliderUpdate />;
+      case 'socialLinks':   return <Links />;
+      case 'winGameBets':   return <Bets />;
+      case 'profitLoss':    return <ProfitLoss />;
 
-      // ── NEW ────────────────────────────────────────────────────────────
-      case 'gamesStats':
-        return <GamesStats />;
-      // ──────────────────────────────────────────────────────────────────
+      // ── NEW ────────────────────────────────────────────────────────
+      case 'gamesStats':    return <GamesStats />;
+      // ──────────────────────────────────────────────────────────────
 
-      default:
-        return <DashboardView stats={stats} />;
+      default:              return <DashboardView stats={stats} />;
     }
   };
 
