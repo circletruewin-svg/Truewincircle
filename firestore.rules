@@ -1,195 +1,210 @@
-  rules_version = '2';
-      service cloud.firestore {
-        match /databases/{database}/documents {
-          // Helper function to check if the requesting user is an admin
-          function isAdmin() {
-            return request.auth != null &&
-              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
-          }
-     
-    // * ADD THIS NEW RULE *
-        // Rules for the results collection
-        match /results/{resultId} {
-          allow read: if true; // Allow public read access to results
-          allow write: if isAdmin(); // Only admins can write new results
-        }
-        // * END OF NEW RULE *
-    
-        // Rules for the users collection
-        match /users/{userId} {
-         allow read: if request.auth != null && (request.auth.uid == userId || isAdmin() || resource.data.referredBy == request.auth.uid);     
-         allow create: if request.auth != null;
-         allow delete: if request.auth != null && request.auth.uid == userId;
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
 
-          // Allow users to update their own balance/winnings but not their role
-          allow update: if request.auth != null && (
-            isAdmin() || 
-            (request.auth.uid == userId && (
-              !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) ||
-              (request.resource.data.role == resource.data.role)
-            ))
-          );
-        }
-    
-        // --- START: NEW RULES FOR 1-12 WIN GAME ---
-    
-        // Rules for the main game state document
-        match /game_state/{docId} {
-        // Allow any logged-in user to read game state for syncing.
-    // Write access is needed for the current client-side logic where one player's device
-          // becomes the leader to calculate results and start the next round.
-          // WARNING: In a production app, write access should be restricted to a trusted backend server.
-         allow read, write: if request.auth != null;
-        }
-    
-        // Rules for the bets placed in the game
-        match /wingame_bets/{betId} {
-          // Allow users to create their own bets.
-          allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-          // Allow users to read their own bet history.
-      // Allow any logged-in user to read all bets for result calculation.                                        │
-     // WARNING: This exposes bet data of all users to any logged-in user.                                       │
-allow read: if request.auth != null;  
-          // Allow the client-side leader to update the status of all bets to 'win' or 'loss'.
-          // WARNING: In a production app, this update logic should be on a trusted backend server.
-          allow update: if request.auth != null;
-        }
-    
-        // Rules for the historical record of game rounds
-        match /wingame_rounds/{roundId} {
-          // Allow any logged-in user to read past round results for their history page.
-          allow read: if request.auth != null;
-          // Allow the client-side leader to create the result document for the round.
-          // WARNING: In a production app, this should be restricted to a trusted backend server.
-          allow create: if request.auth != null;
-        }
-    
-        // --- END: NEW RULES FOR 1-12 WIN GAME ---
-    
-        // Rules for the withdrawals collection
-        match /withdrawals/{withdrawalId} {
-          allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-          allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
-          allow update: if isAdmin();
-        }
-    
-        // Rules for top-up (deposit) requests
-        match /top-ups/{topUpId} {
-          allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-          allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
-        allow update: if isAdmin();
-          allow delete: if isAdmin();
-        }
-
-        // Rules for the exchangeRequests collection
-        match /exchangeRequests/{requestId} {
-          allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-          allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
-          allow update: if isAdmin();
-        }
-    
-        // Rules for the new 'winners' collection
-        match /winners/{winnerId} {
-          allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
-          allow create, update: if request.auth != null;
-        }
-  
-        // Rules for the transactions collection (for referral bonuses, etc.)
-        match /transactions/{transactionId} {
-            allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
-            allow create: if isAdmin();
-}
-    
-        // Allow public read access to the marquee settings
-        match /settings/marquee {
-          allow read: if true;
-          allow write: if isAdmin();
-        }
-    
-        // DEPRECATED: These rules are for other games not currently being worked on.
-        // They are kept for compatibility but might need review.
-        match /bets/{betId} {
-           allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;                    
-          allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());  
-        }
-        match /harufBets/{betId} {
-         allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-         allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
-            allow update: if isAdmin(); 
-       }
-         match /carousel_slides/{slideId} {                                                                              
-				 allow read: if true; // Allow public read access                                                              
-  			 allow write: if isAdmin(); // Allow only admins to write                                                      
- 			 } 
-         match /market_timings/{marketId} {                                                                         
-      allow read: if true; // Allow public read access                                                          
-      allow write: if isAdmin(); // Only admins can update timings                                              
+    // Helper function to check if the requesting user is an admin
+    function isAdmin() {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
-       match /settings/jackpot {                                                                                       
-  	 allow read: if true;                                                                                         
-   allow write: if isAdmin();                                                                                   
- } 
-       match /rouletteBets/{betId} {
+
+    // Rules for the results collection
+    match /results/{resultId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Rules for the users collection
+    match /users/{userId} {
+      allow read: if request.auth != null && (
+        request.auth.uid == userId ||
+        isAdmin() ||
+        resource.data.referredBy == request.auth.uid
+      );
+      allow create: if request.auth != null;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && (
+        isAdmin() ||
+        (request.auth.uid == userId && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) ||
+          (request.resource.data.role == resource.data.role)
+        ))
+      );
+    }
+
+    // Rules for the main game state document (1-12 Win Game)
+    match /game_state/{docId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Rules for the bets placed in the 1-12 Win game
+    match /wingame_bets/{betId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null;
+      allow update: if request.auth != null;
+    }
+
+    // Rules for the historical record of game rounds (1-12 Win)
+    match /wingame_rounds/{roundId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+    }
+
+    // Rules for the withdrawals collection
+    match /withdrawals/{withdrawalId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+      allow update: if isAdmin();
+    }
+
+    // Rules for top-up (deposit) requests
+    match /top-ups/{topUpId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Rules for the exchangeRequests collection
+    match /exchangeRequests/{requestId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+      allow update: if isAdmin();
+    }
+
+    // Rules for the winners collection
+    match /winners/{winnerId} {
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
       allow create, update: if request.auth != null;
-      allow read: if request.auth != null &&
-        (resource.data.userId == request.auth.uid || isAdmin());
     }
-        // --- START: NEW RULES FOR CRYPTO ADMIN COMPONENTS ---
-    
-         // Rules for 'paymentMethods' collection (for AdminUpi and UsdtDeposit config)
-         match /paymentMethods/{docId} {
-           allow read: if request.auth != null; // All authenticated users can read payment methods
-          allow write: if isAdmin();            // Only admins can modify payment methods
-         }
-    
-         // Rules for 'depositRequests' collection (for DepositApproval)
-        match /depositRequests/{depositId} {
-          allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-         allow read: if request.auth != null && resource.data.userId == request.auth.uid;
-         allow read, update: if isAdmin(); // Admins can read all and update status
-        }
-   
-        // Rules for 'marketData' collection (for UsdtRates)
-        match /marketData/{docId} {
-          allow read: if request.auth != null; // All authenticated users can read market data
-          allow write: if isAdmin();            // Only admins can modify market data
-        }
-   
-        // --- END: NEW RULES FOR CRYPTO ADMIN COMPONENTS ---
-   
-       // DEPRECATED: These rules are for other games not currently being worked on.
-        // They are kept for compatibility but might need review.
-        match /bets/{betId} {
-           allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-          allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
-        }
-        match /harufBets/{betId} {
-         allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-        allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
-      }
-        match /carousel_slides/{slideId} {
-                allow read: if true; // Allow public read access
-                allow write: if isAdmin(); // Allow only admins to write
-                 }
-         match /market_timings/{marketId} {
-          allow read: if true; // Allow public read access
-          allow write: if isAdmin(); // Only admins can update timings
-        }
-           match /settings/jackpot {
-         allow read: if true;
-       allow write: if isAdmin();
-     }
-      // Rules for the social_links collection                                                                      
-  match /social_links/{docId} {                             allow read: if true; // Allow public read access to social links                                            
-    allow write: if isAdmin(); // Only admins can write (create, update, delete) social links                   
-  }                                                                                                             
-  
-           match /rouletteBets/{betId} {
-          allow create, update: if request.auth != null;
-          allow read: if request.auth != null &&
-           (resource.data.userId == request.auth.uid || isAdmin());
-       }
-      }
+
+    // Rules for the transactions collection (referral bonuses, etc.)
+    match /transactions/{transactionId} {
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAdmin();
     }
-      
-    
+
+    // Marquee settings
+    match /settings/marquee {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Jackpot settings
+    match /settings/jackpot {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Bets (legacy)
+    match /bets/{betId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Haruf bets (legacy)
+    match /harufBets/{betId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+      allow update: if isAdmin();
+    }
+
+    // Carousel slides
+    match /carousel_slides/{slideId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Market timings
+    match /market_timings/{marketId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Roulette bets
+    match /rouletteBets/{betId} {
+      allow create, update: if request.auth != null;
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Payment methods (UPI, USDT config)
+    match /paymentMethods/{docId} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+
+    // Deposit requests
+    match /depositRequests/{depositId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read, update: if isAdmin();
+    }
+
+    // Market data (USDT rates)
+    match /marketData/{docId} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+
+    // Social links
+    match /social_links/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ── NEW: Casino games collections ──────────────────────────────────
+
+    // Aviator
+    match /aviatorBets/{id} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+    match /aviatorHistory/{id} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+    }
+
+    // Color Prediction
+    match /colorBets/{id} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+    match /colorHistory/{id} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+    }
+
+    // Coin Flip
+    match /coinFlipHistory/{id} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Dice Roll
+    match /diceBets/{id} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Teen Patti
+    match /teenPattiHistory/{id} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Dragon Tiger
+    match /dtHistory/{id} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Andar Bahar
+    match /abHistory/{id} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // ── END: Casino games collections ──────────────────────────────────
+
+  }
+}
