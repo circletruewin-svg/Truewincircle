@@ -5,13 +5,12 @@ import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getBiasedWinner } from "../utils/houseEdge";
 
-const SUITS = ["♠","♥","♦","♣"];
-const RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
-const rnd = () => ({ suit: SUITS[~~(Math.random()*4)], rank: RANKS[~~(Math.random()*13)] });
+const SUITS=["♠","♥","♦","♣"],RANKS=["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+const rnd=()=>({suit:SUITS[~~(Math.random()*4)],rank:RANKS[~~(Math.random()*13)]});
 
-function SmCard({ card }) {
-  const red = card?.suit==="♥"||card?.suit==="♦";
-  return (
+function SmCard({card}){
+  const red=card?.suit==="♥"||card?.suit==="♦";
+  return(
     <div className="w-9 h-12 rounded-lg border-2 border-gray-300 bg-white flex flex-col items-center justify-center text-xs font-bold shadow">
       <span className={red?"text-red-600":"text-gray-900"}>{card?.rank}</span>
       <span className={red?"text-red-600":"text-gray-900"}>{card?.suit}</span>
@@ -19,32 +18,42 @@ function SmCard({ card }) {
   );
 }
 
-const ROUND_SEC = 12;
+const ROUND_SEC=12;
 
-export default function AndarBahar() {
-  const auth = getAuth();
-  const user = auth.currentUser;
-  const [balance,setBalance]=useState(0);
-  const [betAmount,setBetAmount]=useState("");
-  const [betSide,setBetSide]=useState(null);
-  const [phase,setPhase]=useState("betting");
-  const [joker,setJoker]=useState(null);
-  const [aCards,setACards]=useState([]);
-  const [bCards,setBCards]=useState([]);
-  const [winner,setWinner]=useState(null);
-  const [msg,setMsg]=useState("");
-  const [history,setHistory]=useState([]);
-  const [timeLeft,setTimeLeft]=useState(ROUND_SEC);
-
+export default function AndarBahar(){
+  const auth=getAuth(),user=auth.currentUser;
+  const[balance,setBalance]=useState(0);
+  const[betAmount,setBetAmount]=useState("");
+  const[betSide,setBetSide]=useState(null);
+  const[phase,setPhase]=useState("betting");
+  const[joker,setJoker]=useState(null);
+  const[aCards,setACards]=useState([]);
+  const[bCards,setBCards]=useState([]);
+  const[winner,setWinner]=useState(null);
+  const[msg,setMsg]=useState("");
+  const[history,setHistory]=useState([]);
+  const[timeLeft,setTimeLeft]=useState(ROUND_SEC);
   const bsRef=useRef(null),baRef=useRef(null),hbRef=useRef(false),blRef=useRef(0),timerRef=useRef(null);
+
   useEffect(()=>{bsRef.current=betSide;},[betSide]);
   useEffect(()=>{blRef.current=balance;},[balance]);
 
-  useEffect(()=>{if(!user)return;return onSnapshot(doc(db,"users",user.uid),(s)=>{if(s.exists())setBalance(s.data().walletBalance||0);});},[user]);
-  useEffect(()=>{return onSnapshot(query(collection(db,"abHistory"),orderBy("createdAt","desc"),limit(12)),(s)=>setHistory(s.docs.map(d=>d.data())));},[]);
+  useEffect(()=>{
+    if(!user)return;
+    return onSnapshot(doc(db,"users",user.uid),(s)=>{
+      if(s.exists()){const d=s.data();const b=d.balance??d.walletBalance??0;setBalance(b);blRef.current=b;}
+    });
+  },[user]);
+
+  useEffect(()=>{
+    return onSnapshot(query(collection(db,"abHistory"),orderBy("createdAt","desc"),limit(12)),
+      (s)=>setHistory(s.docs.map(d=>d.data())));
+  },[]);
+
   useEffect(()=>{startRound();return()=>clearInterval(timerRef.current);},[]);
 
   const startRound=()=>{
+    clearInterval(timerRef.current);
     setPhase("betting");setBetSide(null);bsRef.current=null;baRef.current=null;hbRef.current=false;
     setWinner(null);setMsg("");setJoker(null);setACards([]);setBCards([]);setTimeLeft(ROUND_SEC);
     let t=ROUND_SEC;
@@ -53,20 +62,18 @@ export default function AndarBahar() {
 
   const dealRound=async()=>{
     setPhase("dealing");
-    const j=rnd(); setJoker(j);
+    const j=rnd();setJoker(j);
     const userBet=bsRef.current;
     const w=userBet?getBiasedWinner(userBet,["andar","bahar"]):Math.random()>0.5?"andar":"bahar";
-
     const acs=[],bcs=[];
     for(let i=0;i<5;i++){acs.push(rnd());bcs.push(rnd());}
-
     let idx=0;
     const interval=setInterval(()=>{
       if(idx<5){
         setACards(prev=>[...prev,acs[idx]]);
         setBCards(prev=>[...prev,bcs[idx]]);
         idx++;
-      } else {
+      }else{
         clearInterval(interval);
         setWinner(w);setPhase("result");
         finishRound(w,userBet);
@@ -79,30 +86,28 @@ export default function AndarBahar() {
       const amt=baRef.current,won=w===userBet;
       const winAmt=won?parseFloat((amt*1.9).toFixed(2)):0;
       won?setMsg(`🎉 ${w.toUpperCase()} wins! +₹${winAmt}`):setMsg(`😞 ${w.toUpperCase()} wins. Lost ₹${amt}`);
-      if(won) await updateDoc(doc(db,"users",user.uid),{walletBalance:blRef.current+winAmt});
+      if(won)await updateDoc(doc(db,"users",user.uid),{balance:blRef.current+winAmt});
       await addDoc(collection(db,"abHistory"),{userId:user.uid,betSide:userBet,winner:w,betAmount:amt,won,createdAt:serverTimestamp()});
-    } else {
-      await addDoc(collection(db,"abHistory"),{winner:w,createdAt:serverTimestamp()});
-    }
+    }else{await addDoc(collection(db,"abHistory"),{winner:w,createdAt:serverTimestamp()});}
     setTimeout(()=>startRound(),4000);
   };
 
   const placeBet=async(side)=>{
     const amt=parseFloat(betAmount);
     if(!amt||amt<10)return setMsg("Min bet ₹10");
-    if(amt>blRef.current)return setMsg("Insufficient balance");
+    if(amt>blRef.current)return setMsg("Insufficient balance ❌");
     if(phase!=="betting"||hbRef.current)return;
     setBetSide(side);bsRef.current=side;baRef.current=amt;hbRef.current=true;
-    await updateDoc(doc(db,"users",user.uid),{walletBalance:balance-amt});
     setMsg(`✅ Bet ₹${amt} on ${side==="andar"?"Andar":"Bahar"}!`);
+    await updateDoc(doc(db,"users",user.uid),{balance:blRef.current-amt});
   };
 
-  return (
+  return(
     <div className="min-h-screen bg-[#1a0a2e] text-white">
-      <Navbar />
+      <Navbar/>
       <div className="max-w-lg mx-auto px-4 pb-8">
         <h1 className="text-2xl font-black text-center text-pink-400 py-4">🎴 ANDAR BAHAR</h1>
-        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3 scrollbar-hide">
+        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3">
           {history.map((h,i)=>(
             <span key={i} className={`px-2 py-1 rounded text-xs font-bold flex-shrink-0 ${h.winner==="andar"?"bg-purple-700":"bg-pink-700"}`}>
               {h.winner==="andar"?"A":"B"}
@@ -110,7 +115,6 @@ export default function AndarBahar() {
           ))}
         </div>
         {phase==="betting"&&<div className="text-center mb-3 text-gray-400">Bet in <span className="text-yellow-400 font-bold text-xl">{timeLeft}s</span></div>}
-
         <div className="bg-green-950 rounded-3xl p-4 mb-4 border-2 border-green-800">
           <div className="flex justify-center mb-4">
             {joker?(
@@ -146,9 +150,7 @@ export default function AndarBahar() {
             </div>
           </div>
         </div>
-
         {msg&&<div className="text-center text-sm font-semibold text-yellow-300 bg-yellow-900/20 rounded-xl py-2 px-3 mb-3">{msg}</div>}
-
         <div className="bg-[#12152b] rounded-2xl p-4 border border-gray-800">
           <div className="flex gap-2 mb-3">
             <input type="number" value={betAmount} onChange={(e)=>setBetAmount(e.target.value)} placeholder="Bet amount (Min ₹10)"
