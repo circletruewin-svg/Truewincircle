@@ -1,12 +1,3 @@
-<<<<<<< HEAD
-import { useState, useEffect, useRef } from “react”;
-import { db } from “../firebase”;
-import { doc, onSnapshot, updateDoc, addDoc, collection, serverTimestamp } from “firebase/firestore”;
-import { getAuth } from “firebase/auth”;
-import Navbar from “../components/Navbar”;
-import { getDiceResult } from “../utils/houseEdge”;
-import { calcDeduction, getTotalBalance } from “../utils/balanceUtils”;
-=======
 import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp } from "firebase/firestore";
@@ -14,18 +5,9 @@ import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getDiceResult } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
->>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
 
-const DICE_EMOJIS=[””,“⚀”,“⚁”,“⚂”,“⚃”,“⚄”,“⚅”];
+const DICE_EMOJIS = ["","?","?","?","?","?","?"];
 
-<<<<<<< HEAD
-export default function DiceRoll(){
-const auth=getAuth(),user=auth.currentUser;
-const[balance,setBalance]=useState(0);const[winningMoney,setWinningMoney]=useState(0);const[totalBalance,setTotalBalance]=useState(0);
-const[betAmount,setBetAmount]=useState(””);const[betNum,setBetNum]=useState(null);const[rolling,setRolling]=useState(false);
-const[result,setResult]=useState(null);const[displayDice,setDisplayDice]=useState(1);const[msg,setMsg]=useState(””);const[history,setHistory]=useState([]);
-const balRef=useRef(0),winRef=useRef(0);
-=======
 export default function DiceRoll() {
   const auth = getAuth();
   const user = auth.currentUser;
@@ -37,64 +19,9 @@ export default function DiceRoll() {
   const [msg, setMsg] = useState("");
   const [history, setHistory] = useState([]);
   const balanceRef = useRef(0);
->>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
 
-useEffect(()=>{
-if(!user)return;
-return onSnapshot(doc(db,“users”,user.uid),(s)=>{
-if(s.exists()){const d=s.data();const b=d.balance??0,w=d.winningMoney??0;
-setBalance(b);setWinningMoney(w);setTotalBalance(b+w);balRef.current=b;winRef.current=w;}
-});
-},[user]);
+  useEffect(() => { balanceRef.current = balance; }, [balance]);
 
-<<<<<<< HEAD
-const roll=async()=>{
-const amt=parseFloat(betAmount);
-if(!betNum)return setMsg(“Pick a number 1–6!”);
-if(!amt||amt<10)return setMsg(“Min bet ₹10”);
-const total=getTotalBalance(balRef.current,winRef.current);
-if(amt>total)return setMsg(`Insufficient balance ❌ (Total: ₹${total.toFixed(0)})`);
-if(rolling)return;
-setRolling(true);setResult(null);setMsg(””);
-const {newBalance,newWinning}=calcDeduction(amt,balRef.current,winRef.current);
-await updateDoc(doc(db,“users”,user.uid),{balance:newBalance,winningMoney:newWinning});
-let flips=0;
-const anim=setInterval(()=>{
-setDisplayDice(~~(Math.random()*6)+1);flips++;
-if(flips>=12){
-clearInterval(anim);const outcome=getDiceResult(betNum);setDisplayDice(outcome);setResult(outcome);
-const won=outcome===betNum;const winAmt=won?parseFloat((amt*5.5).toFixed(2)):0;
-won?setMsg(`🎲 Rolled ${outcome}! Won ₹${winAmt}!`):setMsg(`🎲 Rolled ${outcome}. Lost ₹${amt}`);
-if(won)updateDoc(doc(db,“users”,user.uid),{winningMoney:winRef.current+winAmt});
-addDoc(collection(db,“diceBets”),{userId:user.uid,betNum,result:outcome,betAmount:amt,winAmount:winAmt,won,createdAt:serverTimestamp()});
-setHistory(prev=>[{result:outcome},…prev].slice(0,12));setRolling(false);
-}
-},80);
-};
-
-return(<div className="min-h-screen bg-[#0f1722] text-white"><Navbar/>
-<div className="max-w-sm mx-auto px-4 pb-8">
-<h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">🎲 DICE ROLL</h1>
-<div className="flex gap-1.5 overflow-x-auto pb-2 mb-4">{history.map((h,i)=>(<span key={i} className="w-8 h-8 bg-gray-800 rounded-lg flex items-center justify-center text-lg flex-shrink-0">{DICE_EMOJIS[h.result]}</span>))}</div>
-<div className="flex justify-center mb-4"><div className={`w-32 h-32 bg-white rounded-3xl flex items-center justify-center text-8xl shadow-2xl ${rolling?"animate-bounce":""}`}>{DICE_EMOJIS[displayDice]}</div></div>
-<div className="text-center text-gray-400 text-sm mb-4">Pick the exact number → Win <span className="text-yellow-400 font-bold">5.5x</span></div>
-{msg&&<div className="text-center text-sm font-semibold text-yellow-300 bg-yellow-900/20 rounded-xl py-2 px-3 mb-4">{msg}</div>}
-<div className="grid grid-cols-6 gap-2 mb-4">{[1,2,3,4,5,6].map(n=>(<button key={n} onClick={()=>!rolling&&setBetNum(n)} disabled={rolling} className={`h-12 rounded-xl text-2xl font-bold transition-all ${betNum===n?"bg-yellow-500 text-black ring-2 ring-yellow-300 scale-110":"bg-gray-800 hover:bg-gray-700"} disabled:opacity-30`}>{DICE_EMOJIS[n]}</button>))}</div>
-{/* Balance display */}
-<div className="grid grid-cols-3 gap-2 mb-3">
-<div className="bg-[#12152b] rounded-xl p-2 text-center border border-gray-800"><div className="text-xs text-gray-500">Wallet</div><div className="text-sm font-bold text-white">₹{balance.toFixed(0)}</div></div>
-<div className="bg-[#12152b] rounded-xl p-2 text-center border border-yellow-800"><div className="text-xs text-gray-500">Winnings</div><div className="text-sm font-bold text-yellow-400">₹{winningMoney.toFixed(0)}</div></div>
-<div className="bg-green-900/40 rounded-xl p-2 text-center border border-green-700"><div className="text-xs text-gray-400">Total</div><div className="text-sm font-bold text-green-400">₹{totalBalance.toFixed(0)}</div></div>
-</div>
-<div className="bg-[#12152b] rounded-2xl p-4 border border-gray-800">
-<div className="flex gap-2 mb-3"><input type=“number” value={betAmount} onChange={(e)=>setBetAmount(e.target.value)} placeholder=“Bet amount (Min ₹10)” disabled={rolling} className=“flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white”/></div>
-<div className="grid grid-cols-4 gap-2 mb-3">{[50,100,200,500].map(a=>(<button key={a} onClick={()=>setBetAmount(a.toString())} disabled={rolling} className=“bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold”>₹{a}</button>))}</div>
-<button onClick={roll} disabled={rolling} className="w-full bg-yellow-500 hover:bg-yellow-400 disabled:opacity-30 rounded-xl py-3 font-black text-black text-lg">{rolling?“🎲 Rolling…”:“🎲 ROLL DICE!”}</button>
-</div>
-</div>
-
-  </div>);
-=======
   useEffect(() => {
     if (!user) return;
     return onSnapshot(doc(db, "users", user.uid), (s) => {
@@ -104,8 +31,8 @@ return(<div className="min-h-screen bg-[#0f1722] text-white"><Navbar/>
 
   const roll = async () => {
     const amt = parseFloat(betAmount);
-    if (!betNum) return setMsg("Pick a number 1–6!");
-    if (!amt || amt < 10) return setMsg("Min bet ₹10");
+    if (!betNum) return setMsg("Pick a number 1�6!");
+    if (!amt || amt < 10) return setMsg("Min bet ?10");
     if (amt > balanceRef.current) return setMsg("Insufficient balance");
     if (rolling) return;
 
@@ -124,7 +51,7 @@ return(<div className="min-h-screen bg-[#0f1722] text-white"><Navbar/>
         setDisplayDice(outcome);
         const won = outcome === betNum;
         const winAmt = won ? parseFloat((amt * 5.5).toFixed(2)) : 0;
-        won ? setMsg(`🎲 Rolled ${outcome}! You won ₹${winAmt}!`) : setMsg(`🎲 Rolled ${outcome}. You lost ₹${amt}`);
+        won ? setMsg(`?? Rolled ${outcome}! You won ?${winAmt}!`) : setMsg(`?? Rolled ${outcome}. You lost ?${amt}`);
 
         if (won) await creditUserWinnings(db, user.uid, winAmt);
         await addDoc(collection(db, "diceBets"), {
@@ -140,7 +67,7 @@ return(<div className="min-h-screen bg-[#0f1722] text-white"><Navbar/>
     <div className="min-h-screen bg-[#0f1722] text-white">
       <Navbar />
       <div className="max-w-sm mx-auto px-4 pb-8">
-        <h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">🎲 DICE ROLL</h1>
+        <h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">?? DICE ROLL</h1>
 
         {/* History */}
         <div className="flex gap-1.5 overflow-x-auto pb-2 mb-4 scrollbar-hide">
@@ -161,7 +88,7 @@ return(<div className="min-h-screen bg-[#0f1722] text-white"><Navbar/>
 
         {/* Win multiplier info */}
         <div className="text-center text-gray-400 text-sm mb-4">
-          Pick the exact number → Win <span className="text-yellow-400 font-bold">5.5x</span>
+          Pick the exact number ? Win <span className="text-yellow-400 font-bold">5.5x</span>
         </div>
 
         {msg && <div className="text-center text-sm font-semibold text-yellow-300 bg-yellow-900/20 rounded-xl py-2 px-3 mb-4">{msg}</div>}
@@ -183,23 +110,22 @@ return(<div className="min-h-screen bg-[#0f1722] text-white"><Navbar/>
         <div className="bg-[#12152b] rounded-2xl p-4 border border-gray-800">
           <div className="flex gap-2 mb-3">
             <input type="number" value={betAmount} onChange={(e) => setBetAmount(e.target.value)}
-              placeholder="Bet amount (Min ₹10)" disabled={rolling}
+              placeholder="Bet amount (Min ?10)" disabled={rolling}
               className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white" />
-            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">₹{balance}</div>
+            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{balance}</div>
           </div>
           <div className="grid grid-cols-4 gap-2 mb-3">
             {[50, 100, 200, 500].map((a) => (
               <button key={a} onClick={() => setBetAmount(a.toString())} disabled={rolling}
-                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">₹{a}</button>
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">?{a}</button>
             ))}
           </div>
           <button onClick={roll} disabled={rolling}
             className="w-full bg-yellow-500 hover:bg-yellow-400 disabled:opacity-30 rounded-xl py-3 font-black text-black text-lg">
-            {rolling ? "🎲 Rolling..." : "🎲 ROLL DICE!"}
+            {rolling ? "?? Rolling..." : "?? ROLL DICE!"}
           </button>
         </div>
       </div>
     </div>
   );
->>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
 }

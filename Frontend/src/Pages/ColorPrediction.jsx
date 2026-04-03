@@ -1,15 +1,3 @@
-<<<<<<< HEAD
-// ══════════════════════════════════════════
-// ColorPrediction.jsx — FIXED (combined balance)
-// ══════════════════════════════════════════
-import { useState, useEffect, useRef } from “react”;
-import { db } from “../firebase”;
-import { doc, onSnapshot, updateDoc, addDoc, collection, serverTimestamp, query, orderBy, limit } from “firebase/firestore”;
-import { getAuth } from “firebase/auth”;
-import Navbar from “../components/Navbar”;
-import { getBiasedWinner } from “../utils/houseEdge”;
-import { calcDeduction, getTotalBalance } from “../utils/balanceUtils”;
-=======
 import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
@@ -17,169 +5,29 @@ import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
->>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
 
 const COLORS = [
-{ id:“red”,    label:“RED”,    emoji:“🔴”, mult:2,   bg:“bg-red-600”,    ring:“ring-red-400”    },
-{ id:“green”,  label:“GREEN”,  emoji:“🟢”, mult:3,   bg:“bg-green-600”,  ring:“ring-green-400”  },
-{ id:“violet”, label:“VIOLET”, emoji:“🟣”, mult:4.5, bg:“bg-purple-600”, ring:“ring-purple-400” },
+  { id: "red",    label: "RED",    emoji: "??", mult: 2,   bg: "bg-red-600",    ring: "ring-red-400"    },
+  { id: "green",  label: "GREEN",  emoji: "??", mult: 3,   bg: "bg-green-600",  ring: "ring-green-400"  },
+  { id: "violet", label: "VIOLET", emoji: "??", mult: 4.5, bg: "bg-purple-600", ring: "ring-purple-400" },
 ];
-const ROUND_SEC = 30;
+
+const ROUND_SEC = 30; // seconds per round
 
 export default function ColorPrediction() {
-const auth = getAuth(), user = auth.currentUser;
-const [balance, setBalance] = useState(0);
-const [winningMoney, setWinningMoney] = useState(0);
-const [totalBalance, setTotalBalance] = useState(0);
-const [betAmount, setBetAmount] = useState(””);
-const [betColor, setBetColor] = useState(null);
-const [phase, setPhase] = useState(“betting”);
-const [timeLeft, setTimeLeft] = useState(ROUND_SEC);
-const [winnerColor, setWinnerColor] = useState(null);
-const [msg, setMsg] = useState(””);
-const [history, setHistory] = useState([]);
-const [spinning, setSpinning] = useState(false);
-const betColorRef=useRef(null),betAmtRef=useRef(null),hasBetRef=useRef(false);
-const balRef=useRef(0),winRef=useRef(0),timerRef=useRef(null);
+  const auth = getAuth();
+  const user = auth.currentUser;
 
-useEffect(()=>{betColorRef.current=betColor;},[betColor]);
+  const [balance, setBalance] = useState(0);
+  const [betAmount, setBetAmount] = useState("");
+  const [betColor, setBetColor] = useState(null);
+  const [phase, setPhase] = useState("betting"); // betting | result
+  const [timeLeft, setTimeLeft] = useState(ROUND_SEC);
+  const [winnerColor, setWinnerColor] = useState(null);
+  const [msg, setMsg] = useState("");
+  const [history, setHistory] = useState([]);
+  const [spinning, setSpinning] = useState(false);
 
-<<<<<<< HEAD
-useEffect(()=>{
-if(!user)return;
-return onSnapshot(doc(db,“users”,user.uid),(s)=>{
-if(s.exists()){
-const d=s.data();
-const b=d.balance??d.walletBalance??0, w=d.winningMoney??0;
-setBalance(b);setWinningMoney(w);setTotalBalance(b+w);
-balRef.current=b;winRef.current=w;
-}
-});
-},[user]);
-
-useEffect(()=>{
-return onSnapshot(query(collection(db,“colorHistory”),orderBy(“createdAt”,“desc”),limit(15)),
-(s)=>setHistory(s.docs.map(d=>d.data())));
-},[]);
-
-useEffect(()=>{startRound();return()=>clearInterval(timerRef.current);},[]);
-
-const startRound=()=>{
-clearInterval(timerRef.current);
-setPhase(“betting”);setBetColor(null);betColorRef.current=null;
-betAmtRef.current=null;hasBetRef.current=false;
-setWinnerColor(null);setMsg(””);setSpinning(false);setTimeLeft(ROUND_SEC);
-let t=ROUND_SEC;
-timerRef.current=setInterval(()=>{t–;setTimeLeft(t);if(t<=0){clearInterval(timerRef.current);runResult();}},1000);
-};
-
-const runResult=async()=>{
-setPhase(“result”);setSpinning(true);
-const userBet=betColorRef.current;
-const winner=userBet?getBiasedWinner(userBet,[“red”,“green”,“violet”]):[“red”,“green”,“violet”][~~(Math.random()*3)];
-setTimeout(async()=>{
-setSpinning(false);setWinnerColor(winner);
-if(hasBetRef.current&&userBet){
-const won=winner===userBet;
-const colorData=COLORS.find(c=>c.id===winner);
-const amt=betAmtRef.current;
-const winAmt=won?parseFloat((amt*colorData.mult).toFixed(2)):0;
-if(won){setMsg(`🎉 ${winner.toUpperCase()} wins! +₹${winAmt}`);
-await updateDoc(doc(db,“users”,user.uid),{winningMoney:winRef.current+winAmt});
-}else{setMsg(`😞 ${winner.toUpperCase()} wins. Lost ₹${amt}`);}
-await addDoc(collection(db,“colorBets”),{userId:user.uid,betColor:userBet,winnerColor:winner,betAmount:amt,winAmount:winAmt,won,createdAt:serverTimestamp()});
-}
-await addDoc(collection(db,“colorHistory”),{winner,createdAt:serverTimestamp()});
-setTimeout(()=>startRound(),3500);
-},2000);
-};
-
-const placeBet=async(color)=>{
-const amt=parseFloat(betAmount);
-if(!amt||amt<10)return setMsg(“Min bet ₹10”);
-const total=getTotalBalance(balRef.current,winRef.current);
-if(amt>total)return setMsg(`Insufficient balance ❌ (Total: ₹${total.toFixed(0)})`);
-if(phase!==“betting”||hasBetRef.current)return;
-setBetColor(color);betColorRef.current=color;betAmtRef.current=amt;hasBetRef.current=true;
-setMsg(`✅ Bet ₹${amt} on ${color.toUpperCase()}!`);
-const {newBalance,newWinning}=calcDeduction(amt,balRef.current,winRef.current);
-await updateDoc(doc(db,“users”,user.uid),{balance:newBalance,winningMoney:newWinning});
-};
-
-const timerPct=(timeLeft/ROUND_SEC)*100;
-const timerColor=timeLeft>10?“bg-green-500”:timeLeft>5?“bg-yellow-500”:“bg-red-500 animate-pulse”;
-
-return(
-<div className="min-h-screen bg-[#0d0d1a] text-white">
-<Navbar/>
-<div className="max-w-lg mx-auto px-4 pb-8">
-<h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">🎨 COLOR PREDICTION</h1>
-<div className="flex gap-1.5 overflow-x-auto pb-2 mb-3">
-{history.map((h,i)=>(
-<div key={i} className={`w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold ${h.winner==="red"?"bg-red-600":h.winner==="green"?"bg-green-600":"bg-purple-600"}`}>
-{h.winner?.[0].toUpperCase()}
-</div>
-))}
-</div>
-<div className="bg-gray-800 rounded-full h-2 mb-4 overflow-hidden">
-<div className={`h-2 rounded-full transition-all duration-1000 ${timerColor}`} style={{width:`${timerPct}%`}}/>
-</div>
-<div className="text-center mb-4">
-{phase===“betting”?<span className="text-lg font-bold">Bet closes in <span className="text-yellow-400 text-2xl">{timeLeft}s</span></span>
-:spinning?<span className="text-xl font-bold text-yellow-300 animate-pulse">🎲 Picking winner…</span>
-:<span className={`text-2xl font-black ${winnerColor==="red"?"text-red-400":winnerColor==="green"?"text-green-400":"text-purple-400"}`}>{winnerColor?.toUpperCase()} WINS!</span>}
-</div>
-<div className="flex justify-center mb-4">
-<div className={`w-28 h-28 rounded-full border-4 border-yellow-500 flex items-center justify-center text-5xl shadow-2xl ${spinning?"animate-spin":""} ${winnerColor==="red"?"bg-red-700":winnerColor==="green"?"bg-green-700":winnerColor==="violet"?"bg-purple-700":"bg-gray-800"}`}>
-{spinning?“🎰”:winnerColor?COLORS.find(c=>c.id===winnerColor)?.emoji:“🎯”}
-</div>
-</div>
-{msg&&<div className="text-center text-sm font-semibold text-yellow-300 bg-yellow-900/20 rounded-xl py-2 px-3 mb-4">{msg}</div>}
-{/* Balance display */}
-<div className="grid grid-cols-3 gap-2 mb-3">
-<div className="bg-[#12152b] rounded-xl p-2 text-center border border-gray-800">
-<div className="text-xs text-gray-500">Wallet</div>
-<div className="text-sm font-bold text-white">₹{balance.toFixed(0)}</div>
-</div>
-<div className="bg-[#12152b] rounded-xl p-2 text-center border border-yellow-800">
-<div className="text-xs text-gray-500">Winnings</div>
-<div className="text-sm font-bold text-yellow-400">₹{winningMoney.toFixed(0)}</div>
-</div>
-<div className="bg-green-900/40 rounded-xl p-2 text-center border border-green-700">
-<div className="text-xs text-gray-400">Total</div>
-<div className="text-sm font-bold text-green-400">₹{totalBalance.toFixed(0)}</div>
-</div>
-</div>
-<div className="bg-[#12152b] rounded-2xl p-4 border border-gray-800 mb-3">
-<div className="flex gap-2 mb-3">
-<input type=“number” value={betAmount} onChange={(e)=>setBetAmount(e.target.value)}
-placeholder=“Bet amount (Min ₹10)” disabled={phase!==“betting”||hasBetRef.current}
-className=“flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white”/>
-</div>
-<div className="grid grid-cols-4 gap-2">
-{[50,100,200,500].map(a=>(
-<button key={a} onClick={()=>setBetAmount(a.toString())} disabled={phase!==“betting”||hasBetRef.current}
-className=“bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold”>₹{a}</button>
-))}
-</div>
-</div>
-<div className="grid grid-cols-3 gap-3">
-{COLORS.map(c=>(
-<button key={c.id} onClick={()=>placeBet(c.id)} disabled={phase!==“betting”||hasBetRef.current}
-className={`${c.bg} ${betColor===c.id?`ring-4 ${c.ring}`:""} rounded-2xl py-5 flex flex-col items-center gap-1 font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 active:scale-95 transition-all`}>
-<span className="text-3xl">{c.emoji}</span>
-<span className="text-sm">{c.label}</span>
-<span className="text-xs font-black opacity-80">{c.mult}x</span>
-</button>
-))}
-</div>
-<div className="mt-4 bg-[#12152b] rounded-xl p-3 border border-gray-800 text-xs text-gray-500 text-center">
-RED = 2x  |  GREEN = 3x  |  VIOLET = 4.5x
-</div>
-</div>
-</div>
-);
-=======
   const betColorRef = useRef(null);
   const betAmtRef = useRef(null);
   const hasBetRef = useRef(false);
@@ -252,10 +100,10 @@ RED = 2x  |  GREEN = 3x  |  VIOLET = 4.5x
 
         if (won) {
           winAmt = parseFloat((amt * colorData.mult).toFixed(2));
-          setMsg(`🎉 ${winner.toUpperCase()} wins! +₹${winAmt}`);
+          setMsg(`?? ${winner.toUpperCase()} wins! +?${winAmt}`);
           await creditUserWinnings(db, user.uid, winAmt);
         } else {
-          setMsg(`😞 ${winner.toUpperCase()} wins. Lost ₹${amt}`);
+          setMsg(`?? ${winner.toUpperCase()} wins. Lost ?${amt}`);
         }
 
         await addDoc(collection(db, "colorBets"), {
@@ -274,7 +122,7 @@ RED = 2x  |  GREEN = 3x  |  VIOLET = 4.5x
 
   const placeBet = async (color) => {
     const amt = parseFloat(betAmount);
-    if (!amt || amt < 10) return setMsg("Min bet ₹10");
+    if (!amt || amt < 10) return setMsg("Min bet ?10");
     if (amt > balanceRef.current) return setMsg("Insufficient balance");
     if (phase !== "betting" || hasBetRef.current) return;
 
@@ -283,7 +131,7 @@ RED = 2x  |  GREEN = 3x  |  VIOLET = 4.5x
     betAmtRef.current = amt;
     hasBetRef.current = true;
     await debitUserFunds(db, user.uid, amt);
-    setMsg(`✅ Bet ₹${amt} on ${color.toUpperCase()}!`);
+    setMsg(`? Bet ?${amt} on ${color.toUpperCase()}!`);
   };
 
   const timerPct = (timeLeft / ROUND_SEC) * 100;
@@ -293,7 +141,7 @@ RED = 2x  |  GREEN = 3x  |  VIOLET = 4.5x
     <div className="min-h-screen bg-[#0d0d1a] text-white">
       <Navbar />
       <div className="max-w-lg mx-auto px-4 pb-8">
-        <h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">🎨 COLOR PREDICTION</h1>
+        <h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">?? COLOR PREDICTION</h1>
 
         {/* History */}
         <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3 scrollbar-hide">
@@ -317,7 +165,7 @@ RED = 2x  |  GREEN = 3x  |  VIOLET = 4.5x
               Bet closes in <span className="text-yellow-400 text-2xl">{timeLeft}s</span>
             </span>
           ) : spinning ? (
-            <span className="text-xl font-bold text-yellow-300 animate-pulse">🎲 Picking winner...</span>
+            <span className="text-xl font-bold text-yellow-300 animate-pulse">?? Picking winner...</span>
           ) : (
             <span className={`text-2xl font-black ${
               winnerColor === "red" ? "text-red-400" : winnerColor === "green" ? "text-green-400" : "text-purple-400"
@@ -332,7 +180,7 @@ RED = 2x  |  GREEN = 3x  |  VIOLET = 4.5x
           <div className={`w-28 h-28 rounded-full border-4 border-yellow-500 flex items-center justify-center text-5xl
             shadow-2xl ${spinning ? "animate-spin" : ""}
             ${winnerColor === "red" ? "bg-red-700" : winnerColor === "green" ? "bg-green-700" : winnerColor === "violet" ? "bg-purple-700" : "bg-gray-800"}`}>
-            {spinning ? "🎰" : winnerColor ? COLORS.find((c) => c.id === winnerColor)?.emoji : "🎯"}
+            {spinning ? "??" : winnerColor ? COLORS.find((c) => c.id === winnerColor)?.emoji : "??"}
           </div>
         </div>
 
@@ -343,17 +191,17 @@ RED = 2x  |  GREEN = 3x  |  VIOLET = 4.5x
         <div className="bg-[#12152b] rounded-2xl p-4 border border-gray-800 mb-3">
           <div className="flex gap-2 mb-3">
             <input type="number" value={betAmount} onChange={(e) => setBetAmount(e.target.value)}
-              placeholder="Bet amount (Min ₹10)"
+              placeholder="Bet amount (Min ?10)"
               disabled={phase !== "betting" || hasBetRef.current}
               className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white" />
-            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">₹{balance}</div>
+            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{balance}</div>
           </div>
           <div className="grid grid-cols-4 gap-2">
             {[50, 100, 200, 500].map((a) => (
               <button key={a} onClick={() => setBetAmount(a.toString())}
                 disabled={phase !== "betting" || hasBetRef.current}
                 className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">
-                ₹{a}
+                ?{a}
               </button>
             ))}
           </div>
@@ -371,7 +219,7 @@ RED = 2x  |  GREEN = 3x  |  VIOLET = 4.5x
               <span className="text-3xl">{c.emoji}</span>
               <span className="text-sm">{c.label}</span>
               <span className="text-xs font-black opacity-80">{c.mult}x</span>
-              {betColor === c.id && <span className="text-xs">✅ Bet</span>}
+              {betColor === c.id && <span className="text-xs">? Bet</span>}
             </button>
           ))}
         </div>
@@ -383,5 +231,4 @@ RED = 2x  |  GREEN = 3x  |  VIOLET = 4.5x
       </div>
     </div>
   );
->>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
 }

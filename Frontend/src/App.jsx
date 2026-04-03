@@ -19,6 +19,7 @@ import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import Withdraw from './Pages/Withdraw';
 import AdminDashboard from './Admin/Admin';
+
 import AdminRoute from './Admin/AdminRoute';
 import Spinner from './components/Loader';
 import Profile from './Pages/Profile';
@@ -37,28 +38,17 @@ import ColorPrediction from './Pages/ColorPrediction';
 import CoinFlip from './Pages/CoinFlip';
 import DiceRoll from './Pages/DiceRoll';
 
-import Aviator from './Pages/Aviator';
-import TeenPatti from './Pages/TeenPatti';
-import DragonTiger from './Pages/DragonTiger';
-import AndarBahar from './Pages/AndarBahar';
-import ColorPrediction from './Pages/ColorPrediction';
-import CoinFlip from './Pages/CoinFlip';
-import DiceRoll from './Pages/DiceRoll';
-
 const AppContent = () => {
   const location = useLocation();
+  // The Navbar will not be shown on the /Admin route
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const showNavbar = location.pathname.toLowerCase() !== '/admin';
 
   useEffect(() => {
-<<<<<<< HEAD
-    if (user && user.role === 'admin') navigate('/Admin');
-=======
     if (user && user.role === 'admin') {
       navigate('/admin');
     }
->>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
   }, [user, navigate]);
 
   return (
@@ -76,8 +66,10 @@ const AppContent = () => {
         pauseOnHover
         theme="dark"
       />
-      <Routes>
-        <Route path="/" element={<Home />} />
+    
+    
+        <Routes>
+          <Route path="/" element={<Home />} />
         <Route path="/spinwheel" element={<SpinWheel />} />
         <Route path="/fixnumber" element={<FixNumber />} />
         <Route path="/wingame" element={<WinGame />} />
@@ -88,24 +80,6 @@ const AppContent = () => {
         <Route path="/pay" element={<Pay />} />
         <Route path="/withdraw" element={<Withdraw />} />
         <Route path="/payconfirm" element={<PaymentConfirmation />} />
-<<<<<<< HEAD
-        <Route path="/Wallet" element={<MyWallet />} />
-        <Route path="/Support" element={<Support />} />
-        <Route path="/History" element={<History />} />
-        <Route path="/Privacy" element={<PrivacyPolicy />} />
-        <Route path="/p" element={<GameSummary />} />
-        <Route path="/refer" element={<Referrals />} />
-        <Route path="/BettingHistory" element={<BettingHistory />} />
-        <Route path="/Admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
-
-        <Route path="/aviator" element={<Aviator />} />
-        <Route path="/teen-patti" element={<TeenPatti />} />
-        <Route path="/dragon-tiger" element={<DragonTiger />} />
-        <Route path="/andar-bahar" element={<AndarBahar />} />
-        <Route path="/color-prediction" element={<ColorPrediction />} />
-        <Route path="/coin-flip" element={<CoinFlip />} />
-        <Route path="/dice-roll" element={<DiceRoll />} />
-=======
         <Route path="/wallet" element={<MyWallet />} />
         <Route path="/support" element={<Support />} />
         <Route path="/history" element={<History />} />
@@ -121,11 +95,11 @@ const AppContent = () => {
         <Route path="/coinflip" element={<CoinFlip />} />
         <Route path="/diceroll" element={<DiceRoll />} />
         <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
->>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
       </Routes>
+    
     </>
   );
-};
+}
 
 const App = () => {
   const { login, user } = useAuthStore();
@@ -145,8 +119,9 @@ const App = () => {
       } else {
         login(null);
       }
-      setLoadingAuth(false);
+      setLoadingAuth(false); // Auth state determined
     });
+
     return () => unsubscribe();
   }, [auth, login]);
 
