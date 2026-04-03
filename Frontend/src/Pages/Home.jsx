@@ -1,7 +1,10 @@
 import React from 'react'
+<<<<<<< HEAD
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import FixNumber from './FixNumber'
+=======
+>>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
 import NextResultTimer from '../components/NextResultTimer'
 import LiveBettingHighlights from '../components/LiveSlider'
 import CasinoRoulette from './SpinWheel'
@@ -11,14 +14,19 @@ import Carousel from '../components/Carousel'
 import Marquee from '../components/Marquee'
 import SocialButtons from '../components/Soical'
 import WinGame from './WinGame'
+<<<<<<< HEAD
 import LiveGamesGrid from '../components/LiveGamesGrid'
+=======
+import LiveCasinoSection from '../components/LiveCasinoSection'
+>>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
 
 const Home = () => {
   return (
-    <div className='pt-20'>
+    <div className='bg-slate-50 pt-20'>
       <Marquee/>
       <Carousel/>
       <SocialButtons/>
+<<<<<<< HEAD
       <NextResultTimer/>
       <LiveBettingHighlights/>
       <div className='mb-5'><MarketCard marketName="GHAZIABAD"    openTime="03:00 PM" closeTime="08:40 PM" /></div>
@@ -33,6 +41,28 @@ const Home = () => {
 
       <WinGame/>
       <CasinoRoulette/>
+=======
+
+      <div className='mx-auto max-w-7xl px-4 md:px-6'>
+        <NextResultTimer/>
+        <LiveBettingHighlights/>
+        <div className='mb-5'><MarketCard marketName="GHAZIABAD" openTime="03:00 PM" closeTime="08:40 PM" /></div>
+        <div className='mb-5'><MarketCard marketName="DELHI BAZAAR" openTime="08:00 PM" closeTime="06:40 PM" /></div>
+        <div className='mb-5'><MarketCard marketName="GALI" openTime="03:00 PM" closeTime="08:40 PM" /></div>
+        <div className='mb-5'><MarketCard marketName="DISAWAR" openTime="03:00 PM" closeTime="08:40 PM" /></div>
+        <div className='mb-5'><MarketCard marketName="MATKA MANDI" openTime="11:00 PM" closeTime="05:40 PM" /></div>
+        <div className='mb-5'><MarketCard marketName="SHREE GANESH" openTime="12:00 PM" closeTime="08:00 PM" /></div>
+        <div className='mb-5'><MarketCard marketName="FARIDABAD" openTime="03:00 PM" closeTime="08:40 PM" /></div>
+      </div>
+
+      <LiveCasinoSection />
+
+      <div className='mx-auto max-w-7xl px-4 pb-10 md:px-6'>
+        <WinGame/>
+        <CasinoRoulette/>
+      </div>
+
+>>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
       <Footer/>
     </div>
   )

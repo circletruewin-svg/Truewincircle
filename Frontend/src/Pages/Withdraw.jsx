@@ -243,7 +243,7 @@ const Withdraw = () => {
     <div className="font-roboto min-h-screen bg-[#042346] text-white p-4 lg:p-8">
       <div className="max-w-6xl mx-auto flex items-center mb-6">
         <button
-          onClick={() => navigate("/Wallet")}
+          onClick={() => navigate("/wallet")}
           className="p-2 rounded-full hover:bg-white/10 transition-colors"
         >
           <ArrowLeft className="w-6 h-6 text-yellow-500" />

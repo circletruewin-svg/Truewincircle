@@ -116,7 +116,7 @@ export default function ProfilePage() {
 
           {/* Actions */}
           <div className="mt-5 flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
-            <button onClick={() => navigate('/AddCash')} className="flex-1 py-2 md:py-3 bg-green-600 hover:bg-green-500 rounded-xl flex items-center justify-center space-x-2 font-semibold transition-colors">
+            <button onClick={() => navigate('/addcash')} className="flex-1 py-2 md:py-3 bg-green-600 hover:bg-green-500 rounded-xl flex items-center justify-center space-x-2 font-semibold transition-colors">
               <ArrowDownCircle size={18} />
               <span>Deposit</span>
             </button>

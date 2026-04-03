@@ -1,22 +1,9 @@
 import { FaWhatsapp, FaTelegram } from "react-icons/fa";
-import React, { useState, useEffect } from 'react';
-import { db } from '../firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import React from 'react';
+import useSocialLinks from '../hooks/useSocialLinks';
 
 export default function SocialButtons() {
-  const [links, setLinks] = useState({ whatsapp: '', telegram: '' });
-
-  useEffect(() => {
-    const fetchLinks = async () => {
-      const docRef = doc(db, 'social_links', 'links');
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        setLinks(docSnap.data());
-      }
-    };
-
-    fetchLinks();
-  }, []);
+  const { links } = useSocialLinks();
 
   return (
     <div className="w-full flex flex-col items-center justify-center">

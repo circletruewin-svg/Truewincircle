@@ -6,6 +6,7 @@ import { toast } from 'react-toastify';
 import { IndianRupee } from 'lucide-react';
 import RouletteBoard from '../components/RouletteBoard';
 import BettingPanel from '../components/BettingPanel';
+import { buildFundsDeductionUpdate, getUserFunds } from '../utils/userFunds';
 
 // --- Helper Functions and Data ---
 
@@ -69,7 +70,7 @@ export default function CasinoRoulette() {
       const userDocRef = doc(db, 'users', user.uid);
       const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
         if (docSnap.exists()) {
-          setBalance(docSnap.data().balance || 0);
+          setBalance(getUserFunds(docSnap.data()).total);
         } else {
           setBalance(0);
         }
@@ -95,11 +96,11 @@ export default function CasinoRoulette() {
         const userDocRef = doc(db, 'users', user.uid);
         const userDoc = await transaction.get(userDocRef);
         if (!userDoc.exists()) throw "User document does not exist!";
-        
-        const currentBalance = userDoc.data().balance || 0;
-        if (currentBalance < parsedBetAmount) throw "Insufficient balance in transaction.";
 
-        transaction.update(userDocRef, { balance: currentBalance - parsedBetAmount });
+        const funds = getUserFunds(userDoc.data());
+        if (funds.total < parsedBetAmount) throw "Insufficient balance in transaction.";
+
+        transaction.update(userDocRef, buildFundsDeductionUpdate(userDoc.data(), parsedBetAmount));
         const betsCollectionRef = collection(db, 'rouletteBets');
         const newBetRef = doc(betsCollectionRef);
         transaction.set(newBetRef, {

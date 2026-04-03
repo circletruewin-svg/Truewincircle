@@ -1,9 +1,19 @@
+<<<<<<< HEAD
 import { useState, useEffect, useRef } from “react”;
 import { db } from “../firebase”;
 import { doc, onSnapshot, updateDoc, addDoc, collection, serverTimestamp, query, orderBy, limit } from “firebase/firestore”;
 import { getAuth } from “firebase/auth”;
 import Navbar from “../components/Navbar”;
 import { getAviatorCrashPoint } from “../utils/houseEdge”;
+=======
+import { useState, useEffect, useRef } from "react";
+import { db } from "../firebase";
+import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+import Navbar from "../components/Navbar";
+import { getAviatorCrashPoint } from "../utils/houseEdge";
+import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
+>>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
 
 // ─── Helper: deduct from balance first, then winningMoney ───────────────────
 function calcDeduction(amount, balance, winningMoney) {
@@ -45,8 +55,18 @@ const animRef = useRef(null);
 const countRef = useRef(null);
 const phaseRef = useRef(“waiting”);
 
+<<<<<<< HEAD
 useEffect(() => { hasBetRef.current = hasBet; }, [hasBet]);
 useEffect(() => { cashedOutRef.current = cashedOut; }, [cashedOut]);
+=======
+  // Balance listener
+  useEffect(() => {
+    if (!user) return;
+    return onSnapshot(doc(db, "users", user.uid), (s) => {
+      if (s.exists()) setBalance(getUserFunds(s.data()).total);
+    });
+  }, [user]);
+>>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
 
 // ── Listen to user doc ────────────────────────────────────────────────────
 useEffect(() => {
@@ -117,7 +137,13 @@ animRef.current = setInterval(() => {
 }, 80);
 ```
 
+<<<<<<< HEAD
 };
+=======
+  const handleCrash = async (cp) => {
+    setPhase("crashed");
+    setCrashAt(cp);
+>>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
 
 const handleCrash = async (cp) => {
 setPhase(“crashed”); phaseRef.current = “crashed”;
@@ -148,6 +174,7 @@ betRef.current = amt;
 setHasBet(true); hasBetRef.current = true;
 setMsg(`✅ Bet ₹${amt} placed!`);
 
+<<<<<<< HEAD
 // Deduct from balance first, then winningMoney
 const { newBalance, newWinning } = calcDeduction(amt, balanceRef.current, winningRef.current);
 try {
@@ -161,6 +188,13 @@ try {
   setHasBet(false); hasBetRef.current = false; betRef.current = null;
 }
 ```
+=======
+    betRef.current = amt;
+    setHasBet(true);
+    await debitUserFunds(db, user.uid, amt);
+    setMsg(`✅ Bet ₹${amt} placed!`);
+  };
+>>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
 
 };
 
@@ -170,10 +204,19 @@ const amt = betRef.current;
 const mult = multiplier;
 const win = parseFloat((amt * mult).toFixed(2));
 
+<<<<<<< HEAD
 ```
 setCashedOut(true); cashedOutRef.current = true;
 setCashMult(mult);
 setMsg(`🎉 Cashed out at ${mult}x! Won ₹${win}`);
+=======
+    await creditUserWinnings(db, user.uid, win);
+    await addDoc(collection(db, "aviatorBets"), {
+      userId: user.uid, betAmount: amt, cashoutMultiplier: mult,
+      winAmount: win, won: true, createdAt: serverTimestamp(),
+    });
+  };
+>>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
 
 try {
   // Winnings always go to winningMoney

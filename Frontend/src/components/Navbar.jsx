@@ -72,10 +72,10 @@ export default function Navbar() {
         </Link>
        
 
-        <Link to="/Support" className="hover:text-yellow-500">
+        <Link to="/support" className="hover:text-yellow-500">
           Support
         </Link>
-        <Link to="/Privacy" className="hover:text-yellow-500">
+        <Link to="/privacy" className="hover:text-yellow-500">
           Terms & Conditions
         </Link>
 
@@ -83,7 +83,7 @@ export default function Navbar() {
           <>
             {/* Wallet Icon with Amount */}
             <Link
-              to="/Wallet"
+              to="/wallet"
               className="relative flex items-center hover:text-yellow-500"
             >
               <Wallet size={24} />
@@ -101,19 +101,19 @@ export default function Navbar() {
               {accountOpen && (
                 <div className="absolute right-0 mt-2 w-40 bg-white text-black rounded-md shadow-lg z-10">
                   <Link
-                    to="/Profile"
+                    to="/profile"
                     className="block px-4 py-2 hover:bg-gray-100"
                   >
                     Profile
                   </Link>
                   <Link
-                    to="/Wallet"
+                    to="/wallet"
                     className="block px-4 py-2 hover:bg-gray-100"
                   >
                     Wallet
                   </Link>
                   <Link
-                    to="/Withdraw"
+                    to="/withdraw"
                     className="block px-4 py-2 hover:bg-gray-100"
                   >
                     Withdraw
@@ -125,19 +125,19 @@ export default function Navbar() {
                     Reffer & Earn
                   </Link>
                   <Link
-                    to="/AddCash"
+                    to="/addcash"
                     className="block px-4 py-2 hover:bg-gray-100"
                   >
                     Add Cash
                   </Link>
                   <Link
-                    to="/History"
+                    to="/history"
                     className="block px-4 py-2 hover:bg-gray-100"
                   >
                     History
                   </Link>
                   <Link
-                    to="/Support"
+                    to="/support"
                     className="block px-4 py-2 hover:bg-gray-100"
                   >
                     Support
@@ -173,7 +173,7 @@ export default function Navbar() {
       {/* Mobile Menu Button + Wallet (side by side) */}
       <div className="md:hidden flex items-center gap-4">
         {user && (
-          <Link to="/Wallet" className="relative flex items-center">
+          <Link to="/wallet" className="relative flex items-center">
             <Wallet size={26} />
             <span className="ml-1 font-semibold">{walletAmount}</span>
           </Link>
@@ -200,35 +200,35 @@ export default function Navbar() {
           {user ? (
             <>
               <Link
-                to="/Profile"
+                to="/profile"
                 className="hover:text-yellow-500"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 Profile
               </Link>
               <Link
-                to="/Wallet"
+                to="/wallet"
                 className="hover:text-yellow-500"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 Wallet
               </Link>
               <Link
-                to="/History"
+                to="/history"
                 className="hover:text-yellow-500"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 History
               </Link>
               <Link
-                to="/Withdraw"
+                to="/withdraw"
                 className="hover:text-yellow-500"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 Withdraw
               </Link>
               <Link
-                to="/AddCash"
+                to="/addcash"
                 className="hover:text-yellow-500"
                 onClick={() => setMobileMenuOpen(false)}
               >
@@ -236,7 +236,7 @@ export default function Navbar() {
               </Link>
 
               <Link
-                to="/Support"
+                to="/support"
                 className="hover:text-yellow-500"
                 onClick={() => setMobileMenuOpen(false)}
               >

@@ -1,30 +1,36 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { CheckCircle, Clock, UploadCloud, IndianRupee, ShieldCheck, Wallet as WalletIcon, XCircle, Loader2, AlertCircle } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle,
+  Clock,
+  IndianRupee,
+  ShieldCheck,
+  UploadCloud,
+  Wallet as WalletIcon,
+  XCircle,
+} from 'lucide-react';
 import { getAuth } from "firebase/auth";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { doc, getDoc, addDoc, collection, onSnapshot, query, where, orderBy, limit, getDocs } from "firebase/firestore";
+import { addDoc, collection, doc, getDoc, getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "../firebase";
-import { motion, AnimatePresence } from 'framer-motion';
-
-const Header = () => <div className="h-16 bg-black/20 backdrop-blur-sm"></div>;
-const Footer = () => <div className="h-12 bg-black/20 backdrop-blur-sm mt-auto"></div>;
+import AccountPageShell from '../components/AccountPageShell';
 
 export default function PaymentConfirmation() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [paymentProof, setPaymentProof] = useState(null);
-  const [paymentStatus, setPaymentStatus] = useState('confirming'); // confirming, pending, approved, rejected
+  const [paymentStatus, setPaymentStatus] = useState('confirming');
   const [topUpId, setTopUpId] = useState(null);
   const [rejectionComment, setRejectionComment] = useState('');
-  const [amount, setAmount] = useState(0); // Using state for amount
-  const [message, setMessage] = useState(''); // Added state for message
+  const [amount, setAmount] = useState(0);
+  const [message, setMessage] = useState('');
 
   const navigate = useNavigate();
   const auth = getAuth();
   const user = auth.currentUser;
-  
+
   useEffect(() => {
     if (!user) {
       setError('Please log in to confirm payment.');
@@ -33,82 +39,69 @@ export default function PaymentConfirmation() {
     }
 
     const findExistingRequest = async () => {
-      // Query for any top-ups for this user and filter client-side to avoid index
-      const q = query(
-        collection(db, 'top-ups'),
-        where('userId', '==', user.uid)
-      );
-      
+      const q = query(collection(db, 'top-ups'), where('userId', '==', user.uid));
+
       try {
         const querySnapshot = await getDocs(q);
-        
         const pendingDocs = querySnapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() }))
-          .filter(doc => doc.status === 'pending');
+          .map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
+          .filter((snapshot) => snapshot.status === 'pending');
 
         if (pendingDocs.length > 0) {
-          // Sort by createdAt descending to find the latest one
           pendingDocs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
           const latestPendingDoc = pendingDocs[0];
-          
-          // A pending request was found
           setTopUpId(latestPendingDoc.id);
           setAmount(latestPendingDoc.amount);
           setPaymentStatus('pending');
-          localStorage.setItem('currentPendingTopUpId', latestPendingDoc.id); // Sync local storage
+          localStorage.setItem('currentPendingTopUpId', latestPendingDoc.id);
+          return;
+        }
+
+        const storedAmount = parseFloat(localStorage.getItem('Amount') || 0);
+        const storedMessage = localStorage.getItem('PaymentMessage') || '';
+        if (storedAmount > 0) {
+          setAmount(storedAmount);
+          setMessage(storedMessage);
+          setPaymentStatus('confirming');
+          localStorage.removeItem('currentPendingTopUpId');
         } else {
-          // No pending request found, so check if we are starting a new payment flow
-          const storedAmount = parseFloat(localStorage.getItem('Amount') || 0);
-          const storedMessage = localStorage.getItem('PaymentMessage') || ''; // Get message
-          if (storedAmount > 0) {
-            setAmount(storedAmount);
-            setMessage(storedMessage); // Set message to state
-            setPaymentStatus('confirming');
-            // Ensure any stale pending ID is cleared
-            localStorage.removeItem('currentPendingTopUpId');
-          } else {
-            // If there's no pending request and no new amount, redirect away.
-            navigate('/Wallet');
-          }
+          navigate('/wallet');
         }
       } catch (err) {
         console.error("Error finding pending top-up:", err);
         setError("Could not check payment status. Please try again later.");
-        // Redirect on error to avoid being stuck on a broken page
-        setTimeout(() => navigate('/Wallet'), 3000);
+        setTimeout(() => navigate('/wallet'), 3000);
       }
     };
 
     findExistingRequest();
-
   }, [user, navigate]);
 
   useEffect(() => {
-    if (!topUpId) return;
+    if (!topUpId) return undefined;
 
-    const unsubscribe = onSnapshot(doc(db, 'top-ups', topUpId), (doc) => {
-      const data = doc.data();
-      if (data) {
-        switch (data.status) {
-          case 'approved':
-            setPaymentStatus('approved');
-            toast.success("Payment approved! Your balance has been updated.");
-            localStorage.removeItem('currentPendingTopUpId'); // Clear on approval
-            localStorage.removeItem('Amount'); // Clear amount from local storage
-            localStorage.removeItem('PaymentMessage'); // Clear message
-            setTimeout(() => navigate('/Wallet'), 3000);
-            break;
-          case 'rejected':
-            setPaymentStatus('rejected');
-            setRejectionComment(data.adminComment || 'Your payment could not be verified.');
-            localStorage.removeItem('currentPendingTopUpId'); // Clear on rejection
-            localStorage.removeItem('Amount'); // Clear amount from local storage
-            localStorage.removeItem('PaymentMessage'); // Clear message
-            break;
-          default:
-            // 'pending' status, do nothing and wait
-            break;
-        }
+    const unsubscribe = onSnapshot(doc(db, 'top-ups', topUpId), (snapshot) => {
+      const data = snapshot.data();
+      if (!data) return;
+
+      switch (data.status) {
+        case 'approved':
+          setPaymentStatus('approved');
+          toast.success("Payment approved! Your balance has been updated.");
+          localStorage.removeItem('currentPendingTopUpId');
+          localStorage.removeItem('Amount');
+          localStorage.removeItem('PaymentMessage');
+          setTimeout(() => navigate('/wallet'), 3000);
+          break;
+        case 'rejected':
+          setPaymentStatus('rejected');
+          setRejectionComment(data.adminComment || 'Your payment could not be verified.');
+          localStorage.removeItem('currentPendingTopUpId');
+          localStorage.removeItem('Amount');
+          localStorage.removeItem('PaymentMessage');
+          break;
+        default:
+          break;
       }
     });
 
@@ -121,173 +114,155 @@ export default function PaymentConfirmation() {
       return;
     }
 
-    // Set payment status to pending IMMEDIATELY when submission starts
-    setPaymentStatus('pending'); 
-    setUploading(true); // Still use uploading to show spinner on the button itself if it's visible.
+    setPaymentStatus('pending');
+    setUploading(true);
     setError('');
-    
+
     try {
       const storage = getStorage();
       const storageRef = ref(storage, `paymentProofs/${user.uid}/${Date.now()}_${paymentProof.name}`);
       await uploadBytes(storageRef, paymentProof);
       const proofUrl = await getDownloadURL(storageRef);
 
-      // Fetch user's name from their user document
       const userDocRef = doc(db, 'users', user.uid);
       const userDocSnap = await getDoc(userDocRef);
       const name = userDocSnap.exists() ? userDocSnap.data().name : 'Unknown User';
 
       const topUpRef = await addDoc(collection(db, 'top-ups'), {
         userId: user.uid,
-        name: name,
+        name,
         amount,
-        message, // Add message to the document
+        message,
         status: 'pending',
         paymentProof: proofUrl,
         createdAt: new Date().toISOString(),
       });
-      
+
       setTopUpId(topUpRef.id);
       localStorage.setItem('currentPendingTopUpId', topUpRef.id);
       toast.success("Payment request submitted successfully!");
-      navigate('/AddCash');
-      
+      navigate('/addcash');
     } catch (err) {
-      setError('Failed to submit request. Please check your connection and try again.');
       console.error('Error submitting top-up request:', err);
-      setPaymentStatus('confirming'); // Revert status if submission fails
+      setError('Failed to submit request. Please check your connection and try again.');
+      setPaymentStatus('confirming');
     } finally {
       setUploading(false);
     }
   };
 
-  const renderInitialContent = () => (
-    <motion.div
-      key="confirm"
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
-      className="w-full max-w-md space-y-6"
-    >
-      <motion.div
-        className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl"
-        whileHover={{ scale: 1.02 }}
-        transition={{ type: "spring", stiffness: 300 }}
-      >
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center space-x-3">
-            <div className="w-12 h-12 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full flex items-center justify-center">
-              <IndianRupee className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h3 className="text-lg font-semibold text-white">Payment Amount</h3>
-              <p className="text-gray-400 text-sm">Ready to process</p>
-            </div>
+  const renderContent = () => {
+    if (error) {
+      return (
+        <div className="flex items-center space-x-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-red-200">
+          <AlertCircle className="h-6 w-6 flex-shrink-0" />
+          <p>{error}</p>
+        </div>
+      );
+    }
+
+    if (paymentStatus === 'pending') {
+      return (
+        <div className="flex flex-col items-center space-y-6 text-center">
+          <Clock className="h-24 w-24 text-yellow-500" />
+          <h2 className="text-3xl font-bold text-white">Request Submitted</h2>
+          <p className="max-w-sm text-gray-300">Status: Pending Admin Approval</p>
+          <p className="max-w-md text-sm text-gray-400">
+            We have received your payment request and this page will update automatically after admin approval or rejection.
+          </p>
+          <div className="rounded-2xl border border-yellow-500/20 bg-yellow-500/10 p-4 text-yellow-200">
+            Go back home and continue playing while approval is in progress.
           </div>
-          <p className="text-3xl font-bold text-white">₹{amount}</p>
         </div>
-        <div className="flex items-center space-x-2 text-green-400 bg-green-500/10 rounded-lg p-3">
-          <ShieldCheck className="w-5 h-5" />
-          <span className="text-sm font-medium">Secure Transaction</span>
+      );
+    }
+
+    if (paymentStatus === 'approved') {
+      return (
+        <div className="flex flex-col items-center space-y-4 text-center">
+          <CheckCircle className="h-24 w-24 text-green-500" />
+          <h2 className="text-3xl font-bold text-green-400">Payment Approved!</h2>
+          <p className="text-gray-300">₹{amount} has been added to your wallet. Redirecting...</p>
         </div>
-      </motion.div>
+      );
+    }
 
-      <motion.div>
-        <label htmlFor="file-upload" className="w-full cursor-pointer bg-white/5 border border-dashed border-white/20 rounded-2xl p-6 flex flex-col items-center justify-center text-center hover:bg-white/10 transition-colors">
-          <UploadCloud className="w-10 h-10 text-purple-400 mb-3" />
-          <span className="font-semibold text-white">{paymentProof ? 'File Selected' : 'Upload Screenshot'}</span>
-          <span className="text-xs text-gray-400 mt-1">{paymentProof ? paymentProof.name : 'PNG, JPG, GIF up to 10MB'}</span>
-        </label>
-        <input id="file-upload" type="file" onChange={(e) => setPaymentProof(e.target.files[0])} className="hidden" />
-      </motion.div>
+    if (paymentStatus === 'rejected') {
+      return (
+        <div className="flex flex-col items-center space-y-6 text-center">
+          <XCircle className="h-24 w-24 text-red-500" />
+          <h2 className="text-3xl font-bold text-red-400">Payment Rejected</h2>
+          <p className="max-w-md text-gray-300">Reason: {rejectionComment}</p>
+          <button
+            onClick={() => navigate('/support')}
+            className="w-full max-w-xs rounded-2xl bg-blue-600 py-3 font-bold text-white transition hover:bg-blue-500"
+          >
+            Contact Support
+          </button>
+        </div>
+      );
+    }
 
-      <motion.button
-        onClick={handleConfirmPayment}
-        className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white py-4 rounded-2xl font-bold text-lg shadow-2xl flex items-center justify-center space-x-3 group"
-        whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-        disabled={uploading}
-      >
-        <WalletIcon className="w-6 h-6" />
-        <span>{uploading ? 'Submitting...' : 'Submit for Verification'}</span>
-      </motion.button>
-    </motion.div>
-  );
+    return (
+      <div className="w-full max-w-md space-y-6">
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 shadow-2xl">
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-r from-green-500 to-emerald-500">
+                <IndianRupee className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-white">Payment Amount</h3>
+                <p className="text-sm text-gray-400">Ready to process</p>
+              </div>
+            </div>
+            <p className="text-3xl font-bold text-white">₹{amount}</p>
+          </div>
 
-  const renderPendingContent = () => (
-    <motion.div
-      key="pending"
-      initial={{ opacity: 0, scale: 0.8 }}
-      animate={{ opacity: 1, scale: 1 }}
-      className="flex flex-col items-center space-y-6 text-center"
-    >
-      <Clock className="w-24 h-24 text-yellow-500" /> {/* Larger clock icon */}
-      <h2 className="text-3xl font-bold text-white">Request Submitted</h2>
-      <p className="text-gray-300 max-w-sm">Status: Pending Admin Approval</p>
-      <p className="text-gray-400 text-sm">We've received your payment request and are waiting for admin verification. This page will update automatically once approved or rejected.</p>
-      <div className="flex items-center space-x-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4 backdrop-blur-sm">
-        <Clock className="w-6 h-6 text-yellow-400 flex-shrink-0" />
-        <p className="text-yellow-300 text-lg">Go Back Home And Play Games</p>
+          <div className="flex items-center space-x-2 rounded-lg bg-green-500/10 p-3 text-green-300">
+            <ShieldCheck className="h-5 w-5" />
+            <span className="text-sm font-medium">Secure Transaction</span>
+          </div>
+        </div>
+
+        <div>
+          <label
+            htmlFor="file-upload"
+            className="flex w-full cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-white/20 bg-white/5 p-6 text-center transition-colors hover:bg-white/10"
+          >
+            <UploadCloud className="mb-3 h-10 w-10 text-purple-400" />
+            <span className="font-semibold text-white">{paymentProof ? 'File Selected' : 'Upload Screenshot'}</span>
+            <span className="mt-1 text-xs text-gray-400">{paymentProof ? paymentProof.name : 'PNG, JPG, GIF up to 10MB'}</span>
+          </label>
+          <input
+            id="file-upload"
+            type="file"
+            onChange={(event) => setPaymentProof(event.target.files[0])}
+            className="hidden"
+          />
+        </div>
+
+        <button
+          onClick={handleConfirmPayment}
+          className="flex w-full items-center justify-center space-x-3 rounded-2xl bg-gradient-to-r from-purple-600 to-blue-600 py-4 text-lg font-bold text-white shadow-2xl transition hover:from-purple-700 hover:to-blue-700"
+          disabled={uploading}
+        >
+          <WalletIcon className="h-6 w-6" />
+          <span>{uploading ? 'Submitting...' : 'Submit for Verification'}</span>
+        </button>
       </div>
-    </motion.div>
-  );
-
-  const renderApprovedContent = () => (
-    <motion.div
-      key="success"
-      initial={{ opacity: 0, scale: 0.5 }}
-      animate={{ opacity: 1, scale: 1 }}
-      className="flex flex-col items-center space-y-4 text-center"
-    >
-      <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 300, delay: 0.2 }}>
-        <CheckCircle className="w-24 h-24 text-green-500" />
-      </motion.div>
-      <h2 className="text-3xl font-bold text-green-400">Payment Approved!</h2>
-      <p className="text-gray-300">₹{amount} has been added to your wallet. Redirecting...</p>
-    </motion.div>
-  );
-
-  const renderRejectedContent = () => (
-    <motion.div
-      key="rejected"
-      initial={{ opacity: 0, y: -20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="flex flex-col items-center space-y-6 text-center"
-    >
-      <XCircle className="w-24 h-24 text-red-500" />
-      <h2 className="text-3xl font-bold text-red-400">Payment Rejected</h2>
-      <p className="text-gray-300 max-w-md">Reason: {rejectionComment}</p>
-      <button
-        onClick={() => navigate('/Support')}
-        className="w-full max-w-xs bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-lg font-bold"
-      >
-        Contact Support
-      </button>
-    </motion.div>
-  );
+    );
+  };
 
   return (
-    <div className="font-roboto bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 min-h-screen relative overflow-hidden">
-      <div className="absolute inset-0 bg-black/20 backdrop-blur-sm"></div>
-      <Header />
-      <div className="relative z-10 p-6 text-white flex flex-col items-center min-h-[80vh] justify-center">
-        <AnimatePresence mode="wait">
-          {error ? (
-            <motion.div
-              key="error"
-              className="flex items-center space-x-3 bg-red-500/10 border border-red-500/20 rounded-lg p-4 mb-6 backdrop-blur-sm"
-            >
-              <AlertCircle className="w-6 h-6 text-red-400 flex-shrink-0" />
-              <p className="text-red-300 text-lg">{error}</p>
-            </motion.div>
-          ) : {
-            'confirming': renderInitialContent(),
-            'pending': renderPendingContent(),
-            'approved': renderApprovedContent(),
-            'rejected': renderRejectedContent(),
-          }[paymentStatus]}
-        </AnimatePresence>
+    <AccountPageShell
+      title="Payment Confirmation"
+      subtitle="Screenshot upload karke payment verification request submit karein."
+      backTo="/pay"
+    >
+      <div className="flex min-h-[70vh] flex-col items-center justify-center p-6 text-white">
+        {renderContent()}
       </div>
-      <Footer />
-    </div>
+    </AccountPageShell>
   );
 }

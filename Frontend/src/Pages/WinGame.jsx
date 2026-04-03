@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
     doc, collection, runTransaction, onSnapshot, serverTimestamp, setDoc, Timestamp,
-    query, where, getDocs, writeBatch, increment, updateDoc,
+    query, where, getDocs, writeBatch, increment,
     getDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import useAuthStore from '../store/authStore';
 import { toast } from 'react-toastify';
 import { Zap, Loader2 } from 'lucide-react';
+import { getFundsDeductionResult, getUserFunds } from '../utils/userFunds';
 
 const BETTING_DURATION_SECONDS = 5 * 60; // 5 minutes
 const RESULTS_DURATION_SECONDS = 1 * 60; // 1 minute
@@ -124,7 +125,13 @@ const WinGame = () => {
                 const betRef = doc.ref;
                 
                 const userRef = doc(db, 'users', bet.userId);
-                batch.update(userRef, { balance: increment(bet.amount) });
+                const refundToBalance = Number(bet.debitedFromBalance || bet.amount || 0);
+                const refundToWinnings = Number(bet.debitedFromWinnings || 0);
+
+                batch.update(userRef, {
+                    balance: increment(refundToBalance),
+                    winningMoney: increment(refundToWinnings),
+                });
     
                 batch.update(betRef, { status: 'refunded' });
             });
@@ -145,7 +152,7 @@ const WinGame = () => {
         if (!user) return;
         const userDocRef = doc(db, 'users', user.uid);
         const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
-            if (docSnap.exists()) setWalletBalance(docSnap.data().balance || 0);
+            if (docSnap.exists()) setWalletBalance(getUserFunds(docSnap.data()).total);
         });
         return unsubscribe;
     }, [user]);
@@ -303,11 +310,11 @@ const WinGame = () => {
                 const userDocRef = doc(db, 'users', user.uid);
                 const userDoc = await transaction.get(userDocRef);
 
-                if (!userDoc.exists() || (userDoc.data().balance || 0) < betAmount) {
+                if (!userDoc.exists()) {
                     throw new Error('Insufficient balance.');
                 }
-                const newBalance = userDoc.data().balance - betAmount;
-                transaction.update(userDocRef, { balance: newBalance });
+                const deduction = getFundsDeductionResult(userDoc.data(), betAmount);
+                transaction.update(userDocRef, deduction.update);
 
                 const betDocRef = doc(collection(db, 'wingame_bets'));
                 transaction.set(betDocRef, {
@@ -315,6 +322,8 @@ const WinGame = () => {
                     roundId: roundId,
                     number: selectedNumber,
                     amount: betAmount,
+                    debitedFromBalance: deduction.debitedFromBalance,
+                    debitedFromWinnings: deduction.debitedFromWinnings,
                     createdAt: serverTimestamp(),
                     status: 'open',
                 });

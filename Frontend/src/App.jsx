@@ -23,13 +23,19 @@ import AdminRoute from './Admin/AdminRoute';
 import Spinner from './components/Loader';
 import Profile from './Pages/Profile';
 import Support from './Pages/Support';
-import ProfileCard from './Pages/Profile';
 import History from './Pages/History';
 import PrivacyPolicy from './components/PrivacyPolicy';
 import BettingHistory from './components/BettingHistory';
 import PhoneSignIn from './Pages/PhoneSignIn';
 import GameSummary from './Admin/components/ProfitLoss';
 import Referrals from './Pages/Referrals';
+import Aviator from './Pages/Aviator';
+import TeenPatti from './Pages/TeenPatti';
+import DragonTiger from './Pages/DragonTiger';
+import AndarBahar from './Pages/AndarBahar';
+import ColorPrediction from './Pages/ColorPrediction';
+import CoinFlip from './Pages/CoinFlip';
+import DiceRoll from './Pages/DiceRoll';
 
 import Aviator from './Pages/Aviator';
 import TeenPatti from './Pages/TeenPatti';
@@ -46,7 +52,13 @@ const AppContent = () => {
   const showNavbar = location.pathname.toLowerCase() !== '/admin';
 
   useEffect(() => {
+<<<<<<< HEAD
     if (user && user.role === 'admin') navigate('/Admin');
+=======
+    if (user && user.role === 'admin') {
+      navigate('/admin');
+    }
+>>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
   }, [user, navigate]);
 
   return (
@@ -72,10 +84,11 @@ const AppContent = () => {
         <Route path="/login" element={<PhoneSignIn />} />
         <Route path="/testphonesignup" element={<PhoneSignUp />} />
         <Route path="/addcash" element={<AddCash />} />
-        <Route path="/Profile" element={<Profile />} />
+        <Route path="/profile" element={<Profile />} />
         <Route path="/pay" element={<Pay />} />
-        <Route path="/Withdraw" element={<Withdraw />} />
+        <Route path="/withdraw" element={<Withdraw />} />
         <Route path="/payconfirm" element={<PaymentConfirmation />} />
+<<<<<<< HEAD
         <Route path="/Wallet" element={<MyWallet />} />
         <Route path="/Support" element={<Support />} />
         <Route path="/History" element={<History />} />
@@ -92,6 +105,23 @@ const AppContent = () => {
         <Route path="/color-prediction" element={<ColorPrediction />} />
         <Route path="/coin-flip" element={<CoinFlip />} />
         <Route path="/dice-roll" element={<DiceRoll />} />
+=======
+        <Route path="/wallet" element={<MyWallet />} />
+        <Route path="/support" element={<Support />} />
+        <Route path="/history" element={<History />} />
+        <Route path="/privacy" element={<PrivacyPolicy/>} />
+        <Route path="/p" element={<GameSummary />} />
+        <Route path="/refer" element={<Referrals />} />
+        <Route path="/bettinghistory" element={<BettingHistory />} />
+        <Route path="/aviator" element={<Aviator />} />
+        <Route path="/teenpatti" element={<TeenPatti />} />
+        <Route path="/dragontiger" element={<DragonTiger />} />
+        <Route path="/andarbahar" element={<AndarBahar />} />
+        <Route path="/colorprediction" element={<ColorPrediction />} />
+        <Route path="/coinflip" element={<CoinFlip />} />
+        <Route path="/diceroll" element={<DiceRoll />} />
+        <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
+>>>>>>> 8ec39b4 (Fix wallet, support, live casino, and admin updates)
       </Routes>
     </>
   );
