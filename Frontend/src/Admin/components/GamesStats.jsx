@@ -1,11 +1,24 @@
 import React, { useEffect, useMemo, useState } from "react";
+import DatePicker from "react-datepicker";
+import "react-datepicker/dist/react-datepicker.css";
 import { collection, onSnapshot, query, Timestamp, where } from "firebase/firestore";
-import { Activity, RefreshCw, Users, Wallet } from "lucide-react";
+import { Activity, Calendar, RefreshCw, Users, Wallet } from "lucide-react";
 import { db } from "../../firebase";
 import { calculateGameMetrics, GAME_ANALYTICS_CONFIG } from "../../utils/gameAnalytics";
 import { formatAmount } from "../../utils/formatMoney";
 
-const getRange = (preset) => {
+const buildTimestampRange = (startDate, endDate) => {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  start.setHours(0, 0, 0, 0);
+  end.setHours(23, 59, 59, 999);
+  return {
+    start: Timestamp.fromDate(start),
+    end: Timestamp.fromDate(end),
+  };
+};
+
+const applyPreset = (preset) => {
   const now = new Date();
   const start = new Date(now);
   const end = new Date(now);
@@ -17,17 +30,18 @@ const getRange = (preset) => {
     start.setDate(start.getDate() - 6);
   }
 
-  start.setHours(0, 0, 0, 0);
-  end.setHours(23, 59, 59, 999);
-  return { start: Timestamp.fromDate(start), end: Timestamp.fromDate(end) };
+  return { start, end };
 };
 
 export default function GamesStats() {
+  const initialDates = applyPreset("today");
   const [preset, setPreset] = useState("today");
+  const [startDate, setStartDate] = useState(initialDates.start);
+  const [endDate, setEndDate] = useState(initialDates.end);
   const [stats, setStats] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const range = useMemo(() => getRange(preset), [preset]);
+  const range = useMemo(() => buildTimestampRange(startDate, endDate), [startDate, endDate]);
 
   useEffect(() => {
     setLoading(true);
@@ -94,15 +108,28 @@ export default function GamesStats() {
     { betCount: 0, players: 0, totalWagered: 0, totalPayout: 0, net: 0 }
   );
 
+  const selectPreset = (value) => {
+    setPreset(value);
+    const next = applyPreset(value);
+    setStartDate(next.start);
+    setEndDate(next.end);
+  };
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h3 className="text-2xl font-bold text-gray-900">Live Casino Game Stats</h3>
-          <p className="mt-1 text-sm text-gray-600">Har game par kitna laga, kitna payout gaya, aur real-time net kya chal raha hai.</p>
+          <p className="mt-1 text-sm text-gray-600">Aviator, Coin Flip, Teen Patti, Dragon Tiger, Andar Bahar, Dice Roll, Color Prediction, Roulette aur 1 to 12 sab yahin track honge.</p>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+            <Calendar className="h-4 w-4 text-blue-600" />
+            <DatePicker selected={startDate} onChange={(date) => setStartDate(date)} selectsStart startDate={startDate} endDate={endDate} className="w-28 outline-none" />
+            <span>to</span>
+            <DatePicker selected={endDate} onChange={(date) => setEndDate(date)} selectsEnd startDate={startDate} endDate={endDate} minDate={startDate} className="w-28 outline-none" />
+          </div>
           {[
             { id: "today", label: "Today" },
             { id: "yesterday", label: "Yesterday" },
@@ -110,7 +137,7 @@ export default function GamesStats() {
           ].map((item) => (
             <button
               key={item.id}
-              onClick={() => setPreset(item.id)}
+              onClick={() => selectPreset(item.id)}
               className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${preset === item.id ? "bg-blue-600 text-white" : "bg-white text-gray-700 border border-gray-200 hover:border-blue-300"}`}
             >
               {item.label}

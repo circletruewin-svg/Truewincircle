@@ -6,19 +6,30 @@ import Navbar from "../components/Navbar";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatAmount } from "../utils/formatMoney";
+import { GAME_ASSETS } from "../utils/gameAssets";
 
-const SUITS = ["?", "?", "?", "?"];
+const SUITS = ["S", "H", "D", "C"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
-const rnd = () => ({ suit: SUITS[~~(Math.random() * 4)], rank: RANKS[~~(Math.random() * 13)] });
+const rnd = () => ({ suit: SUITS[Math.floor(Math.random() * 4)], rank: RANKS[Math.floor(Math.random() * 13)] });
 
 function Card({ card, hidden }) {
-  const red = card?.suit === "?" || card?.suit === "?";
+  const [assetFailed, setAssetFailed] = useState(false);
+  const red = card?.suit === "H" || card?.suit === "D";
+
   return (
-    <div className={`w-14 h-20 rounded-xl border-2 flex flex-col items-center justify-center font-bold text-base shadow-lg select-none
-      ${hidden ? "bg-blue-900 border-blue-500" : "bg-white border-gray-300"}`}>
-      {hidden ? <span className="text-blue-300 text-2xl">??</span>
-        : <><span className={red ? "text-red-600" : "text-gray-900"}>{card?.rank}</span>
-           <span className={`text-xl ${red ? "text-red-600" : "text-gray-900"}`}>{card?.suit}</span></>}
+    <div className={`w-14 h-20 rounded-xl border-2 flex flex-col items-center justify-center font-bold text-base shadow-lg select-none ${hidden ? "bg-blue-900 border-blue-500" : "bg-white border-gray-300"}`}>
+      {hidden ? (
+        !assetFailed ? (
+          <img src={GAME_ASSETS.teenPattiCardBack} alt="Card back" className="h-full w-full rounded-lg object-cover" onError={() => setAssetFailed(true)} />
+        ) : (
+          <span className="text-blue-200 text-xs font-black">CARD</span>
+        )
+      ) : (
+        <>
+          <span className={red ? "text-red-600" : "text-gray-900"}>{card?.rank}</span>
+          <span className={`text-xl ${red ? "text-red-600" : "text-gray-900"}`}>{card?.suit}</span>
+        </>
+      )}
     </div>
   );
 }
@@ -33,8 +44,8 @@ export default function TeenPatti() {
   const [betAmount, setBetAmount] = useState("");
   const [betSide, setBetSide] = useState(null);
   const [phase, setPhase] = useState("betting");
-  const [pCards, setPCards] = useState([]);
-  const [dCards, setDCards] = useState([]);
+  const [playerCards, setPlayerCards] = useState([]);
+  const [dealerCards, setDealerCards] = useState([]);
   const [winner, setWinner] = useState(null);
   const [msg, setMsg] = useState("");
   const [history, setHistory] = useState([]);
@@ -42,78 +53,98 @@ export default function TeenPatti() {
   const [revealed, setRevealed] = useState(false);
 
   const betSideRef = useRef(null);
-  const betAmtRef = useRef(null);
+  const betAmountRef = useRef(null);
   const hasBetRef = useRef(false);
   const balanceRef = useRef(0);
   const timerRef = useRef(null);
 
-  useEffect(() => { betSideRef.current = betSide; }, [betSide]);
-  useEffect(() => { balanceRef.current = balance; }, [balance]);
+  useEffect(() => {
+    betSideRef.current = betSide;
+  }, [betSide]);
+
+  useEffect(() => {
+    balanceRef.current = balance;
+  }, [balance]);
 
   useEffect(() => {
     if (!user) return;
-    return onSnapshot(doc(db, "users", user.uid), (s) => {
-      if (s.exists()) setBalance(getUserFunds(s.data()).total);
+    return onSnapshot(doc(db, "users", user.uid), (snapshot) => {
+      if (snapshot.exists()) setBalance(getUserFunds(snapshot.data()).total);
     });
   }, [user]);
 
   useEffect(() => {
-    return onSnapshot(
-      query(collection(db, "teenPattiHistory"), orderBy("createdAt", "desc"), limit(12)),
-      (s) => setHistory(s.docs.map((d) => d.data()))
-    );
+    return onSnapshot(query(collection(db, "teenPattiHistory"), orderBy("createdAt", "desc"), limit(12)), (snapshot) => {
+      setHistory(snapshot.docs.map((item) => item.data()));
+    });
   }, []);
 
-  useEffect(() => { startRound(); return () => clearInterval(timerRef.current); }, []);
+  useEffect(() => {
+    startRound();
+    return () => clearInterval(timerRef.current);
+  }, []);
 
   const startRound = () => {
     setPhase("betting");
-    setBetSide(null); betSideRef.current = null;
-    betAmtRef.current = null; hasBetRef.current = false;
-    setWinner(null); setMsg(""); setRevealed(false);
-    setPCards([]); setDCards([]);
+    setBetSide(null);
+    betSideRef.current = null;
+    betAmountRef.current = null;
+    hasBetRef.current = false;
+    setWinner(null);
+    setMsg("");
+    setRevealed(false);
+    setPlayerCards([]);
+    setDealerCards([]);
     setTimeLeft(ROUND_SEC);
 
-    let t = ROUND_SEC;
+    let time = ROUND_SEC;
     timerRef.current = setInterval(() => {
-      t--;
-      setTimeLeft(t);
-      if (t <= 0) { clearInterval(timerRef.current); dealRound(); }
+      time -= 1;
+      setTimeLeft(time);
+      if (time <= 0) {
+        clearInterval(timerRef.current);
+        dealRound();
+      }
     }, 1000);
   };
 
   const dealRound = async () => {
     setPhase("dealing");
-    const pc = [rnd(), rnd(), rnd()];
-    const dc = [rnd(), rnd(), rnd()];
-    setPCards(pc); setDCards(dc);
+    const nextPlayerCards = [rnd(), rnd(), rnd()];
+    const nextDealerCards = [rnd(), rnd(), rnd()];
+    setPlayerCards(nextPlayerCards);
+    setDealerCards(nextDealerCards);
 
     const userBet = betSideRef.current;
-    const w = userBet
-      ? getBiasedWinner(userBet, ["player", "dealer"])
-      : Math.random() > 0.5 ? "player" : "dealer";
+    const roundWinner = userBet ? getBiasedWinner(userBet, ["player", "dealer"]) : Math.random() > 0.5 ? "player" : "dealer";
 
     setTimeout(async () => {
       setRevealed(true);
-      setWinner(w);
+      setWinner(roundWinner);
       setPhase("result");
 
       try {
         if (hasBetRef.current && userBet) {
-          const amt = betAmtRef.current;
-          const won = w === userBet;
-          const winAmt = won ? parseFloat((amt * 1.9).toFixed(2)) : 0;
-          won ? setMsg(`${w.toUpperCase()} wins! +₹${formatAmount(winAmt)}`) : setMsg(`${w.toUpperCase()} wins. Lost ₹${formatAmount(amt)}`);
-          if (won) await creditUserWinnings(db, user.uid, winAmt);
+          const amount = betAmountRef.current;
+          const won = roundWinner === userBet;
+          const winAmount = won ? parseFloat((amount * 1.9).toFixed(2)) : 0;
+          setMsg(won ? `${roundWinner.toUpperCase()} wins! +?${formatAmount(winAmount)}` : `${roundWinner.toUpperCase()} wins. Lost ?${formatAmount(amount)}`);
+          if (won) await creditUserWinnings(db, user.uid, winAmount);
           await addDoc(collection(db, "teenPattiHistory"), {
-            userId: user.uid, betSide: userBet, winner: w, betAmount: amt, winAmount: winAmt, won, createdAt: serverTimestamp(),
+            userId: user.uid,
+            betSide: userBet,
+            winner: roundWinner,
+            betAmount: amount,
+            winAmount,
+            won,
+            createdAt: serverTimestamp(),
           });
         } else {
-          await addDoc(collection(db, "teenPattiHistory"), { winner: w, createdAt: serverTimestamp() });
+          await addDoc(collection(db, "teenPattiHistory"), { winner: roundWinner, createdAt: serverTimestamp() });
         }
       } catch (error) {
         console.error("Failed to finish Teen Patti round:", error);
-        setMsg(`${w.toUpperCase()} round finished. Sync failed.`);
+        setMsg(`${roundWinner.toUpperCase()} round finished. Sync failed.`);
       } finally {
         setTimeout(() => startRound(), 4000);
       }
@@ -121,15 +152,18 @@ export default function TeenPatti() {
   };
 
   const placeBet = async (side) => {
-    const amt = parseFloat(betAmount);
+    const amount = parseFloat(betAmount);
     if (!user) return setMsg("Please log in first");
-    if (!amt || amt < 10) return setMsg("Min bet ₹10");
-    if (amt > balanceRef.current) return setMsg("Insufficient balance");
+    if (!amount || amount < 10) return setMsg("Min bet ?10");
+    if (amount > balanceRef.current) return setMsg("Insufficient balance");
     if (phase !== "betting" || hasBetRef.current) return;
-    setBetSide(side); betSideRef.current = side;
-    betAmtRef.current = amt; hasBetRef.current = true;
-    await debitUserFunds(db, user.uid, amt);
-    setMsg(`Bet ₹${formatAmount(amt)} on ${side === "player" ? "Player" : "Dealer"}!`);
+
+    setBetSide(side);
+    betSideRef.current = side;
+    betAmountRef.current = amount;
+    hasBetRef.current = true;
+    await debitUserFunds(db, user.uid, amount);
+    setMsg(`Bet ?${formatAmount(amount)} on ${side === "player" ? "Player" : "Dealer"}!`);
   };
 
   const timerPct = (timeLeft / ROUND_SEC) * 100;
@@ -138,49 +172,37 @@ export default function TeenPatti() {
     <div className="min-h-screen bg-[#0a1628] text-white">
       <Navbar />
       <div className="max-w-lg mx-auto px-4 pb-8">
-        <h1 className="text-2xl font-black text-center text-yellow-400 py-4">?? TEEN PATTI</h1>
+        <h1 className="text-2xl font-black text-center text-yellow-400 py-4">TEEN PATTI</h1>
 
-        {/* History */}
         <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3 scrollbar-hide">
-          {history.map((h, i) => (
-            <span key={i} className={`px-2.5 py-1 rounded-full text-xs font-bold flex-shrink-0
-              ${h.winner === "player" ? "bg-blue-700" : "bg-red-700"}`}>
-              {h.winner === "player" ? "P" : "D"}
+          {history.map((item, index) => (
+            <span key={index} className={`px-2.5 py-1 rounded-full text-xs font-bold flex-shrink-0 ${item.winner === "player" ? "bg-blue-700" : "bg-red-700"}`}>
+              {item.winner === "player" ? "P" : "D"}
             </span>
           ))}
         </div>
 
-        {/* Timer */}
         {phase === "betting" && (
           <div className="mb-3">
             <div className="flex justify-between text-xs text-gray-500 mb-1">
               <span>Betting closes in {timeLeft}s</span>
-              <span>₹{formatAmount(balance)}</span>
+              <span>?{formatAmount(balance)}</span>
             </div>
             <div className="bg-gray-800 rounded-full h-2 overflow-hidden">
-              <div className={`h-2 rounded-full transition-all duration-1000 ${timeLeft > 8 ? "bg-green-500" : timeLeft > 4 ? "bg-yellow-500" : "bg-red-500 animate-pulse"}`}
-                style={{ width: `${timerPct}%` }} />
+              <div className={`h-2 rounded-full transition-all duration-1000 ${timeLeft > 8 ? "bg-green-500" : timeLeft > 4 ? "bg-yellow-500" : "bg-red-500 animate-pulse"}`} style={{ width: `${timerPct}%` }} />
             </div>
           </div>
         )}
 
-        {/* Table */}
         <div className="bg-green-900 rounded-3xl p-5 mb-4 border-4 border-yellow-700">
           <div className="text-center text-gray-300 text-sm font-semibold mb-2">DEALER</div>
           <div className="flex justify-center gap-2 mb-4">
-            {phase === "betting" ? [1,2,3].map(i => <Card key={i} hidden />) :
-              dCards.map((c, i) => <Card key={i} card={c} hidden={!revealed} />)}
+            {phase === "betting" ? [1, 2, 3].map((item) => <Card key={item} hidden />) : dealerCards.map((card, index) => <Card key={index} card={card} hidden={!revealed} />)}
           </div>
-          {winner && (
-            <div className={`text-center font-black text-xl py-2 rounded-xl mb-3
-              ${winner === "player" ? "bg-blue-600/50" : "bg-red-600/50"}`}>
-              ?? {winner.toUpperCase()} WINS!
-            </div>
-          )}
+          {winner && <div className={`text-center font-black text-xl py-2 rounded-xl mb-3 ${winner === "player" ? "bg-blue-600/50" : "bg-red-600/50"}`}>{winner.toUpperCase()} WINS!</div>}
           <div className="text-center text-gray-300 text-sm font-semibold mb-2">PLAYER</div>
           <div className="flex justify-center gap-2">
-            {phase === "betting" ? [1,2,3].map(i => <Card key={i} hidden />) :
-              pCards.map((c, i) => <Card key={i} card={c} hidden={false} />)}
+            {phase === "betting" ? [1, 2, 3].map((item) => <Card key={item} hidden />) : playerCards.map((card, index) => <Card key={index} card={card} hidden={false} />)}
           </div>
         </div>
 
@@ -188,25 +210,22 @@ export default function TeenPatti() {
 
         <div className="bg-[#12152b] rounded-2xl p-4 border border-gray-800">
           <div className="flex gap-2 mb-3">
-            <input type="number" value={betAmount} onChange={(e) => setBetAmount(e.target.value)}
-              placeholder="Bet amount (Min ?10)" disabled={phase !== "betting" || hasBetRef.current}
-              className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white" />
-            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{balance}</div>
+            <input type="number" value={betAmount} onChange={(e) => setBetAmount(e.target.value)} placeholder="Bet amount (Min ?10)" disabled={phase !== "betting" || hasBetRef.current} className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white" />
+            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{formatAmount(balance)}</div>
           </div>
           <div className="grid grid-cols-4 gap-2 mb-3">
-            {[50, 100, 200, 500].map((a) => (
-              <button key={a} onClick={() => setBetAmount(a.toString())} disabled={phase !== "betting" || hasBetRef.current}
-                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">₹{formatAmount(a)}</button>
+            {[50, 100, 200, 500].map((amount) => (
+              <button key={amount} onClick={() => setBetAmount(amount.toString())} disabled={phase !== "betting" || hasBetRef.current} className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">
+                ?{formatAmount(amount)}
+              </button>
             ))}
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <button onClick={() => placeBet("player")} disabled={phase !== "betting" || hasBetRef.current}
-              className={`rounded-xl py-3 font-bold ${betSide === "player" ? "bg-blue-500 ring-2 ring-blue-300" : "bg-blue-700 hover:bg-blue-600"} disabled:opacity-30 disabled:cursor-not-allowed`}>
-              ?? PLAYER {betSide === "player" ? "?" : ""}
+            <button onClick={() => placeBet("player")} disabled={phase !== "betting" || hasBetRef.current} className={`rounded-xl py-3 font-bold ${betSide === "player" ? "bg-blue-500 ring-2 ring-blue-300" : "bg-blue-700 hover:bg-blue-600"} disabled:opacity-30 disabled:cursor-not-allowed`}>
+              PLAYER
             </button>
-            <button onClick={() => placeBet("dealer")} disabled={phase !== "betting" || hasBetRef.current}
-              className={`rounded-xl py-3 font-bold ${betSide === "dealer" ? "bg-red-500 ring-2 ring-red-300" : "bg-red-700 hover:bg-red-600"} disabled:opacity-30 disabled:cursor-not-allowed`}>
-              ?? DEALER {betSide === "dealer" ? "?" : ""}
+            <button onClick={() => placeBet("dealer")} disabled={phase !== "betting" || hasBetRef.current} className={`rounded-xl py-3 font-bold ${betSide === "dealer" ? "bg-red-500 ring-2 ring-red-300" : "bg-red-700 hover:bg-red-600"} disabled:opacity-30 disabled:cursor-not-allowed`}>
+              DEALER
             </button>
           </div>
         </div>
