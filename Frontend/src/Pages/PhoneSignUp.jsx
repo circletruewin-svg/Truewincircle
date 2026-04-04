@@ -18,18 +18,29 @@ const PhoneSignUp = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  // ✅ Create reCAPTCHA on mount and clear on unmount
-  useEffect(() => {
-    const verifier = new RecaptchaVerifier(
-      auth, // first arg → auth (modular v9)
-      "recaptcha-container", // div id
-      {
-        size: "invisible",
-        callback: () => console.log("reCAPTCHA solved"),
-        "expired-callback": () => console.warn("reCAPTCHA expired"),
-      }
-    );
+  const setupRecaptcha = () => {
+    if (window.recaptchaVerifier) {
+      return window.recaptchaVerifier;
+    }
+
+    const verifier = new RecaptchaVerifier(auth, "recaptcha-container", {
+      size: "invisible",
+      callback: () => console.log("reCAPTCHA solved"),
+      "expired-callback": () => {
+        console.warn("reCAPTCHA expired");
+        if (window.recaptchaVerifier) {
+          window.recaptchaVerifier.clear();
+          window.recaptchaVerifier = null;
+        }
+      },
+    });
+
     window.recaptchaVerifier = verifier;
+    return verifier;
+  };
+
+  useEffect(() => {
+    setupRecaptcha();
 
     return () => {
       if (window.recaptchaVerifier) {
@@ -40,9 +51,9 @@ const PhoneSignUp = () => {
   }, []);
 
   const generateReferralCode = () => {
-    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let result = '';
-    for (let i = 0; i < 6; i++) { // Generate a 6-character code
+    const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let result = "";
+    for (let i = 0; i < 6; i++) {
       result += characters.charAt(Math.floor(Math.random() * characters.length));
     }
     return result;
@@ -54,26 +65,14 @@ const PhoneSignUp = () => {
     setLoading(true);
 
     try {
-      // Ensure reCAPTCHA is initialized
-      if (!window.recaptchaVerifier) {
-        window.recaptchaVerifier = new RecaptchaVerifier(
-          auth,
-          "recaptcha-container",
-          {
-            size: "invisible",
-          }
-        );
-      }
+      const verifier = setupRecaptcha();
+      await verifier.render();
 
       const newReferralCode = generateReferralCode();
-      setGeneratedReferralCode(newReferralCode); // Store the generated code
+      setGeneratedReferralCode(newReferralCode);
 
       const formattedPhone = phone.startsWith("+") ? phone : `+${phone}`;
-      const result = await signInWithPhoneNumber(
-        auth,
-        formattedPhone,
-        window.recaptchaVerifier
-      );
+      const result = await signInWithPhoneNumber(auth, formattedPhone, verifier);
       setConfirmationResult(result);
       setStep(2);
       toast.success("OTP Sent Successfully!");
@@ -81,6 +80,8 @@ const PhoneSignUp = () => {
       console.error("OTP send error:", err);
       if (err.code === "auth/invalid-app-credential") {
         toast.error("Invalid registration request. Please try again later.");
+      } else if (err.code === "auth/captcha-check-failed") {
+        toast.error("Firebase phone login blocked: truewincircle.in aur www.truewincircle.in ko Firebase Auth Authorized Domains me add karna hoga.");
       } else if (err.code === "auth/too-many-requests") {
         toast.error("Too many attempts. Please try again after some time.");
       } else {
@@ -97,9 +98,7 @@ const PhoneSignUp = () => {
     try {
       const result = await confirmationResult.confirm(otp);
       const user = result.user;
-      console.log("User signed in:", user);
 
-      // Create user document in Firestore if it doesn't exist
       const userDocRef = doc(db, "users", user.uid);
 
       let referrerId = null;
@@ -110,26 +109,28 @@ const PhoneSignUp = () => {
         if (!referrerSnapshot.empty) {
           const referrerDoc = referrerSnapshot.docs[0];
           referrerId = referrerDoc.id;
-          toast.success(`Referral code applied!`); // Removed bonus amount from toast
+          toast.success("Referral code applied!");
         } else {
           toast.warn("Invalid referral code. No bonus applied.");
         }
       }
 
-      await setDoc(userDocRef, {
-        phoneNumber: user.phoneNumber,
-        name: name,
-        role: 'user', // Explicitly set role for new users
-        referralCode: generatedReferralCode,
-        referredBy: referrerId,
-        balance: 0, // Changed to 0, bonus is now for referrer on top-up
-        winningMoney: 0,
-        appName:"truewin",
-        createdAt: new Date(),
-        referralBonusAwarded: false, // Added flag
-      }, { merge: true });
-
-      // Removed block for adding initial referral bonus transaction
+      await setDoc(
+        userDocRef,
+        {
+          phoneNumber: user.phoneNumber,
+          name,
+          role: "user",
+          referralCode: generatedReferralCode,
+          referredBy: referrerId,
+          balance: 0,
+          winningMoney: 0,
+          appName: "truewin",
+          createdAt: new Date(),
+          referralBonusAwarded: false,
+        },
+        { merge: true }
+      );
 
       toast.success("Sign in successful!");
       navigate("/");
@@ -190,7 +191,7 @@ const PhoneSignUp = () => {
                 color: "white",
               }}
             />
-            
+
             <input
               type="text"
               placeholder="Referral Code (Optional)"

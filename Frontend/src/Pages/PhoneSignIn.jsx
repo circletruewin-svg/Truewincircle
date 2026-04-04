@@ -7,6 +7,7 @@ import { doc, getDoc } from "firebase/firestore";
 import useAuthStore from "../store/authStore";
 import PhoneInput from "react-phone-input-2";
 import "react-phone-input-2/lib/style.css";
+import { buildSessionUser } from "../utils/sessionUser";
 
 const PhoneSignIn = () => {
   const [phone, setPhone] = useState("");
@@ -17,17 +18,29 @@ const PhoneSignIn = () => {
   const navigate = useNavigate();
   const login = useAuthStore((state) => state.login);
 
-  useEffect(() => {
-    const verifier = new RecaptchaVerifier(
-      auth,
-      "recaptcha-container",
-      {
-        size: "invisible",
-        callback: () => console.log("reCAPTCHA solved"),
-        "expired-callback": () => console.warn("reCAPTCHA expired"),
-      }
-    );
+  const setupRecaptcha = () => {
+    if (window.recaptchaVerifier) {
+      return window.recaptchaVerifier;
+    }
+
+    const verifier = new RecaptchaVerifier(auth, "recaptcha-container", {
+      size: "invisible",
+      callback: () => console.log("reCAPTCHA solved"),
+      "expired-callback": () => {
+        console.warn("reCAPTCHA expired");
+        if (window.recaptchaVerifier) {
+          window.recaptchaVerifier.clear();
+          window.recaptchaVerifier = null;
+        }
+      },
+    });
+
     window.recaptchaVerifier = verifier;
+    return verifier;
+  };
+
+  useEffect(() => {
+    setupRecaptcha();
 
     return () => {
       if (window.recaptchaVerifier) {
@@ -42,22 +55,14 @@ const PhoneSignIn = () => {
     setLoading(true);
 
     try {
-      // Ensure reCAPTCHA is initialized
-      if (!window.recaptchaVerifier) {
-        window.recaptchaVerifier = new RecaptchaVerifier(
-          auth,
-          "recaptcha-container",
-          {
-            size: "invisible",
-          }
-        );
-      }
+      const verifier = setupRecaptcha();
+      await verifier.render();
 
       const formattedPhone = phone.startsWith("+") ? phone : `+${phone}`;
       const result = await signInWithPhoneNumber(
         auth,
         formattedPhone,
-        window.recaptchaVerifier
+        verifier
       );
       setConfirmationResult(result);
       setStep(2);
@@ -67,6 +72,8 @@ const PhoneSignIn = () => {
       if (err.code === "auth/invalid-app-credential") {
         toast.error("Please sign up first.");
         navigate("/testphonesignup");
+      } else if (err.code === "auth/captcha-check-failed") {
+        toast.error("Firebase phone login blocked: truewincircle.in aur www.truewincircle.in ko Firebase Auth Authorized Domains me add karna hoga.");
       } else if (err.code === "auth/too-many-requests") {
         toast.error("Too many attempts. Please try again after some time.");
       } else {
@@ -87,7 +94,7 @@ const PhoneSignIn = () => {
       const userSnap = await getDoc(userRef);
 
       if (userSnap.exists()) {
-        login({ uid: user.uid, ...userSnap.data() });
+        login(buildSessionUser(user, userSnap.data()));
         toast.success("Sign in successful!");
         navigate("/");
       } else {

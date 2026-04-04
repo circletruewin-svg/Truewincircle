@@ -5,6 +5,7 @@ import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
+import { formatAmount } from "../utils/formatMoney";
 
 const SUITS = ["?", "?", "?", "?"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
@@ -97,32 +98,38 @@ export default function TeenPatti() {
       setWinner(w);
       setPhase("result");
 
-      if (hasBetRef.current && userBet) {
-        const amt = betAmtRef.current;
-        const won = w === userBet;
-        const winAmt = won ? parseFloat((amt * 1.9).toFixed(2)) : 0;
-        won ? setMsg(`?? ${w.toUpperCase()} wins! +?${winAmt}`) : setMsg(`?? ${w.toUpperCase()} wins. Lost ?${amt}`);
-        if (won) await creditUserWinnings(db, user.uid, winAmt);
-        await addDoc(collection(db, "teenPattiHistory"), {
-          userId: user.uid, betSide: userBet, winner: w, betAmount: amt, won, createdAt: serverTimestamp(),
-        });
-      } else {
-        await addDoc(collection(db, "teenPattiHistory"), { winner: w, createdAt: serverTimestamp() });
+      try {
+        if (hasBetRef.current && userBet) {
+          const amt = betAmtRef.current;
+          const won = w === userBet;
+          const winAmt = won ? parseFloat((amt * 1.9).toFixed(2)) : 0;
+          won ? setMsg(`${w.toUpperCase()} wins! +₹${formatAmount(winAmt)}`) : setMsg(`${w.toUpperCase()} wins. Lost ₹${formatAmount(amt)}`);
+          if (won) await creditUserWinnings(db, user.uid, winAmt);
+          await addDoc(collection(db, "teenPattiHistory"), {
+            userId: user.uid, betSide: userBet, winner: w, betAmount: amt, winAmount: winAmt, won, createdAt: serverTimestamp(),
+          });
+        } else {
+          await addDoc(collection(db, "teenPattiHistory"), { winner: w, createdAt: serverTimestamp() });
+        }
+      } catch (error) {
+        console.error("Failed to finish Teen Patti round:", error);
+        setMsg(`${w.toUpperCase()} round finished. Sync failed.`);
+      } finally {
+        setTimeout(() => startRound(), 4000);
       }
-
-      setTimeout(() => startRound(), 4000);
     }, 2000);
   };
 
   const placeBet = async (side) => {
     const amt = parseFloat(betAmount);
-    if (!amt || amt < 10) return setMsg("Min bet ?10");
+    if (!user) return setMsg("Please log in first");
+    if (!amt || amt < 10) return setMsg("Min bet ₹10");
     if (amt > balanceRef.current) return setMsg("Insufficient balance");
     if (phase !== "betting" || hasBetRef.current) return;
     setBetSide(side); betSideRef.current = side;
     betAmtRef.current = amt; hasBetRef.current = true;
     await debitUserFunds(db, user.uid, amt);
-    setMsg(`? Bet ?${amt} on ${side === "player" ? "Player" : "Dealer"}!`);
+    setMsg(`Bet ₹${formatAmount(amt)} on ${side === "player" ? "Player" : "Dealer"}!`);
   };
 
   const timerPct = (timeLeft / ROUND_SEC) * 100;
@@ -148,7 +155,7 @@ export default function TeenPatti() {
           <div className="mb-3">
             <div className="flex justify-between text-xs text-gray-500 mb-1">
               <span>Betting closes in {timeLeft}s</span>
-              <span>?{balance}</span>
+              <span>₹{formatAmount(balance)}</span>
             </div>
             <div className="bg-gray-800 rounded-full h-2 overflow-hidden">
               <div className={`h-2 rounded-full transition-all duration-1000 ${timeLeft > 8 ? "bg-green-500" : timeLeft > 4 ? "bg-yellow-500" : "bg-red-500 animate-pulse"}`}
@@ -189,7 +196,7 @@ export default function TeenPatti() {
           <div className="grid grid-cols-4 gap-2 mb-3">
             {[50, 100, 200, 500].map((a) => (
               <button key={a} onClick={() => setBetAmount(a.toString())} disabled={phase !== "betting" || hasBetRef.current}
-                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">?{a}</button>
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">₹{formatAmount(a)}</button>
             ))}
           </div>
           <div className="grid grid-cols-2 gap-3">

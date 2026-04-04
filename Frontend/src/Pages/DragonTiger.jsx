@@ -1,6 +1,3 @@
-// -----------------------------------------------
-// DragonTiger.jsx — Auto House Edge Version
-// -----------------------------------------------
 import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
@@ -8,21 +5,30 @@ import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
+import { formatAmount } from "../utils/formatMoney";
 
-const SUITS = ["?","?","?","?"];
-const RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
-const RANK_VALS = {A:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,J:11,Q:12,K:13};
-const rnd = () => { const r=RANKS[~~(Math.random()*13)]; return {suit:SUITS[~~(Math.random()*4)],rank:r,val:RANK_VALS[r]}; };
+const SUITS = ["S", "H", "D", "C"];
+const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+const RANK_VALS = { A: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10, J: 11, Q: 12, K: 13 };
+const rnd = () => {
+  const rank = RANKS[Math.floor(Math.random() * RANKS.length)];
+  return { suit: SUITS[Math.floor(Math.random() * SUITS.length)], rank, val: RANK_VALS[rank] };
+};
 
 function BigCard({ card, hidden, side }) {
-  const red = card?.suit === "?" || card?.suit === "?";
+  const red = card?.suit === "H" || card?.suit === "D";
   const glow = side === "dragon" ? "border-red-500 shadow-red-900" : "border-blue-500 shadow-blue-900";
+
   return (
-    <div className={`w-24 h-36 rounded-2xl border-4 flex flex-col items-center justify-center shadow-xl
-      ${hidden ? `bg-indigo-900 ${glow}` : `bg-white ${glow}`}`}>
-      {hidden ? <span className="text-5xl">??</span> :
-        <><div className={`text-3xl font-black ${red?"text-red-600":"text-gray-900"}`}>{card?.rank}</div>
-          <div className={`text-5xl ${red?"text-red-600":"text-gray-900"}`}>{card?.suit}</div></>}
+    <div className={`w-24 h-36 rounded-2xl border-4 flex flex-col items-center justify-center shadow-xl ${hidden ? `bg-indigo-900 ${glow}` : `bg-white ${glow}`}`}>
+      {hidden ? (
+        <span className="text-4xl text-slate-200">?</span>
+      ) : (
+        <>
+          <div className={`text-3xl font-black ${red ? "text-red-600" : "text-gray-900"}`}>{card?.rank}</div>
+          <div className={`text-3xl ${red ? "text-red-600" : "text-gray-900"}`}>{card?.suit}</div>
+        </>
+      )}
     </div>
   );
 }
@@ -32,105 +38,220 @@ const ROUND_SEC = 12;
 export function DragonTiger() {
   const auth = getAuth();
   const user = auth.currentUser;
-  const [balance,setBalance]=useState(0);
-  const [betAmount,setBetAmount]=useState("");
-  const [betSide,setBetSide]=useState(null);
-  const [phase,setPhase]=useState("betting");
-  const [dc,setDc]=useState(null);
-  const [tc,setTc]=useState(null);
-  const [winner,setWinner]=useState(null);
-  const [msg,setMsg]=useState("");
-  const [history,setHistory]=useState([]);
-  const [timeLeft,setTimeLeft]=useState(ROUND_SEC);
-  const [revealed,setRevealed]=useState(false);
+  const [balance, setBalance] = useState(0);
+  const [betAmount, setBetAmount] = useState("");
+  const [betSide, setBetSide] = useState(null);
+  const [phase, setPhase] = useState("betting");
+  const [dc, setDc] = useState(null);
+  const [tc, setTc] = useState(null);
+  const [winner, setWinner] = useState(null);
+  const [msg, setMsg] = useState("");
+  const [history, setHistory] = useState([]);
+  const [timeLeft, setTimeLeft] = useState(ROUND_SEC);
+  const [revealed, setRevealed] = useState(false);
 
-  const bsRef=useRef(null),baRef=useRef(null),hbRef=useRef(false),blRef=useRef(0),timerRef=useRef(null);
-  useEffect(()=>{bsRef.current=betSide;},[betSide]);
-  useEffect(()=>{blRef.current=balance;},[balance]);
+  const betSideRef = useRef(null);
+  const betAmountRef = useRef(null);
+  const hasBetRef = useRef(false);
+  const balanceRef = useRef(0);
+  const timerRef = useRef(null);
 
-  useEffect(()=>{ if(!user)return; return onSnapshot(doc(db,"users",user.uid),(s)=>{ if(s.exists())setBalance(getUserFunds(s.data()).total); }); },[user]);
-  useEffect(()=>{ return onSnapshot(query(collection(db,"dtHistory"),orderBy("createdAt","desc"),limit(15)),(s)=>setHistory(s.docs.map(d=>d.data()))); },[]);
-  useEffect(()=>{ startRound(); return ()=>clearInterval(timerRef.current); },[]);
+  useEffect(() => {
+    betSideRef.current = betSide;
+  }, [betSide]);
 
-  const startRound=()=>{
-    setPhase("betting");setBetSide(null);bsRef.current=null;baRef.current=null;hbRef.current=false;
-    setWinner(null);setMsg("");setRevealed(false);setDc(null);setTc(null);setTimeLeft(ROUND_SEC);
-    let t=ROUND_SEC;
-    timerRef.current=setInterval(()=>{ t--;setTimeLeft(t); if(t<=0){clearInterval(timerRef.current);dealRound();} },1000);
-  };
+  useEffect(() => {
+    balanceRef.current = balance;
+  }, [balance]);
 
-  const dealRound=async()=>{
-    setPhase("dealing");
-    const d=rnd(),t=rnd(); setDc(d);setTc(t);
-    const userBet=bsRef.current;
-    const w=userBet ? getBiasedWinner(userBet,["dragon","tiger","tie"]) : ["dragon","tiger"][~~(Math.random()*2)];
+  useEffect(() => {
+    if (!user) return;
+    return onSnapshot(doc(db, "users", user.uid), (snapshot) => {
+      if (snapshot.exists()) setBalance(getUserFunds(snapshot.data()).total);
+    });
+  }, [user]);
 
-    setTimeout(async()=>{
-      setRevealed(true);setWinner(w);setPhase("result");
-      if(hbRef.current&&userBet){
-        const amt=baRef.current,won=w===userBet;
-        const mult=userBet==="tie"?8:1.9;
-        const winAmt=won?parseFloat((amt*mult).toFixed(2)):0;
-        won?setMsg(`?? ${w.toUpperCase()} wins! +?${winAmt}`):setMsg(`?? ${w.toUpperCase()} wins. Lost ?${amt}`);
-        if(won) await creditUserWinnings(db, user.uid, winAmt);
-        await addDoc(collection(db,"dtHistory"),{userId:user.uid,betSide:userBet,winner:w,betAmount:amt,won,createdAt:serverTimestamp()});
-      } else {
-        await addDoc(collection(db,"dtHistory"),{winner:w,createdAt:serverTimestamp()});
+  useEffect(() => {
+    return onSnapshot(query(collection(db, "dtHistory"), orderBy("createdAt", "desc"), limit(15)), (snapshot) => {
+      setHistory(snapshot.docs.map((item) => item.data()));
+    });
+  }, []);
+
+  useEffect(() => {
+    startRound();
+    return () => clearInterval(timerRef.current);
+  }, []);
+
+  const startRound = () => {
+    setPhase("betting");
+    setBetSide(null);
+    betSideRef.current = null;
+    betAmountRef.current = null;
+    hasBetRef.current = false;
+    setWinner(null);
+    setMsg("");
+    setRevealed(false);
+    setDc(null);
+    setTc(null);
+    setTimeLeft(ROUND_SEC);
+
+    let time = ROUND_SEC;
+    timerRef.current = setInterval(() => {
+      time -= 1;
+      setTimeLeft(time);
+      if (time <= 0) {
+        clearInterval(timerRef.current);
+        dealRound();
       }
-      setTimeout(()=>startRound(),4000);
-    },2000);
+    }, 1000);
   };
 
-  const placeBet=async(side)=>{
-    const amt=parseFloat(betAmount);
-    if(!amt||amt<10)return setMsg("Min bet ?10");
-    if(amt>blRef.current)return setMsg("Insufficient balance");
-    if(phase!=="betting"||hbRef.current)return;
-    setBetSide(side);bsRef.current=side;baRef.current=amt;hbRef.current=true;
-    await debitUserFunds(db, user.uid, amt);
-    setMsg(`? Bet ?${amt} on ${side.toUpperCase()}!`);
+  const dealRound = async () => {
+    setPhase("dealing");
+    const dragonCard = rnd();
+    const tigerCard = rnd();
+    setDc(dragonCard);
+    setTc(tigerCard);
+
+    const userBet = betSideRef.current;
+    const roundWinner = userBet ? getBiasedWinner(userBet, ["dragon", "tiger", "tie"]) : ["dragon", "tiger"][Math.floor(Math.random() * 2)];
+
+    setTimeout(async () => {
+      setRevealed(true);
+      setWinner(roundWinner);
+      setPhase("result");
+
+      try {
+        if (hasBetRef.current && userBet) {
+          const amount = betAmountRef.current;
+          const won = roundWinner === userBet;
+          const multiplier = userBet === "tie" ? 8 : 1.9;
+          const winAmount = won ? parseFloat((amount * multiplier).toFixed(2)) : 0;
+
+          setMsg(won ? `${roundWinner.toUpperCase()} wins! +?${formatAmount(winAmount)}` : `${roundWinner.toUpperCase()} wins. Lost ?${formatAmount(amount)}`);
+
+          if (won) {
+            await creditUserWinnings(db, user.uid, winAmount);
+          }
+
+          await addDoc(collection(db, "dtHistory"), {
+            userId: user.uid,
+            betSide: userBet,
+            winner: roundWinner,
+            betAmount: amount,
+            winAmount,
+            won,
+            createdAt: serverTimestamp(),
+          });
+        } else {
+          await addDoc(collection(db, "dtHistory"), {
+            winner: roundWinner,
+            createdAt: serverTimestamp(),
+          });
+        }
+      } catch (error) {
+        console.error("Failed to finish Dragon Tiger round:", error);
+        setMsg(`${roundWinner.toUpperCase()} round finished. Sync failed.`);
+      } finally {
+        setTimeout(() => startRound(), 4000);
+      }
+    }, 2000);
+  };
+
+  const placeBet = async (side) => {
+    const amount = parseFloat(betAmount);
+    if (!user) return setMsg("Please log in first");
+    if (!amount || amount < 10) return setMsg("Min bet ?10");
+    if (amount > balanceRef.current) return setMsg("Insufficient balance");
+    if (phase !== "betting" || hasBetRef.current) return;
+
+    setBetSide(side);
+    betSideRef.current = side;
+    betAmountRef.current = amount;
+    hasBetRef.current = true;
+
+    await debitUserFunds(db, user.uid, amount);
+    setMsg(`Bet ?${formatAmount(amount)} on ${side.toUpperCase()}!`);
   };
 
   return (
     <div className="min-h-screen bg-[#0d1117] text-white">
       <Navbar />
       <div className="max-w-lg mx-auto px-4 pb-8">
-        <h1 className="text-2xl font-black text-center py-4">?? DRAGON <span className="text-gray-500">vs</span> ?? TIGER</h1>
+        <h1 className="text-2xl font-black text-center py-4">Dragon vs Tiger</h1>
+
         <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3 scrollbar-hide">
-          {history.map((h,i)=>(
-            <span key={i} className={`w-7 h-7 rounded-full text-xs font-bold flex items-center justify-center flex-shrink-0
-              ${h.winner==="dragon"?"bg-red-700":h.winner==="tiger"?"bg-blue-700":"bg-green-700"}`}>
-              {h.winner==="dragon"?"D":h.winner==="tiger"?"T":"="}
+          {history.map((item, index) => (
+            <span
+              key={index}
+              className={`w-7 h-7 rounded-full text-xs font-bold flex items-center justify-center flex-shrink-0 ${item.winner === "dragon" ? "bg-red-700" : item.winner === "tiger" ? "bg-blue-700" : "bg-green-700"}`}
+            >
+              {item.winner === "dragon" ? "D" : item.winner === "tiger" ? "T" : "="}
             </span>
           ))}
         </div>
-        {phase==="betting"&&<div className="text-center mb-3 text-gray-400">Bet in <span className="text-yellow-400 font-bold text-xl">{timeLeft}s</span></div>}
+
+        {phase === "betting" && <div className="text-center mb-3 text-gray-400">Bet in <span className="text-yellow-400 font-bold text-xl">{timeLeft}s</span></div>}
+
         <div className="flex justify-around items-center bg-green-950 rounded-3xl p-6 mb-4 border-2 border-green-800">
-          <div className="text-center"><div className="text-red-400 font-bold mb-2">?? DRAGON</div><BigCard card={dc} hidden={!revealed} side="dragon"/></div>
+          <div className="text-center">
+            <div className="text-red-400 font-bold mb-2">Dragon</div>
+            <BigCard card={dc} hidden={!revealed} side="dragon" />
+          </div>
           <div className="text-3xl font-black text-yellow-400">VS</div>
-          <div className="text-center"><div className="text-blue-400 font-bold mb-2">?? TIGER</div><BigCard card={tc} hidden={!revealed} side="tiger"/></div>
+          <div className="text-center">
+            <div className="text-blue-400 font-bold mb-2">Tiger</div>
+            <BigCard card={tc} hidden={!revealed} side="tiger" />
+          </div>
         </div>
-        {winner&&<div className={`text-center text-xl font-black py-2 rounded-xl mb-3 ${winner==="dragon"?"bg-red-800":winner==="tiger"?"bg-blue-800":"bg-green-800"}`}>
-          {winner==="dragon"?"?? Dragon Wins!":winner==="tiger"?"?? Tiger Wins!":"?? Tie!"}
-        </div>}
-        {msg&&<div className="text-center text-sm font-semibold text-yellow-300 bg-yellow-900/20 rounded-xl py-2 px-3 mb-3">{msg}</div>}
+
+        {winner && (
+          <div className={`text-center text-xl font-black py-2 rounded-xl mb-3 ${winner === "dragon" ? "bg-red-800" : winner === "tiger" ? "bg-blue-800" : "bg-green-800"}`}>
+            {winner === "dragon" ? "Dragon Wins!" : winner === "tiger" ? "Tiger Wins!" : "Tie!"}
+          </div>
+        )}
+
+        {msg && <div className="text-center text-sm font-semibold text-yellow-300 bg-yellow-900/20 rounded-xl py-2 px-3 mb-3">{msg}</div>}
+
         <div className="bg-[#12152b] rounded-2xl p-4 border border-gray-800">
           <div className="flex gap-2 mb-3">
-            <input type="number" value={betAmount} onChange={(e)=>setBetAmount(e.target.value)} placeholder="Bet amount (Min ?10)"
-              disabled={phase!=="betting"||hbRef.current} className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white"/>
-            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{balance}</div>
+            <input
+              type="number"
+              value={betAmount}
+              onChange={(e) => setBetAmount(e.target.value)}
+              placeholder="Bet amount (Min ?10)"
+              disabled={phase !== "betting" || hasBetRef.current}
+              className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white"
+            />
+            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{formatAmount(balance)}</div>
           </div>
+
           <div className="grid grid-cols-4 gap-2 mb-3">
-            {[50,100,200,500].map(a=>(
-              <button key={a} onClick={()=>setBetAmount(a.toString())} disabled={phase!=="betting"||hbRef.current}
-                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">?{a}</button>
+            {[50, 100, 200, 500].map((amount) => (
+              <button
+                key={amount}
+                onClick={() => setBetAmount(amount.toString())}
+                disabled={phase !== "betting" || hasBetRef.current}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
+              >
+                ?{formatAmount(amount)}
+              </button>
             ))}
           </div>
+
           <div className="grid grid-cols-3 gap-2">
-            {[{s:"dragon",l:"?? Dragon",c:"bg-red-700 hover:bg-red-600"},{s:"tiger",l:"?? Tiger",c:"bg-blue-700 hover:bg-blue-600"},{s:"tie",l:"?? Tie 8x",c:"bg-green-700 hover:bg-green-600"}].map(({s,l,c})=>(
-              <button key={s} onClick={()=>placeBet(s)} disabled={phase!=="betting"||hbRef.current}
-                className={`${c} ${betSide===s?"ring-2 ring-yellow-400":""} rounded-xl py-2.5 text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed`}>
-                {l}{betSide===s?" ?":""}
+            {[
+              { side: "dragon", label: "Dragon", styles: "bg-red-700 hover:bg-red-600" },
+              { side: "tiger", label: "Tiger", styles: "bg-blue-700 hover:bg-blue-600" },
+              { side: "tie", label: "Tie 8x", styles: "bg-green-700 hover:bg-green-600" },
+            ].map((item) => (
+              <button
+                key={item.side}
+                onClick={() => placeBet(item.side)}
+                disabled={phase !== "betting" || hasBetRef.current}
+                className={`${item.styles} ${betSide === item.side ? "ring-2 ring-yellow-400" : ""} rounded-xl py-2.5 text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed`}
+              >
+                {item.label}
               </button>
             ))}
           </div>

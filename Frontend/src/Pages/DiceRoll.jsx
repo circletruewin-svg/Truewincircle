@@ -5,8 +5,9 @@ import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getDiceResult } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
+import { formatAmount } from "../utils/formatMoney";
 
-const DICE_EMOJIS = ["","?","?","?","?","?","?"];
+const DICE_LABELS = ["", "1", "2", "3", "4", "5", "6"];
 
 export default function DiceRoll() {
   const auth = getAuth();
@@ -20,45 +21,64 @@ export default function DiceRoll() {
   const [history, setHistory] = useState([]);
   const balanceRef = useRef(0);
 
-  useEffect(() => { balanceRef.current = balance; }, [balance]);
+  useEffect(() => {
+    balanceRef.current = balance;
+  }, [balance]);
 
   useEffect(() => {
     if (!user) return;
-    return onSnapshot(doc(db, "users", user.uid), (s) => {
-      if (s.exists()) setBalance(getUserFunds(s.data()).total);
+    return onSnapshot(doc(db, "users", user.uid), (snapshot) => {
+      if (snapshot.exists()) setBalance(getUserFunds(snapshot.data()).total);
     });
   }, [user]);
 
   const roll = async () => {
-    const amt = parseFloat(betAmount);
-    if (!betNum) return setMsg("Pick a number 1–6!");
-    if (!amt || amt < 10) return setMsg("Min bet ?10");
-    if (amt > balanceRef.current) return setMsg("Insufficient balance");
+    const amount = parseFloat(betAmount);
+    if (!user) return setMsg("Please log in first");
+    if (!betNum) return setMsg("Pick a number 1-6 first");
+    if (!amount || amount < 10) return setMsg("Min bet ?10");
+    if (amount > balanceRef.current) return setMsg("Insufficient balance");
     if (rolling) return;
 
     setRolling(true);
     setMsg("");
-    await debitUserFunds(db, user.uid, amt);
+    await debitUserFunds(db, user.uid, amount);
 
-    // Animate dice
     let flips = 0;
     const anim = setInterval(async () => {
-      setDisplayDice(~~(Math.random() * 6) + 1);
-      flips++;
+      setDisplayDice(Math.floor(Math.random() * 6) + 1);
+      flips += 1;
       if (flips >= 12) {
         clearInterval(anim);
         const outcome = getDiceResult(betNum);
         setDisplayDice(outcome);
         const won = outcome === betNum;
-        const winAmt = won ? parseFloat((amt * 5.5).toFixed(2)) : 0;
-        won ? setMsg(`?? Rolled ${outcome}! You won ?${winAmt}!`) : setMsg(`?? Rolled ${outcome}. You lost ?${amt}`);
+        const winAmount = won ? parseFloat((amount * 5.5).toFixed(2)) : 0;
 
-        if (won) await creditUserWinnings(db, user.uid, winAmt);
-        await addDoc(collection(db, "diceBets"), {
-          userId: user.uid, betNum, result: outcome, betAmount: amt, winAmount: winAmt, won, createdAt: serverTimestamp(),
-        });
-        setHistory(prev => [{ result: outcome }, ...prev].slice(0, 12));
-        setRolling(false);
+        try {
+          setMsg(won ? `Rolled ${outcome}! You won ?${formatAmount(winAmount)}!` : `Rolled ${outcome}. You lost ?${formatAmount(amount)}`);
+
+          if (won) {
+            await creditUserWinnings(db, user.uid, winAmount);
+          }
+
+          await addDoc(collection(db, "diceBets"), {
+            userId: user.uid,
+            betNum,
+            result: outcome,
+            betAmount: amount,
+            winAmount,
+            won,
+            createdAt: serverTimestamp(),
+          });
+
+          setHistory((prev) => [{ result: outcome }, ...prev].slice(0, 12));
+        } catch (error) {
+          console.error("Failed to finish Dice Roll round:", error);
+          setMsg(`Rolled ${outcome}. Sync failed.`);
+        } finally {
+          setRolling(false);
+        }
       }
     }, 80);
   };
@@ -67,62 +87,71 @@ export default function DiceRoll() {
     <div className="min-h-screen bg-[#0f1722] text-white">
       <Navbar />
       <div className="max-w-sm mx-auto px-4 pb-8">
-        <h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">?? DICE ROLL</h1>
+        <h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">Dice Roll</h1>
 
-        {/* History */}
         <div className="flex gap-1.5 overflow-x-auto pb-2 mb-4 scrollbar-hide">
-          {history.map((h, i) => (
-            <span key={i} className="w-8 h-8 bg-gray-800 rounded-lg flex items-center justify-center text-lg flex-shrink-0">
-              {DICE_EMOJIS[h.result]}
+          {history.map((item, index) => (
+            <span key={index} className="w-8 h-8 bg-gray-800 rounded-lg flex items-center justify-center text-sm flex-shrink-0">
+              {DICE_LABELS[item.result]}
             </span>
           ))}
         </div>
 
-        {/* Dice display */}
         <div className="flex justify-center mb-6">
-          <div className={`w-32 h-32 bg-white rounded-3xl flex items-center justify-center text-8xl shadow-2xl
-            ${rolling ? "animate-bounce" : ""} transition-all`}>
-            {DICE_EMOJIS[displayDice]}
+          <div className={`w-32 h-32 bg-white text-slate-900 rounded-3xl flex items-center justify-center text-6xl shadow-2xl ${rolling ? "animate-bounce" : ""} transition-all`}>
+            {DICE_LABELS[displayDice]}
           </div>
         </div>
 
-        {/* Win multiplier info */}
         <div className="text-center text-gray-400 text-sm mb-4">
-          Pick the exact number ? Win <span className="text-yellow-400 font-bold">5.5x</span>
+          Pick the exact number and win <span className="text-yellow-400 font-bold">5.5x</span>
         </div>
 
         {msg && <div className="text-center text-sm font-semibold text-yellow-300 bg-yellow-900/20 rounded-xl py-2 px-3 mb-4">{msg}</div>}
 
-        {/* Number picker */}
         <div className="grid grid-cols-6 gap-2 mb-4">
-          {[1, 2, 3, 4, 5, 6].map((n) => (
-            <button key={n} onClick={() => !rolling && setBetNum(n)}
+          {[1, 2, 3, 4, 5, 6].map((number) => (
+            <button
+              key={number}
+              onClick={() => !rolling && setBetNum(number)}
               disabled={rolling}
-              className={`h-12 rounded-xl text-2xl font-bold transition-all
-                ${betNum === n ? "bg-yellow-500 text-black ring-2 ring-yellow-300 scale-110" : "bg-gray-800 hover:bg-gray-700"}
-                disabled:opacity-30`}>
-              {DICE_EMOJIS[n]}
+              className={`h-12 rounded-xl text-xl font-bold transition-all ${betNum === number ? "bg-yellow-500 text-black ring-2 ring-yellow-300 scale-110" : "bg-gray-800 hover:bg-gray-700"} disabled:opacity-30`}
+            >
+              {number}
             </button>
           ))}
         </div>
 
-        {/* Bet */}
         <div className="bg-[#12152b] rounded-2xl p-4 border border-gray-800">
           <div className="flex gap-2 mb-3">
-            <input type="number" value={betAmount} onChange={(e) => setBetAmount(e.target.value)}
-              placeholder="Bet amount (Min ?10)" disabled={rolling}
-              className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white" />
-            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{balance}</div>
+            <input
+              type="number"
+              value={betAmount}
+              onChange={(e) => setBetAmount(e.target.value)}
+              placeholder="Bet amount (Min ?10)"
+              disabled={rolling}
+              className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white"
+            />
+            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{formatAmount(balance)}</div>
           </div>
           <div className="grid grid-cols-4 gap-2 mb-3">
-            {[50, 100, 200, 500].map((a) => (
-              <button key={a} onClick={() => setBetAmount(a.toString())} disabled={rolling}
-                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">?{a}</button>
+            {[50, 100, 200, 500].map((amount) => (
+              <button
+                key={amount}
+                onClick={() => setBetAmount(amount.toString())}
+                disabled={rolling}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
+              >
+                ?{formatAmount(amount)}
+              </button>
             ))}
           </div>
-          <button onClick={roll} disabled={rolling}
-            className="w-full bg-yellow-500 hover:bg-yellow-400 disabled:opacity-30 rounded-xl py-3 font-black text-black text-lg">
-            {rolling ? "?? Rolling..." : "?? ROLL DICE!"}
+          <button
+            onClick={roll}
+            disabled={rolling}
+            className="w-full bg-yellow-500 hover:bg-yellow-400 disabled:opacity-30 rounded-xl py-3 font-black text-black text-lg"
+          >
+            {rolling ? "Rolling..." : "Roll Dice"}
           </button>
         </div>
       </div>

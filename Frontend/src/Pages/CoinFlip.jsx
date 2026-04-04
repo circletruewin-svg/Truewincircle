@@ -5,6 +5,7 @@ import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getCoinResult } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
+import { formatAmount } from "../utils/formatMoney";
 
 export default function CoinFlip() {
   const auth = getAuth();
@@ -40,7 +41,8 @@ export default function CoinFlip() {
   const flip = async () => {
     const amt = parseFloat(betAmount);
     if (!betSide) return setMsg("Choose Heads or Tails first!");
-    if (!amt || amt < 10) return setMsg("Min bet ?10");
+    if (!user) return setMsg("Please log in first");
+    if (!amt || amt < 10) return setMsg("Min bet ₹10");
     if (amt > balanceRef.current) return setMsg("Insufficient balance");
     if (phase !== "betting") return;
 
@@ -58,26 +60,31 @@ export default function CoinFlip() {
       const won = outcome === betSide;
       const winAmt = won ? parseFloat((amt * 1.9).toFixed(2)) : 0;
 
-      if (won) {
-        setMsg(`?? ${outcome.toUpperCase()}! You Won ?${winAmt}`);
-        await creditUserWinnings(db, user.uid, winAmt);
-      } else {
-        setMsg(`?? ${outcome.toUpperCase()}! You Lost ?${amt}`);
+      try {
+        if (won) {
+          setMsg(`${outcome.toUpperCase()}! You won ₹${formatAmount(winAmt)}`);
+          await creditUserWinnings(db, user.uid, winAmt);
+        } else {
+          setMsg(`${outcome.toUpperCase()}! You lost ₹${formatAmount(amt)}`);
+        }
+
+        await addDoc(collection(db, "coinFlipHistory"), {
+          userId: user.uid, betSide, result: outcome,
+          betAmount: amt, winAmount: winAmt, won, createdAt: serverTimestamp(),
+        });
+      } catch (error) {
+        console.error("Failed to finish Coin Flip round:", error);
+        setMsg(`${outcome.toUpperCase()} round finished. Stats sync failed.`);
+      } finally {
+        setPhase("result");
+        setTimeout(() => {
+          setPhase("betting");
+          setBetSide(null);
+          setResult(null);
+          setMsg("");
+          setBetLocked(false);
+        }, 3000);
       }
-
-      await addDoc(collection(db, "coinFlipHistory"), {
-        userId: user.uid, betSide, result: outcome,
-        betAmount: amt, winAmount: winAmt, won, createdAt: serverTimestamp(),
-      });
-
-      setPhase("result");
-      setTimeout(() => {
-        setPhase("betting");
-        setBetSide(null);
-        setResult(null);
-        setMsg("");
-        setBetLocked(false);
-      }, 3000);
     }, 1800);
   };
 
@@ -144,13 +151,13 @@ export default function CoinFlip() {
             <input type="number" value={betAmount} onChange={(e) => setBetAmount(e.target.value)}
               placeholder="Bet amount (Min ?10)" disabled={betLocked}
               className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white" />
-            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{balance}</div>
+            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">₹{formatAmount(balance)}</div>
           </div>
           <div className="grid grid-cols-4 gap-2 mb-3">
             {[50, 100, 200, 500].map((a) => (
               <button key={a} onClick={() => setBetAmount(a.toString())} disabled={betLocked}
                 className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">
-                ?{a}
+                ₹{formatAmount(a)}
               </button>
             ))}
           </div>

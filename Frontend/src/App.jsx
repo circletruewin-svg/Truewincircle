@@ -37,6 +37,7 @@ import AndarBahar from './Pages/AndarBahar';
 import ColorPrediction from './Pages/ColorPrediction';
 import CoinFlip from './Pages/CoinFlip';
 import DiceRoll from './Pages/DiceRoll';
+import { buildSessionUser } from './utils/sessionUser';
 
 const AppContent = () => {
   const location = useLocation();
@@ -112,9 +113,9 @@ const App = () => {
         const userRef = doc(db, "users", userAuth.uid);
         const userSnap = await getDoc(userRef);
         if (userSnap.exists()) {
-          login({ ...userAuth, ...userSnap.data() });
+          login(buildSessionUser(userAuth, userSnap.data()));
         } else {
-          login(userAuth);
+          login(buildSessionUser(userAuth));
         }
       } else {
         login(null);

@@ -5,6 +5,7 @@ import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getAviatorCrashPoint } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
+import { formatAmount } from "../utils/formatMoney";
 
 const ROUND_WAIT = 6000; // ms between rounds
 
@@ -69,6 +70,7 @@ export default function Aviator() {
     setCrashAt(null);
     setMsg("");
     betRef.current = null;
+    setBetAmount("");
     setPlanePos({ x: 5, y: 5 });
 
     let c = 6;
@@ -109,25 +111,39 @@ export default function Aviator() {
     setPhase("crashed");
     setCrashAt(cp);
 
-    if (hasBetRef.current && !cashedOutRef.current && betRef.current) {
-      const amt = betRef.current;
-      setMsg(`?? Crashed at ${cp.toFixed(2)}x! Lost ?${amt}`);
-      await addDoc(collection(db, "aviatorHistory"), {
-        crashPoint: cp, userId: user?.uid, betAmount: amt,
-        won: false, createdAt: serverTimestamp(),
-      });
-    } else if (!hasBetRef.current) {
-      await addDoc(collection(db, "aviatorHistory"), {
-        crashPoint: cp, createdAt: serverTimestamp(),
-      });
+    try {
+      if (hasBetRef.current && !cashedOutRef.current && betRef.current) {
+        const amt = betRef.current;
+        setMsg(`Crashed at ${cp.toFixed(2)}x! Lost ₹${formatAmount(amt)}`);
+        await addDoc(collection(db, "aviatorHistory"), {
+          crashPoint: cp, userId: user?.uid, betAmount: amt,
+          won: false, createdAt: serverTimestamp(),
+        });
+        await addDoc(collection(db, "aviatorBets"), {
+          crashPoint: cp,
+          userId: user?.uid,
+          betAmount: amt,
+          winAmount: 0,
+          won: false,
+          createdAt: serverTimestamp(),
+        });
+      } else if (!hasBetRef.current) {
+        await addDoc(collection(db, "aviatorHistory"), {
+          crashPoint: cp, createdAt: serverTimestamp(),
+        });
+      }
+    } catch (error) {
+      console.error("Failed to finish Aviator crash round:", error);
+      setMsg(`Round ended at ${cp.toFixed(2)}x.`);
+    } finally {
+      setTimeout(() => startWaiting(), ROUND_WAIT);
     }
-
-    setTimeout(() => startWaiting(), ROUND_WAIT);
   };
 
   const placeBet = async () => {
     const amt = parseFloat(betAmount);
-    if (!amt || amt < 10) return setMsg("Min bet ?10");
+    if (!user) return setMsg("Please log in first");
+    if (!amt || amt < 10) return setMsg("Min bet ₹10");
     if (amt > balanceRef.current) return setMsg("Insufficient balance");
     if (phase !== "waiting") return setMsg("Wait for next round");
     if (hasBetRef.current) return;
@@ -135,7 +151,7 @@ export default function Aviator() {
     betRef.current = amt;
     setHasBet(true);
     await debitUserFunds(db, user.uid, amt);
-    setMsg(`? Bet ?${amt} placed!`);
+    setMsg(`Bet ₹${formatAmount(amt)} placed!`);
   };
 
   const cashOut = async () => {
@@ -147,13 +163,18 @@ export default function Aviator() {
     setCashedOut(true);
     cashedOutRef.current = true;
     setCashMult(mult);
-    setMsg(`?? Cashed out at ${mult}x! Won ?${win}`);
+    setMsg(`Cashed out at ${mult}x! Won ₹${formatAmount(win)}`);
 
-    await creditUserWinnings(db, user.uid, win);
-    await addDoc(collection(db, "aviatorBets"), {
-      userId: user.uid, betAmount: amt, cashoutMultiplier: mult,
-      winAmount: win, won: true, createdAt: serverTimestamp(),
-    });
+    try {
+      await creditUserWinnings(db, user.uid, win);
+      await addDoc(collection(db, "aviatorBets"), {
+        userId: user.uid, betAmount: amt, cashoutMultiplier: mult,
+        winAmount: win, won: true, createdAt: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error("Failed to record Aviator cash out:", error);
+      setMsg(`Cashed out at ${mult}x! Credit retry required.`);
+    }
   };
 
   const multColor = phase === "crashed" ? "#ef4444" : phase === "flying" ? "#00ff88" : "#facc15";
@@ -229,7 +250,7 @@ export default function Aviator() {
             <input type="number" value={betAmount} onChange={(e) => setBetAmount(e.target.value)}
               placeholder="Bet amount (Min ?10)" disabled={phase !== "waiting" || hasBet}
               className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white" />
-            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{balance}</div>
+            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">₹{formatAmount(balance)}</div>
           </div>
 
           <div className="grid grid-cols-4 gap-2 mb-3">
@@ -237,7 +258,7 @@ export default function Aviator() {
               <button key={a} onClick={() => setBetAmount(a.toString())}
                 disabled={phase !== "waiting" || hasBet}
                 className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">
-                ?{a}
+                ₹{formatAmount(a)}
               </button>
             ))}
           </div>
