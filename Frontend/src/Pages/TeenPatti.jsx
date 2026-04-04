@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
-import { formatAmount } from "../utils/formatMoney";
+import { formatAmount, formatCurrency } from "../utils/formatMoney";
 import { GAME_ASSETS } from "../utils/gameAssets";
 
 const SUITS = ["S", "H", "D", "C"];
@@ -128,7 +128,7 @@ export default function TeenPatti() {
           const amount = betAmountRef.current;
           const won = roundWinner === userBet;
           const winAmount = won ? parseFloat((amount * 1.9).toFixed(2)) : 0;
-          setMsg(won ? `${roundWinner.toUpperCase()} wins! +?${formatAmount(winAmount)}` : `${roundWinner.toUpperCase()} wins. Lost ?${formatAmount(amount)}`);
+          setMsg(won ? `${roundWinner.toUpperCase()} wins! +${formatCurrency(winAmount)}` : `${roundWinner.toUpperCase()} wins. Lost ${formatCurrency(amount)}`);
           if (won) await creditUserWinnings(db, user.uid, winAmount);
           await addDoc(collection(db, "teenPattiHistory"), {
             userId: user.uid,
@@ -154,7 +154,7 @@ export default function TeenPatti() {
   const placeBet = async (side) => {
     const amount = parseFloat(betAmount);
     if (!user) return setMsg("Please log in first");
-    if (!amount || amount < 10) return setMsg("Min bet ?10");
+    if (!amount || amount < 10) return setMsg(`Min bet ${formatCurrency(10)}`);
     if (amount > balanceRef.current) return setMsg("Insufficient balance");
     if (phase !== "betting" || hasBetRef.current) return;
 
@@ -163,7 +163,7 @@ export default function TeenPatti() {
     betAmountRef.current = amount;
     hasBetRef.current = true;
     await debitUserFunds(db, user.uid, amount);
-    setMsg(`Bet ?${formatAmount(amount)} on ${side === "player" ? "Player" : "Dealer"}!`);
+    setMsg(`Bet ${formatCurrency(amount)} on ${side === "player" ? "Player" : "Dealer"}!`);
   };
 
   const timerPct = (timeLeft / ROUND_SEC) * 100;
@@ -186,7 +186,7 @@ export default function TeenPatti() {
           <div className="mb-3">
             <div className="flex justify-between text-xs text-gray-500 mb-1">
               <span>Betting closes in {timeLeft}s</span>
-              <span>?{formatAmount(balance)}</span>
+              <span>{formatCurrency(balance)}</span>
             </div>
             <div className="bg-gray-800 rounded-full h-2 overflow-hidden">
               <div className={`h-2 rounded-full transition-all duration-1000 ${timeLeft > 8 ? "bg-green-500" : timeLeft > 4 ? "bg-yellow-500" : "bg-red-500 animate-pulse"}`} style={{ width: `${timerPct}%` }} />
@@ -210,13 +210,13 @@ export default function TeenPatti() {
 
         <div className="bg-[#12152b] rounded-2xl p-4 border border-gray-800">
           <div className="flex gap-2 mb-3">
-            <input type="number" value={betAmount} onChange={(e) => setBetAmount(e.target.value)} placeholder="Bet amount (Min ?10)" disabled={phase !== "betting" || hasBetRef.current} className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white" />
-            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{formatAmount(balance)}</div>
+            <input type="number" value={betAmount} onChange={(e) => setBetAmount(e.target.value)} placeholder={`Bet amount (Min ${formatCurrency(10)})`} disabled={phase !== "betting" || hasBetRef.current} className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white" />
+            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">{formatCurrency(balance)}</div>
           </div>
           <div className="grid grid-cols-4 gap-2 mb-3">
             {[50, 100, 200, 500].map((amount) => (
               <button key={amount} onClick={() => setBetAmount(amount.toString())} disabled={phase !== "betting" || hasBetRef.current} className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">
-                ?{formatAmount(amount)}
+                {formatCurrency(amount)}
               </button>
             ))}
           </div>
@@ -233,3 +233,5 @@ export default function TeenPatti() {
     </div>
   );
 }
+
+

@@ -1,13 +1,25 @@
-import { useState, useEffect, useRef } from "react";
+﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getDiceResult } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
-import { formatAmount } from "../utils/formatMoney";
+import { formatAmount, formatCurrency } from "../utils/formatMoney";
+import { GAME_ASSETS } from "../utils/gameAssets";
 
 const DICE_LABELS = ["", "1", "2", "3", "4", "5", "6"];
+
+function DiceFace({ value, className = "" }) {
+  const [failed, setFailed] = useState(false);
+  const src = GAME_ASSETS.dice[value];
+
+  return !failed ? (
+    <img src={src} alt={`Dice ${value}`} className={className} onError={() => setFailed(true)} />
+  ) : (
+    <span>{DICE_LABELS[value]}</span>
+  );
+}
 
 export default function DiceRoll() {
   const auth = getAuth();
@@ -36,7 +48,7 @@ export default function DiceRoll() {
     const amount = parseFloat(betAmount);
     if (!user) return setMsg("Please log in first");
     if (!betNum) return setMsg("Pick a number 1-6 first");
-    if (!amount || amount < 10) return setMsg("Min bet ?10");
+    if (!amount || amount < 10) return setMsg(`Min bet ${formatCurrency(10)}`);
     if (amount > balanceRef.current) return setMsg("Insufficient balance");
     if (rolling) return;
 
@@ -56,7 +68,7 @@ export default function DiceRoll() {
         const winAmount = won ? parseFloat((amount * 5.5).toFixed(2)) : 0;
 
         try {
-          setMsg(won ? `Rolled ${outcome}! You won ?${formatAmount(winAmount)}!` : `Rolled ${outcome}. You lost ?${formatAmount(amount)}`);
+          setMsg(won ? `Rolled ${outcome}! You won ${formatCurrency(winAmount)}!` : `Rolled ${outcome}. You lost ${formatCurrency(amount)}`);
 
           if (won) {
             await creditUserWinnings(db, user.uid, winAmount);
@@ -99,7 +111,7 @@ export default function DiceRoll() {
 
         <div className="flex justify-center mb-6">
           <div className={`w-32 h-32 bg-white text-slate-900 rounded-3xl flex items-center justify-center text-6xl shadow-2xl ${rolling ? "animate-bounce" : ""} transition-all`}>
-            {DICE_LABELS[displayDice]}
+            <DiceFace value={displayDice} className="h-20 w-20 object-contain" />
           </div>
         </div>
 
@@ -128,11 +140,11 @@ export default function DiceRoll() {
               type="number"
               value={betAmount}
               onChange={(e) => setBetAmount(e.target.value)}
-              placeholder="Bet amount (Min ?10)"
+              placeholder={`Bet amount (Min ${formatCurrency(10)})`}
               disabled={rolling}
               className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white"
             />
-            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{formatAmount(balance)}</div>
+            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">{formatCurrency(balance)}</div>
           </div>
           <div className="grid grid-cols-4 gap-2 mb-3">
             {[50, 100, 200, 500].map((amount) => (
@@ -142,7 +154,7 @@ export default function DiceRoll() {
                 disabled={rolling}
                 className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
               >
-                ?{formatAmount(amount)}
+                {formatCurrency(amount)}
               </button>
             ))}
           </div>
@@ -158,3 +170,5 @@ export default function DiceRoll() {
     </div>
   );
 }
+
+

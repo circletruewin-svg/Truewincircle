@@ -1,11 +1,12 @@
-import { useState, useEffect, useRef } from "react";
+﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
-import { formatAmount } from "../utils/formatMoney";
+import { formatAmount, formatCurrency } from "../utils/formatMoney";
+import { GAME_ASSETS } from "../utils/gameAssets";
 
 const SUITS = ["S", "H", "D", "C"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
@@ -16,13 +17,20 @@ const rnd = () => {
 };
 
 function BigCard({ card, hidden, side }) {
+  const [assetFailed, setAssetFailed] = useState(false);
   const red = card?.suit === "H" || card?.suit === "D";
   const glow = side === "dragon" ? "border-red-500 shadow-red-900" : "border-blue-500 shadow-blue-900";
+  const assetSrc = side === "dragon" ? GAME_ASSETS.dragonTigerDragon : GAME_ASSETS.dragonTigerTiger;
+  const fallbackLabel = side === "dragon" ? "DRG" : "TGR";
 
   return (
     <div className={`w-24 h-36 rounded-2xl border-4 flex flex-col items-center justify-center shadow-xl ${hidden ? `bg-indigo-900 ${glow}` : `bg-white ${glow}`}`}>
       {hidden ? (
-        <span className="text-4xl text-slate-200">?</span>
+        !assetFailed ? (
+          <img src={assetSrc} alt={`${side} placeholder`} className="h-full w-full rounded-2xl object-cover" onError={() => setAssetFailed(true)} />
+        ) : (
+          <span className="text-sm font-black tracking-[0.2em] text-slate-200">{fallbackLabel}</span>
+        )
       ) : (
         <>
           <div className={`text-3xl font-black ${red ? "text-red-600" : "text-gray-900"}`}>{card?.rank}</div>
@@ -128,7 +136,7 @@ export function DragonTiger() {
           const multiplier = userBet === "tie" ? 8 : 1.9;
           const winAmount = won ? parseFloat((amount * multiplier).toFixed(2)) : 0;
 
-          setMsg(won ? `${roundWinner.toUpperCase()} wins! +?${formatAmount(winAmount)}` : `${roundWinner.toUpperCase()} wins. Lost ?${formatAmount(amount)}`);
+          setMsg(won ? `${roundWinner.toUpperCase()} wins! +${formatCurrency(winAmount)}` : `${roundWinner.toUpperCase()} wins. Lost ${formatCurrency(amount)}`);
 
           if (won) {
             await creditUserWinnings(db, user.uid, winAmount);
@@ -161,7 +169,7 @@ export function DragonTiger() {
   const placeBet = async (side) => {
     const amount = parseFloat(betAmount);
     if (!user) return setMsg("Please log in first");
-    if (!amount || amount < 10) return setMsg("Min bet ?10");
+    if (!amount || amount < 10) return setMsg(`Min bet ${formatCurrency(10)}`);
     if (amount > balanceRef.current) return setMsg("Insufficient balance");
     if (phase !== "betting" || hasBetRef.current) return;
 
@@ -171,7 +179,7 @@ export function DragonTiger() {
     hasBetRef.current = true;
 
     await debitUserFunds(db, user.uid, amount);
-    setMsg(`Bet ?${formatAmount(amount)} on ${side.toUpperCase()}!`);
+    setMsg(`Bet ${formatCurrency(amount)} on ${side.toUpperCase()}!`);
   };
 
   return (
@@ -219,11 +227,11 @@ export function DragonTiger() {
               type="number"
               value={betAmount}
               onChange={(e) => setBetAmount(e.target.value)}
-              placeholder="Bet amount (Min ?10)"
+              placeholder={`Bet amount (Min ${formatCurrency(10)})`}
               disabled={phase !== "betting" || hasBetRef.current}
               className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white"
             />
-            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{formatAmount(balance)}</div>
+            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">{formatCurrency(balance)}</div>
           </div>
 
           <div className="grid grid-cols-4 gap-2 mb-3">
@@ -234,7 +242,7 @@ export function DragonTiger() {
                 disabled={phase !== "betting" || hasBetRef.current}
                 className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
               >
-                ?{formatAmount(amount)}
+                {formatCurrency(amount)}
               </button>
             ))}
           </div>
@@ -262,3 +270,5 @@ export function DragonTiger() {
 }
 
 export default DragonTiger;
+
+

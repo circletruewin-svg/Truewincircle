@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { Calendar, CircleDollarSign, Gamepad2, Receipt, TrendingDown, TrendingUp } from "lucide-react";
 import { collection, getDocs, query, Timestamp, where } from "firebase/firestore";
 import DatePicker from "react-datepicker";
@@ -6,7 +6,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import { db } from "../../firebase";
 import Loader from "../../components/Loader";
 import { calculateGameMetrics, GAME_ANALYTICS_CONFIG } from "../../utils/gameAnalytics";
-import { formatAmount } from "../../utils/formatMoney";
+import { formatAmount, formatCurrency } from "../../utils/formatMoney";
 
 const getPresetRange = (filter) => {
   const now = new Date();
@@ -181,19 +181,19 @@ export default function ProfitLoss() {
             <div className="space-y-3 text-gray-300 text-sm">
               <p className="flex items-center justify-between gap-2">
                 <span className="flex items-center gap-2"><Receipt className="w-4 h-4" /> Total amount collected:</span>
-                <span className="font-semibold text-gray-100">?{formatAmount(summary.totalCollection)}</span>
+                <span className="font-semibold text-gray-100">{formatCurrency(summary.totalCollection)}</span>
               </p>
               <p className="flex items-center justify-between gap-2">
                 <span className="flex items-center gap-2"><Receipt className="w-4 h-4" /> Total amount paid out:</span>
-                <span className="font-semibold text-gray-100">?{formatAmount(summary.loss)}</span>
+                <span className="font-semibold text-gray-100">{formatCurrency(summary.loss)}</span>
               </p>
               <p className="flex items-center justify-between gap-2 text-green-400">
                 <span className="flex items-center gap-2"><TrendingUp className="w-4 h-4" /> Net profit:</span>
-                <span className="font-bold">?{formatAmount(summary.profit)}</span>
+                <span className="font-bold">{formatCurrency(summary.profit)}</span>
               </p>
               <p className="flex items-center justify-between gap-2 text-red-400">
                 <span className="flex items-center gap-2"><TrendingDown className="w-4 h-4" /> Total payouts:</span>
-                <span className="font-bold">?{formatAmount(summary.loss)}</span>
+                <span className="font-bold">{formatCurrency(summary.loss)}</span>
               </p>
               <p className="flex items-center justify-between gap-2 pt-2 border-t border-gray-700 mt-2">
                 <span className="flex items-center gap-2 font-semibold text-base"><CircleDollarSign className="w-5 h-5 text-yellow-400" /> Total bets placed:</span>
@@ -217,9 +217,9 @@ export default function ProfitLoss() {
                     <tr key={row.id} className="border-t border-gray-800 text-gray-300">
                       <td className="px-4 py-3 font-semibold text-white">{row.label}</td>
                       <td className="px-4 py-3 text-right">{row.betCount}</td>
-                      <td className="px-4 py-3 text-right">?{formatAmount(row.totalWagered)}</td>
-                      <td className="px-4 py-3 text-right">?{formatAmount(row.totalPayout)}</td>
-                      <td className={`px-4 py-3 text-right font-bold ${row.net >= 0 ? "text-green-400" : "text-red-400"}`}>?{formatAmount(row.net)}</td>
+                      <td className="px-4 py-3 text-right">{formatCurrency(row.totalWagered)}</td>
+                      <td className="px-4 py-3 text-right">{formatCurrency(row.totalPayout)}</td>
+                      <td className={`px-4 py-3 text-right font-bold ${row.net >= 0 ? "text-green-400" : "text-red-400"}`}>{formatCurrency(row.net)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -231,3 +231,4 @@ export default function ProfitLoss() {
     </div>
   );
 }
+

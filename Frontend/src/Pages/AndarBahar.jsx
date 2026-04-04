@@ -1,11 +1,12 @@
-import { useState, useEffect, useRef } from "react";
+﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
-import { formatAmount } from "../utils/formatMoney";
+import { formatAmount, formatCurrency } from "../utils/formatMoney";
+import { GAME_ASSETS } from "../utils/gameAssets";
 
 const SUITS = ["S", "H", "D", "C"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
@@ -37,6 +38,7 @@ export default function AndarBahar() {
   const [msg, setMsg] = useState("");
   const [history, setHistory] = useState([]);
   const [timeLeft, setTimeLeft] = useState(ROUND_SEC);
+  const [jokerAssetFailed, setJokerAssetFailed] = useState(false);
 
   const betSideRef = useRef(null);
   const betAmountRef = useRef(null);
@@ -101,7 +103,7 @@ export default function AndarBahar() {
         const won = roundWinner === userBet;
         const winAmount = won ? parseFloat((amount * 1.9).toFixed(2)) : 0;
 
-        setMsg(won ? `${roundWinner.toUpperCase()} wins! +?${formatAmount(winAmount)}` : `${roundWinner.toUpperCase()} wins. Lost ?${formatAmount(amount)}`);
+        setMsg(won ? `${roundWinner.toUpperCase()} wins! +${formatCurrency(winAmount)}` : `${roundWinner.toUpperCase()} wins. Lost ${formatCurrency(amount)}`);
 
         if (won) {
           await creditUserWinnings(db, user.uid, winAmount);
@@ -159,7 +161,7 @@ export default function AndarBahar() {
   const placeBet = async (side) => {
     const amount = parseFloat(betAmount);
     if (!user) return setMsg("Please log in first");
-    if (!amount || amount < 10) return setMsg("Min bet ?10");
+    if (!amount || amount < 10) return setMsg(`Min bet ${formatCurrency(10)}`);
     if (amount > balanceRef.current) return setMsg("Insufficient balance");
     if (phase !== "betting" || hasBetRef.current) return;
 
@@ -168,7 +170,7 @@ export default function AndarBahar() {
     betAmountRef.current = amount;
     hasBetRef.current = true;
     await debitUserFunds(db, user.uid, amount);
-    setMsg(`Bet ?${formatAmount(amount)} on ${side === "andar" ? "Andar" : "Bahar"}!`);
+    setMsg(`Bet ${formatCurrency(amount)} on ${side === "andar" ? "Andar" : "Bahar"}!`);
   };
 
   return (
@@ -198,7 +200,18 @@ export default function AndarBahar() {
                 </div>
               </div>
             ) : (
-              <div className="w-16 h-24 rounded-2xl border-4 border-yellow-500/30 bg-indigo-900/50 flex items-center justify-center text-4xl">?</div>
+              <div className="w-16 h-24 rounded-2xl border-4 border-yellow-500/30 bg-indigo-900/50 flex items-center justify-center overflow-hidden">
+                {!jokerAssetFailed ? (
+                  <img
+                    src={GAME_ASSETS.andarBaharJoker}
+                    alt="Andar Bahar joker placeholder"
+                    className="h-full w-full object-cover"
+                    onError={() => setJokerAssetFailed(true)}
+                  />
+                ) : (
+                  <span className="text-[10px] font-black tracking-[0.2em] text-yellow-200">JKR</span>
+                )}
+              </div>
             )}
           </div>
 
@@ -226,11 +239,11 @@ export default function AndarBahar() {
               type="number"
               value={betAmount}
               onChange={(e) => setBetAmount(e.target.value)}
-              placeholder="Bet amount (Min ?10)"
+              placeholder={`Bet amount (Min ${formatCurrency(10)})`}
               disabled={phase !== "betting" || hasBetRef.current}
               className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white"
             />
-            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{formatAmount(balance)}</div>
+            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">{formatCurrency(balance)}</div>
           </div>
 
           <div className="grid grid-cols-4 gap-2 mb-3">
@@ -241,7 +254,7 @@ export default function AndarBahar() {
                 disabled={phase !== "betting" || hasBetRef.current}
                 className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
               >
-                ?{formatAmount(amount)}
+                {formatCurrency(amount)}
               </button>
             ))}
           </div>
@@ -267,3 +280,5 @@ export default function AndarBahar() {
     </div>
   );
 }
+
+

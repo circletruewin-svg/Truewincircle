@@ -1,17 +1,29 @@
-import { useState, useEffect, useRef } from "react";
+﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
-import { formatAmount } from "../utils/formatMoney";
+import { formatAmount, formatCurrency } from "../utils/formatMoney";
+import { GAME_ASSETS } from "../utils/gameAssets";
 
 const COLORS = [
   { id: "red", label: "RED", mult: 2, bg: "bg-red-600", ring: "ring-red-400" },
   { id: "green", label: "GREEN", mult: 3, bg: "bg-green-600", ring: "ring-green-400" },
   { id: "violet", label: "VIOLET", mult: 4.5, bg: "bg-purple-600", ring: "ring-purple-400" },
 ];
+
+function ColorAsset({ color, className = "" }) {
+  const [failed, setFailed] = useState(false);
+  const src = GAME_ASSETS.colorPrediction[color];
+
+  return !failed ? (
+    <img src={src} alt={`${color} token`} className={className} onError={() => setFailed(true)} />
+  ) : (
+    <span className="text-xs font-black tracking-[0.2em]">{color.slice(0, 3).toUpperCase()}</span>
+  );
+}
 
 const ROUND_SEC = 30;
 
@@ -102,10 +114,10 @@ export default function ColorPrediction() {
           const winAmount = won ? parseFloat((amount * colorData.mult).toFixed(2)) : 0;
 
           if (won) {
-            setMsg(`${winner.toUpperCase()} wins! +?${formatAmount(winAmount)}`);
+            setMsg(`${winner.toUpperCase()} wins! +${formatCurrency(winAmount)}`);
             await creditUserWinnings(db, user.uid, winAmount);
           } else {
-            setMsg(`${winner.toUpperCase()} wins. Lost ?${formatAmount(amount)}`);
+            setMsg(`${winner.toUpperCase()} wins. Lost ${formatCurrency(amount)}`);
           }
 
           await addDoc(collection(db, "colorBets"), {
@@ -135,7 +147,7 @@ export default function ColorPrediction() {
   const placeBet = async (color) => {
     const amount = parseFloat(betAmount);
     if (!user) return setMsg("Please log in first");
-    if (!amount || amount < 10) return setMsg("Min bet ?10");
+    if (!amount || amount < 10) return setMsg(`Min bet ${formatCurrency(10)}`);
     if (amount > balanceRef.current) return setMsg("Insufficient balance");
     if (phase !== "betting" || hasBetRef.current) return;
 
@@ -144,7 +156,7 @@ export default function ColorPrediction() {
     betAmtRef.current = amount;
     hasBetRef.current = true;
     await debitUserFunds(db, user.uid, amount);
-    setMsg(`Bet ?${formatAmount(amount)} on ${color.toUpperCase()}!`);
+    setMsg(`Bet ${formatCurrency(amount)} on ${color.toUpperCase()}!`);
   };
 
   const timerPct = (timeLeft / ROUND_SEC) * 100;
@@ -184,7 +196,7 @@ export default function ColorPrediction() {
 
         <div className="flex justify-center mb-6">
           <div className={`w-28 h-28 rounded-full border-4 border-yellow-500 flex items-center justify-center text-lg font-black shadow-2xl ${spinning ? "animate-spin" : ""} ${winnerColor === "red" ? "bg-red-700" : winnerColor === "green" ? "bg-green-700" : winnerColor === "violet" ? "bg-purple-700" : "bg-gray-800"}`}>
-            {spinning ? "..." : winnerColor ? winnerColor.toUpperCase() : "READY"}
+            {spinning ? "..." : winnerColor ? <ColorAsset color={winnerColor} className="h-16 w-16 object-contain" /> : "READY"}
           </div>
         </div>
 
@@ -196,11 +208,11 @@ export default function ColorPrediction() {
               type="number"
               value={betAmount}
               onChange={(e) => setBetAmount(e.target.value)}
-              placeholder="Bet amount (Min ?10)"
+              placeholder={`Bet amount (Min ${formatCurrency(10)})`}
               disabled={phase !== "betting" || hasBetRef.current}
               className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white"
             />
-            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{formatAmount(balance)}</div>
+            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">{formatCurrency(balance)}</div>
           </div>
           <div className="grid grid-cols-4 gap-2">
             {[50, 100, 200, 500].map((amount) => (
@@ -210,7 +222,7 @@ export default function ColorPrediction() {
                 disabled={phase !== "betting" || hasBetRef.current}
                 className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
               >
-                ?{formatAmount(amount)}
+                {formatCurrency(amount)}
               </button>
             ))}
           </div>
@@ -224,6 +236,7 @@ export default function ColorPrediction() {
               disabled={phase !== "betting" || hasBetRef.current}
               className={`${item.bg} ${betColor === item.id ? `ring-4 ${item.ring}` : ""} rounded-2xl py-5 flex flex-col items-center gap-1 font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 active:scale-95 transition-all`}
             >
+              <ColorAsset color={item.id} className="h-10 w-10 object-contain" />
               <span className="text-xl">{item.label}</span>
               <span className="text-xs font-black opacity-80">{item.mult}x</span>
             </button>
@@ -237,3 +250,5 @@ export default function ColorPrediction() {
     </div>
   );
 }
+
+

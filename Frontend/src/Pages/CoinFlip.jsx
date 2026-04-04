@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getCoinResult } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
-import { formatAmount } from "../utils/formatMoney";
+import { formatAmount, formatCurrency } from "../utils/formatMoney";
 import { GAME_ASSETS } from "../utils/gameAssets";
 
 function CoinFace({ side, fallback, className = "" }) {
@@ -55,7 +55,7 @@ export default function CoinFlip() {
     const amount = parseFloat(betAmount);
     if (!betSide) return setMsg("Choose Heads or Tails first!");
     if (!user) return setMsg("Please log in first");
-    if (!amount || amount < 10) return setMsg("Min bet ?10");
+    if (!amount || amount < 10) return setMsg(`Min bet ${formatCurrency(10)}`);
     if (amount > balanceRef.current) return setMsg("Insufficient balance");
     if (phase !== "betting") return;
 
@@ -75,10 +75,10 @@ export default function CoinFlip() {
 
       try {
         if (won) {
-          setMsg(`${outcome.toUpperCase()}! You won ?${formatAmount(winAmount)}`);
+          setMsg(`${outcome.toUpperCase()}! You won ${formatCurrency(winAmount)}`);
           await creditUserWinnings(db, user.uid, winAmount);
         } else {
-          setMsg(`${outcome.toUpperCase()}! You lost ?${formatAmount(amount)}`);
+          setMsg(`${outcome.toUpperCase()}! You lost ${formatCurrency(amount)}`);
         }
 
         await addDoc(collection(db, "coinFlipHistory"), {
@@ -149,13 +149,13 @@ export default function CoinFlip() {
 
         <div className="bg-[#12152b] rounded-2xl p-4 border border-gray-800">
           <div className="flex gap-2 mb-3">
-            <input type="number" value={betAmount} onChange={(e) => setBetAmount(e.target.value)} placeholder="Bet amount (Min ?10)" disabled={betLocked} className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white" />
-            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{formatAmount(balance)}</div>
+            <input type="number" value={betAmount} onChange={(e) => setBetAmount(e.target.value)} placeholder={`Bet amount (Min ${formatCurrency(10)})`} disabled={betLocked} className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white" />
+            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">{formatCurrency(balance)}</div>
           </div>
           <div className="grid grid-cols-4 gap-2 mb-3">
             {[50, 100, 200, 500].map((amount) => (
               <button key={amount} onClick={() => setBetAmount(amount.toString())} disabled={betLocked} className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">
-                ?{formatAmount(amount)}
+                {formatCurrency(amount)}
               </button>
             ))}
           </div>
@@ -167,3 +167,5 @@ export default function CoinFlip() {
     </div>
   );
 }
+
+

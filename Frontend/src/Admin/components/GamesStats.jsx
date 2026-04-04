@@ -1,11 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { collection, onSnapshot, query, Timestamp, where } from "firebase/firestore";
 import { Activity, Calendar, RefreshCw, Users, Wallet } from "lucide-react";
 import { db } from "../../firebase";
 import { calculateGameMetrics, GAME_ANALYTICS_CONFIG } from "../../utils/gameAnalytics";
-import { formatAmount } from "../../utils/formatMoney";
+import { formatAmount, formatCurrency } from "../../utils/formatMoney";
 
 const buildTimestampRange = (startDate, endDate) => {
   const start = new Date(startDate);
@@ -149,11 +149,11 @@ export default function GamesStats() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           <p className="text-sm font-medium text-gray-500">Total Bet Volume</p>
-          <p className="mt-3 text-3xl font-black text-gray-900">?{formatAmount(totals.totalWagered)}</p>
+          <p className="mt-3 text-3xl font-black text-gray-900">{formatCurrency(totals.totalWagered)}</p>
         </div>
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           <p className="text-sm font-medium text-gray-500">Total Payout</p>
-          <p className="mt-3 text-3xl font-black text-gray-900">?{formatAmount(totals.totalPayout)}</p>
+          <p className="mt-3 text-3xl font-black text-gray-900">{formatCurrency(totals.totalPayout)}</p>
         </div>
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           <p className="text-sm font-medium text-gray-500">Placed Bets</p>
@@ -161,7 +161,7 @@ export default function GamesStats() {
         </div>
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           <p className="text-sm font-medium text-gray-500">Net P/L</p>
-          <p className={`mt-3 text-3xl font-black ${totals.net >= 0 ? "text-green-600" : "text-red-500"}`}>?{formatAmount(totals.net)}</p>
+          <p className={`mt-3 text-3xl font-black ${totals.net >= 0 ? "text-green-600" : "text-red-500"}`}>{formatCurrency(totals.net)}</p>
         </div>
       </div>
 
@@ -179,11 +179,11 @@ export default function GamesStats() {
             <div className="mt-5 grid grid-cols-2 gap-3">
               <div className="rounded-xl bg-slate-50 p-3">
                 <div className="flex items-center gap-2 text-xs font-semibold text-slate-500"><Wallet className="h-4 w-4" /> Bet Volume</div>
-                <p className="mt-2 text-xl font-black text-slate-900">?{formatAmount(item.totalWagered)}</p>
+                <p className="mt-2 text-xl font-black text-slate-900">{formatCurrency(item.totalWagered)}</p>
               </div>
               <div className="rounded-xl bg-slate-50 p-3">
                 <div className="flex items-center gap-2 text-xs font-semibold text-slate-500"><Activity className="h-4 w-4" /> Net</div>
-                <p className={`mt-2 text-xl font-black ${item.net >= 0 ? "text-green-600" : "text-red-500"}`}>?{formatAmount(item.net)}</p>
+                <p className={`mt-2 text-xl font-black ${item.net >= 0 ? "text-green-600" : "text-red-500"}`}>{formatCurrency(item.net)}</p>
               </div>
               <div className="rounded-xl bg-slate-50 p-3">
                 <div className="flex items-center gap-2 text-xs font-semibold text-slate-500"><Users className="h-4 w-4" /> Players</div>
@@ -198,7 +198,7 @@ export default function GamesStats() {
             <div className="mt-4 rounded-xl border border-gray-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               <div className="flex items-center justify-between">
                 <span>Payout</span>
-                <span className="font-semibold text-slate-900">?{formatAmount(item.totalPayout)}</span>
+                <span className="font-semibold text-slate-900">{formatCurrency(item.totalPayout)}</span>
               </div>
               <div className="mt-2 flex items-center justify-between">
                 <span>Latest activity</span>
@@ -211,3 +211,4 @@ export default function GamesStats() {
     </div>
   );
 }
+

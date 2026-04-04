@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { getAviatorCrashPoint } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
-import { formatAmount } from "../utils/formatMoney";
+import { formatAmount, formatCurrency } from "../utils/formatMoney";
 import { GAME_ASSETS } from "../utils/gameAssets";
 
 const ROUND_WAIT = 6000;
@@ -120,7 +120,7 @@ export default function Aviator() {
     try {
       if (hasBetRef.current && !cashedOutRef.current && betRef.current) {
         const amount = betRef.current;
-        setMsg(`Crashed at ${crashPoint.toFixed(2)}x! Lost ?${formatAmount(amount)}`);
+        setMsg(`Crashed at ${crashPoint.toFixed(2)}x! Lost ${formatCurrency(amount)}`);
         await addDoc(collection(db, "aviatorHistory"), {
           crashPoint,
           userId: user?.uid,
@@ -153,7 +153,7 @@ export default function Aviator() {
   const placeBet = async () => {
     const amount = parseFloat(betAmount);
     if (!user) return setMsg("Please log in first");
-    if (!amount || amount < 10) return setMsg("Min bet ?10");
+    if (!amount || amount < 10) return setMsg(`Min bet ${formatCurrency(10)}`);
     if (amount > balanceRef.current) return setMsg("Insufficient balance");
     if (phase !== "waiting") return setMsg("Wait for next round");
     if (hasBetRef.current) return;
@@ -161,7 +161,7 @@ export default function Aviator() {
     betRef.current = amount;
     setHasBet(true);
     await debitUserFunds(db, user.uid, amount);
-    setMsg(`Bet ?${formatAmount(amount)} placed!`);
+    setMsg(`Bet ${formatCurrency(amount)} placed!`);
   };
 
   const cashOut = async () => {
@@ -173,7 +173,7 @@ export default function Aviator() {
     setCashedOut(true);
     cashedOutRef.current = true;
     setCashMult(currentMultiplier);
-    setMsg(`Cashed out at ${currentMultiplier}x! Won ?${formatAmount(winAmount)}`);
+    setMsg(`Cashed out at ${currentMultiplier}x! Won ${formatCurrency(winAmount)}`);
 
     try {
       await creditUserWinnings(db, user.uid, winAmount);
@@ -251,14 +251,14 @@ export default function Aviator() {
 
         <div className="bg-[#12152b] rounded-2xl p-4 border border-gray-800">
           <div className="flex gap-2 mb-3">
-            <input type="number" value={betAmount} onChange={(e) => setBetAmount(e.target.value)} placeholder="Bet amount (Min ?10)" disabled={phase !== "waiting" || hasBet} className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white" />
-            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">?{formatAmount(balance)}</div>
+            <input type="number" value={betAmount} onChange={(e) => setBetAmount(e.target.value)} placeholder={`Bet amount (Min ${formatCurrency(10)})`} disabled={phase !== "waiting" || hasBet} className="flex-1 bg-[#0b0d1a] border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white" />
+            <div className="bg-gray-800 rounded-xl px-3 py-2.5 text-xs text-gray-400">{formatCurrency(balance)}</div>
           </div>
 
           <div className="grid grid-cols-4 gap-2 mb-3">
             {[50, 100, 200, 500].map((amount) => (
               <button key={amount} onClick={() => setBetAmount(amount.toString())} disabled={phase !== "waiting" || hasBet} className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">
-                ?{formatAmount(amount)}
+                {formatCurrency(amount)}
               </button>
             ))}
           </div>
@@ -276,3 +276,5 @@ export default function Aviator() {
     </div>
   );
 }
+
+
