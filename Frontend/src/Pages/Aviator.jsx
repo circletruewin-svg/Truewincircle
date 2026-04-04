@@ -3,10 +3,10 @@ import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
+import { AviatorPlane } from "../components/GameVisuals";
 import { getAviatorCrashPoint } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
-import { formatAmount, formatCurrency } from "../utils/formatMoney";
-import { GAME_ASSETS } from "../utils/gameAssets";
+import { formatCurrency } from "../utils/formatMoney";
 
 const ROUND_WAIT = 6000;
 
@@ -26,8 +26,6 @@ export default function Aviator() {
   const [history, setHistory] = useState([]);
   const [msg, setMsg] = useState("");
   const [planePos, setPlanePos] = useState({ x: 5, y: 5 });
-  const [planeAssetFailed, setPlaneAssetFailed] = useState(false);
-
   const betRef = useRef(null);
   const hasBetRef = useRef(false);
   const cashedOutRef = useRef(false);
@@ -207,7 +205,9 @@ export default function Aviator() {
           ))}
         </div>
 
-        <div className="relative bg-[#12152b] rounded-2xl overflow-hidden border border-gray-800 mb-3" style={{ height: 220 }}>
+        <div className="relative overflow-hidden rounded-2xl border border-slate-700 mb-3 bg-[radial-gradient(circle_at_center,#1f4c7a_0%,#13233d_48%,#090b12_100%)]" style={{ height: 260 }}>
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_left_bottom,rgba(255,255,255,0.1),transparent_30%)]" />
+          <div className="absolute inset-0 bg-[linear-gradient(115deg,transparent_0%,transparent_14%,rgba(255,255,255,0.05)_14%,transparent_16%,transparent_26%,rgba(255,255,255,0.05)_26%,transparent_28%,transparent_38%,rgba(255,255,255,0.05)_38%,transparent_40%)]" />
           {[25, 50, 75].map((point) => (
             <div key={point} className="absolute w-full border-t border-blue-900/40" style={{ top: `${point}%` }} />
           ))}
@@ -233,15 +233,11 @@ export default function Aviator() {
 
           {phase === "flying" && (
             <>
-              <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-                <path d={`M 0 100 Q ${planePos.x / 2} ${100 - planePos.y / 2} ${planePos.x} ${100 - planePos.y}`} stroke="#00ff88" strokeWidth="0.4" fill="none" opacity="0.5" />
+              <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                <path d={`M 0 100 Q ${planePos.x / 2} ${100 - planePos.y / 2} ${planePos.x} ${100 - planePos.y}`} stroke="#ff4d7d" strokeWidth="0.6" fill="none" opacity="0.95" />
               </svg>
-              <div className="absolute" style={{ left: `${planePos.x}%`, bottom: `${planePos.y}%`, transform: "translate(-50%, 50%) rotate(-18deg)", transition: "all 0.08s linear" }}>
-                {!planeAssetFailed ? (
-                  <img src={GAME_ASSETS.aviatorPlane} alt="Aviator plane" className="h-10 w-10 object-contain drop-shadow-[0_0_12px_rgba(255,77,109,0.55)]" onError={() => setPlaneAssetFailed(true)} />
-                ) : (
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-500/20 text-xs font-black text-rose-300 border border-rose-400/40">PLN</div>
-                )}
+              <div className="absolute" style={{ left: `${planePos.x}%`, bottom: `${planePos.y}%`, transform: "translate(-50%, 50%) rotate(-12deg)", transition: "all 0.08s linear" }}>
+                <AviatorPlane className="h-14 w-28" />
               </div>
             </>
           )}

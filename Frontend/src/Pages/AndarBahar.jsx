@@ -3,10 +3,10 @@ import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
+import { JokerBadge } from "../components/GameVisuals";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
-import { formatAmount, formatCurrency } from "../utils/formatMoney";
-import { GAME_ASSETS } from "../utils/gameAssets";
+import { formatCurrency } from "../utils/formatMoney";
 
 const SUITS = ["S", "H", "D", "C"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
@@ -38,7 +38,6 @@ export default function AndarBahar() {
   const [msg, setMsg] = useState("");
   const [history, setHistory] = useState([]);
   const [timeLeft, setTimeLeft] = useState(ROUND_SEC);
-  const [jokerAssetFailed, setJokerAssetFailed] = useState(false);
 
   const betSideRef = useRef(null);
   const betAmountRef = useRef(null);
@@ -200,18 +199,7 @@ export default function AndarBahar() {
                 </div>
               </div>
             ) : (
-              <div className="w-16 h-24 rounded-2xl border-4 border-yellow-500/30 bg-indigo-900/50 flex items-center justify-center overflow-hidden">
-                {!jokerAssetFailed ? (
-                  <img
-                    src={GAME_ASSETS.andarBaharJoker}
-                    alt="Andar Bahar joker placeholder"
-                    className="h-full w-full object-cover"
-                    onError={() => setJokerAssetFailed(true)}
-                  />
-                ) : (
-                  <span className="text-[10px] font-black tracking-[0.2em] text-yellow-200">JKR</span>
-                )}
-              </div>
+              <JokerBadge className="h-24 w-16" />
             )}
           </div>
 

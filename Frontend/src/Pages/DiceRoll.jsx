@@ -3,22 +3,15 @@ import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
+import { DiceFace as DiceVisual } from "../components/GameVisuals";
 import { getDiceResult } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
-import { formatAmount, formatCurrency } from "../utils/formatMoney";
-import { GAME_ASSETS } from "../utils/gameAssets";
+import { formatCurrency } from "../utils/formatMoney";
 
 const DICE_LABELS = ["", "1", "2", "3", "4", "5", "6"];
 
 function DiceFace({ value, className = "" }) {
-  const [failed, setFailed] = useState(false);
-  const src = GAME_ASSETS.dice[value];
-
-  return !failed ? (
-    <img src={src} alt={`Dice ${value}`} className={className} onError={() => setFailed(true)} />
-  ) : (
-    <span>{DICE_LABELS[value]}</span>
-  );
+  return <DiceVisual value={value} className={className} />;
 }
 
 export default function DiceRoll() {

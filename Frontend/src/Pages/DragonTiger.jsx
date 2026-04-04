@@ -3,10 +3,10 @@ import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
+import { DragonTigerBadge } from "../components/GameVisuals";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
-import { formatAmount, formatCurrency } from "../utils/formatMoney";
-import { GAME_ASSETS } from "../utils/gameAssets";
+import { formatCurrency } from "../utils/formatMoney";
 
 const SUITS = ["S", "H", "D", "C"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
@@ -17,20 +17,13 @@ const rnd = () => {
 };
 
 function BigCard({ card, hidden, side }) {
-  const [assetFailed, setAssetFailed] = useState(false);
   const red = card?.suit === "H" || card?.suit === "D";
   const glow = side === "dragon" ? "border-red-500 shadow-red-900" : "border-blue-500 shadow-blue-900";
-  const assetSrc = side === "dragon" ? GAME_ASSETS.dragonTigerDragon : GAME_ASSETS.dragonTigerTiger;
-  const fallbackLabel = side === "dragon" ? "DRG" : "TGR";
 
   return (
     <div className={`w-24 h-36 rounded-2xl border-4 flex flex-col items-center justify-center shadow-xl ${hidden ? `bg-indigo-900 ${glow}` : `bg-white ${glow}`}`}>
       {hidden ? (
-        !assetFailed ? (
-          <img src={assetSrc} alt={`${side} placeholder`} className="h-full w-full rounded-2xl object-cover" onError={() => setAssetFailed(true)} />
-        ) : (
-          <span className="text-sm font-black tracking-[0.2em] text-slate-200">{fallbackLabel}</span>
-        )
+        <DragonTigerBadge side={side} className="h-full w-full rounded-2xl" />
       ) : (
         <>
           <div className={`text-3xl font-black ${red ? "text-red-600" : "text-gray-900"}`}>{card?.rank}</div>

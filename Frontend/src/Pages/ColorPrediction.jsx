@@ -3,10 +3,10 @@ import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
+import { ColorOrb } from "../components/GameVisuals";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
-import { formatAmount, formatCurrency } from "../utils/formatMoney";
-import { GAME_ASSETS } from "../utils/gameAssets";
+import { formatCurrency } from "../utils/formatMoney";
 
 const COLORS = [
   { id: "red", label: "RED", mult: 2, bg: "bg-red-600", ring: "ring-red-400" },
@@ -15,14 +15,7 @@ const COLORS = [
 ];
 
 function ColorAsset({ color, className = "" }) {
-  const [failed, setFailed] = useState(false);
-  const src = GAME_ASSETS.colorPrediction[color];
-
-  return !failed ? (
-    <img src={src} alt={`${color} token`} className={className} onError={() => setFailed(true)} />
-  ) : (
-    <span className="text-xs font-black tracking-[0.2em]">{color.slice(0, 3).toUpperCase()}</span>
-  );
+  return <ColorOrb color={color} className={className} />;
 }
 
 const ROUND_SEC = 30;

@@ -3,27 +3,22 @@ import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
+import { CardBack } from "../components/GameVisuals";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
-import { formatAmount, formatCurrency } from "../utils/formatMoney";
-import { GAME_ASSETS } from "../utils/gameAssets";
+import { formatCurrency } from "../utils/formatMoney";
 
 const SUITS = ["S", "H", "D", "C"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
 const rnd = () => ({ suit: SUITS[Math.floor(Math.random() * 4)], rank: RANKS[Math.floor(Math.random() * 13)] });
 
 function Card({ card, hidden }) {
-  const [assetFailed, setAssetFailed] = useState(false);
   const red = card?.suit === "H" || card?.suit === "D";
 
   return (
     <div className={`w-14 h-20 rounded-xl border-2 flex flex-col items-center justify-center font-bold text-base shadow-lg select-none ${hidden ? "bg-blue-900 border-blue-500" : "bg-white border-gray-300"}`}>
       {hidden ? (
-        !assetFailed ? (
-          <img src={GAME_ASSETS.teenPattiCardBack} alt="Card back" className="h-full w-full rounded-lg object-cover" onError={() => setAssetFailed(true)} />
-        ) : (
-          <span className="text-blue-200 text-xs font-black">CARD</span>
-        )
+        <CardBack className="h-full w-full rounded-lg" />
       ) : (
         <>
           <span className={red ? "text-red-600" : "text-gray-900"}>{card?.rank}</span>

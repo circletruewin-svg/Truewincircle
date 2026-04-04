@@ -3,20 +3,13 @@ import { db } from "../firebase";
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
+import { CoinToken } from "../components/GameVisuals";
 import { getCoinResult } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
-import { formatAmount, formatCurrency } from "../utils/formatMoney";
-import { GAME_ASSETS } from "../utils/gameAssets";
+import { formatCurrency } from "../utils/formatMoney";
 
 function CoinFace({ side, fallback, className = "" }) {
-  const [failed, setFailed] = useState(false);
-  const src = side === "heads" ? GAME_ASSETS.coinHeads : GAME_ASSETS.coinTails;
-
-  return !failed ? (
-    <img src={src} alt={side} className={className} onError={() => setFailed(true)} />
-  ) : (
-    <span className="text-4xl font-black">{fallback}</span>
-  );
+  return <CoinToken side={side} className={className} />;
 }
 
 export default function CoinFlip() {
