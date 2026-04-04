@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Check, X, Trash2, Eye } from 'lucide-react';
+import { formatCurrency } from '../../utils/formatMoney';
 
 // Modal for showing the full payment message
 const MessageModal = ({ message, onClose }) => (
@@ -127,7 +128,7 @@ const PaymentApproval = ({ payments, userDetails, handlePaymentApproval, handleD
                       {payment.name || userDetails[payment.userId]?.name || 'Unknown User'}
                     </button>
                   </td>
-                  <td className="p-4 font-medium">₹{payment.amount}</td>
+                  <td className="p-4 font-medium">{formatCurrency(payment.amount)}</td>
                   <td className="p-4 max-w-xs">
                     {payment.message ? (
                       payment.message.length > 30 ? (

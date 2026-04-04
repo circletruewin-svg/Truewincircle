@@ -4,6 +4,7 @@ import { db } from '../../firebase';
 import Loader from '../../components/Loader';
 import UserBettingHistory from './UserBettingHistory';
 import UserWinLoss from './UserWinLoss';
+import { formatCurrency } from '../../utils/formatMoney';
 
 const AllUsers = () => {
   const [users, setUsers] = useState([]);
@@ -132,6 +133,7 @@ const AllUsers = () => {
               <th className="p-4 text-left text-sm font-semibold text-gray-600">Name</th>
               <th className="p-4 text-left text-sm font-semibold text-gray-600">Phone Number</th>
               <th className="p-4 text-left text-sm font-semibold text-gray-600">Email</th>
+              <th className="p-4 text-left text-sm font-semibold text-gray-600">Win/Loss</th>
               <th className="p-4 text-left text-sm font-semibold text-gray-600">Role</th>
               <th className="p-4 text-left text-sm font-semibold text-gray-600">Joined Date</th>
               <th className="p-4 text-right text-sm font-semibold text-gray-600">Total Balance</th>
@@ -147,15 +149,11 @@ const AllUsers = () => {
                     {user.name || 'N/A'}
                   </td>
                   <td className="p-4 text-gray-600">{user.phoneNumber || 'N/A'}</td>
-                  <td className="p-4 text-gray-600">
-                    <div className="flex items-center justify-between">
-                   
-                      <UserWinLoss userId={user.id} />
-                    </div>
-                  </td>
+                  <td className="p-4 text-gray-600">{user.email || 'N/A'}</td>
+                  <td className="p-4 text-gray-600"><UserWinLoss userId={user.id} /></td>
                   <td className="p-4 text-gray-600">{user.role || 'user'}</td>
                   <td className="p-4 text-left text-gray-600">{formatJoinDate(user.createdAt)}</td>
-                  <td className="p-4 text-right font-semibold text-gray-800">₹{totalBalance.toFixed(2)}</td>
+                  <td className="p-4 text-right font-semibold text-gray-800">{formatCurrency(totalBalance)}</td>
                   <td className="p-4 text-center">
                     {user.role === 'admin' ? (
                       <button

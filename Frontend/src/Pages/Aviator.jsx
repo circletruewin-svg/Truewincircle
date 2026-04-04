@@ -4,11 +4,14 @@ import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, l
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { AviatorPlane } from "../components/GameVisuals";
+import GameHistoryPanel from "../components/GameHistoryPanel";
 import { getAviatorCrashPoint } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatCurrency } from "../utils/formatMoney";
+import { USER_HISTORY_SOURCES } from "../utils/userHistorySources";
 
 const ROUND_WAIT = 6000;
+const aviatorHistoryMapper = USER_HISTORY_SOURCES.find((item) => item.id === "aviator")?.mapRecord;
 
 export default function Aviator() {
   const auth = getAuth();
@@ -268,6 +271,8 @@ export default function Aviator() {
             </button>
           </div>
         </div>
+
+        <GameHistoryPanel userId={user?.uid} collectionName="aviatorBets" mapRecord={aviatorHistoryMapper} title="Your Aviator History" />
       </div>
     </div>
   );

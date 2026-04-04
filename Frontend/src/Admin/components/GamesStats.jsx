@@ -5,7 +5,7 @@ import { collection, onSnapshot, query, Timestamp, where } from "firebase/firest
 import { Activity, Calendar, RefreshCw, Users, Wallet } from "lucide-react";
 import { db } from "../../firebase";
 import { calculateGameMetrics, GAME_ANALYTICS_CONFIG } from "../../utils/gameAnalytics";
-import { formatAmount, formatCurrency } from "../../utils/formatMoney";
+import { formatCurrency } from "../../utils/formatMoney";
 
 const buildTimestampRange = (startDate, endDate) => {
   const start = new Date(startDate);
@@ -33,18 +33,31 @@ const applyPreset = (preset) => {
   return { start, end };
 };
 
+const buildEmptyStats = () =>
+  GAME_ANALYTICS_CONFIG.map((config) => ({
+    id: config.id,
+    label: config.label,
+    betCount: 0,
+    players: 0,
+    totalWagered: 0,
+    totalPayout: 0,
+    net: 0,
+    latest: null,
+  }));
+
 export default function GamesStats() {
   const initialDates = applyPreset("today");
   const [preset, setPreset] = useState("today");
   const [startDate, setStartDate] = useState(initialDates.start);
   const [endDate, setEndDate] = useState(initialDates.end);
-  const [stats, setStats] = useState([]);
+  const [stats, setStats] = useState(buildEmptyStats);
   const [loading, setLoading] = useState(true);
 
   const range = useMemo(() => buildTimestampRange(startDate, endDate), [startDate, endDate]);
 
   useEffect(() => {
     setLoading(true);
+    setStats(buildEmptyStats());
     const unsubscribers = GAME_ANALYTICS_CONFIG.map((config) => {
       const statsQuery = query(
         collection(db, config.collection),

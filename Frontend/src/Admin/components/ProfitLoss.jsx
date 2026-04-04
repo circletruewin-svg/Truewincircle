@@ -6,35 +6,15 @@ import "react-datepicker/dist/react-datepicker.css";
 import { db } from "../../firebase";
 import Loader from "../../components/Loader";
 import { calculateGameMetrics, GAME_ANALYTICS_CONFIG } from "../../utils/gameAnalytics";
-import { formatAmount, formatCurrency } from "../../utils/formatMoney";
-
-const getPresetRange = (filter) => {
-  const now = new Date();
-  let start = new Date(now);
-  let end = new Date(now);
-
-  switch (filter) {
-    case "yesterday":
-      start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-      end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-      break;
-    case "7days":
-      start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
-      break;
-    case "today":
-    default:
-      start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      break;
-  }
-
-  return { start, end };
-};
+import { formatCurrency } from "../../utils/formatMoney";
+import { getPresetRange } from "../../utils/dateHelpers";
 
 export default function ProfitLoss() {
   const [gameFilter, setGameFilter] = useState("all");
   const [loading, setLoading] = useState(true);
-  const [startDate, setStartDate] = useState(new Date());
-  const [endDate, setEndDate] = useState(new Date());
+  const initialRange = getPresetRange("today");
+  const [startDate, setStartDate] = useState(initialRange.start);
+  const [endDate, setEndDate] = useState(initialRange.end);
   const [rows, setRows] = useState([]);
 
   const summary = useMemo(() => {

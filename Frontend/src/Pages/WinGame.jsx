@@ -6,12 +6,15 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import useAuthStore from '../store/authStore';
-import { toast } from 'react-toastify';
 import { Zap, Loader2 } from 'lucide-react';
+import GameHistoryPanel from '../components/GameHistoryPanel';
 import { getFundsDeductionResult, getUserFunds } from '../utils/userFunds';
+import { formatCurrency } from '../utils/formatMoney';
+import { USER_HISTORY_SOURCES } from '../utils/userHistorySources';
 
 const BETTING_DURATION_SECONDS = 5 * 60; // 5 minutes
 const RESULTS_DURATION_SECONDS = 1 * 60; // 1 minute
+const winGameHistoryMapper = USER_HISTORY_SOURCES.find((item) => item.id === "wingame")?.mapRecord;
 
 const WinGame = () => {
     const { user } = useAuthStore();
@@ -27,23 +30,17 @@ const WinGame = () => {
     const [selectedNumber, setSelectedNumber] = useState(null);
     const [betAmount, setBetAmount] = useState();
     const [isSubmitting, setIsSubmitting] = useState(false);
-    
-    // UI state
-    const [isBettingOverModalVisible, setIsBettingOverModalVisible] = useState(false);
-
     const gameStateRef = useCallback(() => doc(db, 'game_state', 'win_game_1_to_12'), []);
 
     const processWinnings = useCallback(async (winningNumber, roundIdToProcess) => {
         if (winningNumber === undefined || winningNumber === null || !roundIdToProcess) return;
     
-        toast.info(`Calculating results for winner: ${winningNumber}`);
         try {
             const betsQuery = query(collection(db, 'wingame_bets'), where('roundId', '==', roundIdToProcess));
             const betsSnapshot = await getDocs(betsQuery);
     
             if (betsSnapshot.empty) {
                 console.log(`No bets in round ${roundIdToProcess}.`);
-                toast.success("Round finished. No bets were placed.");
                 return;
             }
     
@@ -95,21 +92,14 @@ const WinGame = () => {
             
             await batch.commit();
             console.log("Winnings distributed and bets updated.");
-            if (userIds.length > 0) {
-                toast.success(`Round over! The winning number was ${winningNumber}. Payouts sent!`);
-            } else {
-                toast.success(`Round over! The winning number was ${winningNumber}. No one won.`);
-            }
     
         } catch (error) {
             console.error("Error calculating winnings:", error);
-            toast.error("An error occurred while calculating results.");
         }
     }, []);
 
     const processRefunds = useCallback(async (roundIdToProcess) => {
         if (!roundIdToProcess) return;
-        toast.info(`No winner was chosen for round ${roundIdToProcess}. Refunding all bets.`);
         try {
             const betsQuery = query(collection(db, 'wingame_bets'), where('roundId', '==', roundIdToProcess), where('status', '==', 'open'));
             const betsSnapshot = await getDocs(betsQuery);
@@ -138,11 +128,9 @@ const WinGame = () => {
             
             await batch.commit();
             console.log(`Refunds for round ${roundIdToProcess} processed.`);
-            toast.success("Winners not announced, money refunded.");
     
         } catch (error) {
             console.error("Error processing refunds:", error);
-            toast.error("An error occurred while refunding bets.");
         }
     }, []);
 
@@ -197,7 +185,6 @@ const WinGame = () => {
                             phaseEndTime: newEndTime,
                             lastWinningNumber: data.forcedWinner,
                         }); // This resets forcedWinner and winnerProcessed implicitly
-                        setIsBettingOverModalVisible(false);
                     }).catch(error => {
                         if (error.code !== 'aborted') {
                             console.error("Failed to claim winner processing task:", error);
@@ -205,9 +192,6 @@ const WinGame = () => {
                     });
                 }
 
-                if (data.phase === 'results' && phase === 'betting') {
-                    setIsBettingOverModalVisible(true);
-                }
             } else {
                 // Initialize game state if it's missing or corrupt
                 const newRoundId = Date.now();
@@ -287,7 +271,6 @@ const WinGame = () => {
                 // After successfully starting the next round, process refunds for the old one.
                 console.log(`Refunding bets for round ${roundIdToEnd}`);
                 processRefunds(roundIdToEnd);
-                setIsBettingOverModalVisible(false);
             }).catch(error => {
                 if (error.code !== 'aborted' && !error.message.includes("State mismatch")) {
                     console.error("Failed to start new round after timeout:", error);
@@ -298,11 +281,7 @@ const WinGame = () => {
 
 
     const handleBetSubmit = async () => {
-        if (!user) return toast.error('Please log in to bet.');
-        if (selectedNumber === null) return toast.error('Please select a number.');
-        if (betAmount < 10) return toast.error('Minimum bet is ₹10.');
-        if (walletBalance < betAmount) return toast.error('Insufficient balance.');
-        if (phase !== 'betting') return toast.error('Betting is currently closed.');
+        if (!user || selectedNumber === null || betAmount < 10 || walletBalance < betAmount || phase !== 'betting') return;
 
         setIsSubmitting(true);
         try {
@@ -329,11 +308,10 @@ const WinGame = () => {
                 });
             });
 
-            toast.success(`Bet of ₹${betAmount} placed on ${selectedNumber}!`);
             setSelectedNumber(null);
             setBetAmount(10);
         } catch (error) {
-            toast.error(error.message || 'Failed to place bet.');
+            console.error(error.message || 'Failed to place bet.');
         } finally {
             setIsSubmitting(false);
         }
@@ -347,21 +325,6 @@ const WinGame = () => {
 
     return (
         <div className="font-roboto bg-gray-900 text-white min-h-screen p-4 pt-20">
-            {isBettingOverModalVisible && (
-                <div className="fixed inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50">
-                    <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-11/12 max-w-sm text-center">
-                        <h2 className="text-2xl font-bold text-yellow-400 mb-4">Betting Time Over!</h2>
-                        <p className="text-gray-300 mb-6">The results for this round will be announced shortly. Good luck!</p>
-                        <button
-                            onClick={() => setIsBettingOverModalVisible(false)}
-                            className="bg-yellow-500 text-black font-bold py-2 px-6 rounded-lg hover:bg-yellow-600 transition-colors"
-                        >
-                            OK
-                        </button>
-                    </div>
-                </div>
-            )}
-
             <div className="max-w-4xl mx-auto">
                 <div className="text-center mb-6">
                     <h1 className="text-4xl font-bold text-yellow-400">1 to 12 Win</h1>
@@ -412,7 +375,7 @@ const WinGame = () => {
                             </div>
                         </div>
                         <div>
-                            <label htmlFor="betAmount" className="block text-sm font-medium text-gray-400 mb-2">Bet Amount (Min: ₹10)</label>
+                            <label htmlFor="betAmount" className="block text-sm font-medium text-gray-400 mb-2">Bet Amount (Min: {formatCurrency(10)})</label>
                             <input
                                 id="betAmount"
                                 type="number"
@@ -447,6 +410,8 @@ const WinGame = () => {
                         Winnings are 10x the bet amount and are credited to your wallet automatically.
                     </p>
                 </div>
+
+                <GameHistoryPanel userId={user?.uid} collectionName="wingame_bets" mapRecord={winGameHistoryMapper} title="Your 1 to 12 Win History" />
             </div>
         </div>
     );

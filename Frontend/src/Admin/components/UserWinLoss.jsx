@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase';
+import React, { useEffect, useState } from "react";
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../../firebase";
+import { formatCurrency } from "../../utils/formatMoney";
+import { summarizeUserHistory, USER_HISTORY_SOURCES } from "../../utils/userHistorySources";
 
 const UserWinLoss = ({ userId }) => {
   const [winLoss, setWinLoss] = useState({ win: 0, loss: 0 });
@@ -12,43 +14,28 @@ const UserWinLoss = ({ userId }) => {
         setLoading(false);
         return;
       }
+
       setLoading(true);
       try {
-        const wingameQuery = query(collection(db, 'wingame_bets'), where('userId', '==', userId));
-        const harufQuery = query(collection(db, 'harufBets'), where('userId', '==', userId));
-        const rouletteQuery = query(collection(db, 'rouletteBets'), where('userId', '==', userId));
+        const snapshots = await Promise.all(
+          USER_HISTORY_SOURCES.map((source) =>
+            getDocs(query(collection(db, source.collection), where("userId", "==", userId)))
+          )
+        );
 
-        const [wingameSnap, harufSnap, rouletteSnap] = await Promise.all([
-          getDocs(wingameQuery),
-          getDocs(harufQuery),
-          getDocs(rouletteQuery)
-        ]);
+        const records = snapshots.flatMap((snapshot, index) =>
+          snapshot.docs.map((docSnap) => USER_HISTORY_SOURCES[index].mapRecord(docSnap))
+        );
 
-        let totalWin = 0;
-        let totalLoss = 0;
-
-        const processBets = (docs, amountKey = 'amount', winningsKey = 'winnings') => {
-          docs.forEach(d => {
-            const bet = d.data();
-            if (bet.status === 'win') {
-              totalWin += bet[winningsKey] || 0;
-            } else if (bet.status === 'loss') {
-              totalLoss += bet[amountKey] || 0;
-            }
-          });
-        };
-
-        processBets(wingameSnap.docs);
-        processBets(harufSnap.docs, 'betAmount', 'winnings');
-        processBets(rouletteSnap.docs, 'betAmount', 'winnings');
-
-        setWinLoss({ win: totalWin, loss: totalLoss });
+        const summary = summarizeUserHistory(records);
+        setWinLoss({ win: summary.win, loss: summary.loss });
       } catch (error) {
-        console.error("Error fetching win/loss for user " + userId, error);
+        console.error(`Error fetching win/loss for user ${userId}`, error);
       } finally {
         setLoading(false);
       }
     };
+
     fetchHistory();
   }, [userId]);
 
@@ -58,8 +45,8 @@ const UserWinLoss = ({ userId }) => {
 
   return (
     <span className="flex items-center gap-2">
-      <span className="text-green-500 font-medium text-xs">(W: ₹{winLoss.win.toFixed(2)})</span>
-      <span className="text-red-500 font-medium text-xs">(L: ₹{winLoss.loss.toFixed(2)})</span>
+      <span className="text-green-500 font-medium text-xs">(W: {formatCurrency(winLoss.win)})</span>
+      <span className="text-red-500 font-medium text-xs">(L: {formatCurrency(winLoss.loss)})</span>
     </span>
   );
 };

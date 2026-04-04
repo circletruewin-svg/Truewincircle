@@ -20,13 +20,13 @@ const Home = () => {
       <div className='mx-auto max-w-7xl px-4 md:px-6'>
         <NextResultTimer/>
         <LiveBettingHighlights/>
-        <div className='mb-5'><MarketCard marketName="GHAZIABAD" openTime="03:00 PM" closeTime="08:40 PM" /></div>
-        <div className='mb-5'><MarketCard marketName="DELHI BAZAAR" openTime="08:00 PM" closeTime="06:40 PM" /></div>
         <div className='mb-5'><MarketCard marketName="GALI" openTime="03:00 PM" closeTime="08:40 PM" /></div>
-        <div className='mb-5'><MarketCard marketName="DISAWAR" openTime="03:00 PM" closeTime="08:40 PM" /></div>
-        <div className='mb-5'><MarketCard marketName="MATKA MANDI" openTime="11:00 PM" closeTime="05:40 PM" /></div>
+        <div className='mb-5'><MarketCard marketName="DELHI BAZAAR" openTime="08:00 PM" closeTime="06:40 PM" /></div>
         <div className='mb-5'><MarketCard marketName="SHREE GANESH" openTime="12:00 PM" closeTime="08:00 PM" /></div>
         <div className='mb-5'><MarketCard marketName="FARIDABAD" openTime="03:00 PM" closeTime="08:40 PM" /></div>
+        <div className='mb-5'><MarketCard marketName="MATKA MANDI" openTime="11:00 PM" closeTime="05:40 PM" /></div>
+        <div className='mb-5'><MarketCard marketName="GHAZIABAD" openTime="03:00 PM" closeTime="08:40 PM" /></div>
+        <div className='mb-5'><MarketCard marketName="DISAWAR" openTime="03:00 PM" closeTime="08:40 PM" /></div>
       </div>
 
       <LiveCasinoSection />

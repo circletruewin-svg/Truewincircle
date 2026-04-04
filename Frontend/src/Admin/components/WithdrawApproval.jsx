@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Check, X } from 'lucide-react';
+import { formatCurrency } from '../../utils/formatMoney';
 
 // Modal for showing detailed user info - Copied from PaymentApproval.jsx
 const UserInfoModal = ({ user, onClose }) => (
@@ -55,7 +56,7 @@ const WithdrawApproval = ({ withdrawals, userDetails, handleWithdrawalApproval }
                         {withdrawal.name || userDetails[withdrawal.userId]?.name || 'Unknown User'}
                     </button>
                   </td>
-                  <td className="p-4 font-medium">₹{withdrawal.amount}</td>
+                  <td className="p-4 font-medium">{formatCurrency(withdrawal.amount)}</td>
                   <td className="p-4">{withdrawal.method === 'upi' ? 'UPI' : 'Bank Transfer'}</td> 
                   <td className="p-4"> 
                     {withdrawal.method === 'upi' ? (

@@ -2,16 +2,19 @@ import { useState, useRef, useEffect } from "react";
 import { doc, onSnapshot, runTransaction, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import useAuthStore from '../store/authStore';
-import { toast } from 'react-toastify';
 import { IndianRupee } from 'lucide-react';
 import RouletteBoard from '../components/RouletteBoard';
 import BettingPanel from '../components/BettingPanel';
+import GameHistoryPanel from '../components/GameHistoryPanel';
 import { buildFundsDeductionUpdate, getUserFunds } from '../utils/userFunds';
+import { USER_HISTORY_SOURCES } from '../utils/userHistorySources';
+import { formatCurrency } from '../utils/formatMoney';
 
 // --- Helper Functions and Data ---
 
 const wheelNumbers = [0, 28, 9, 26, 30, 11, 7, 20, 32, 17, 5, 22, 34, 15, 3, 24, 36, 13, 1, '00', 27, 10, 25, 29, 12, 8, 19, 31, 18, 6, 21, 33, 16, 4, 23, 35, 14, 2];
 const redNumbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36];
+const rouletteHistoryMapper = USER_HISTORY_SOURCES.find((item) => item.id === "roulette")?.mapRecord;
 
 const getNumberColor = (num) => {
   if (num === 0 || num === '00') return 'bg-green-600';
@@ -62,6 +65,7 @@ export default function CasinoRoulette() {
   const [betAmount, setBetAmount] = useState(0);
   const [selectedBetType, setSelectedBetType] = useState(null);
   const [bettingLoading, setBettingLoading] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("");
 
   const { user } = useAuthStore();
 
@@ -84,10 +88,10 @@ export default function CasinoRoulette() {
 
     const parsedBetAmount = parseFloat(betAmount);
 
-    if (!user) return toast.error("Please log in to place a bet.");
-    if (selectedBetType === null) return toast.error("Please select a bet type.");
-    if (isNaN(parsedBetAmount) || parsedBetAmount <= 0) return toast.error("Please enter a valid bet amount.");
-    if (parsedBetAmount > balance) return toast.error("Insufficient balance, cannot spin the wheel.");
+    if (!user) return setStatusMessage("Please log in to place a bet.");
+    if (selectedBetType === null) return setStatusMessage("Please select a bet type.");
+    if (isNaN(parsedBetAmount) || parsedBetAmount <= 0) return setStatusMessage("Please enter a valid bet amount.");
+    if (parsedBetAmount > balance) return setStatusMessage("Insufficient balance.");
 
     setBettingLoading(true);
 
@@ -113,7 +117,7 @@ export default function CasinoRoulette() {
         return newBetRef.id;
       });
 
-      toast.success("Bet placed! Spinning the wheel...");
+      setStatusMessage(`Bet ${formatCurrency(parsedBetAmount)} placed. Spinning the wheel...`);
       setBettingLoading(false);
       setSpinning(true);
       setWinningNumber(null);
@@ -158,7 +162,7 @@ export default function CasinoRoulette() {
 
     } catch (e) {
       console.error("Bet placement failed: ", e);
-      toast.error(`Failed to place bet: ${e.message || e}`);
+      setStatusMessage(`Failed to place bet: ${e.message || e}`);
       setBettingLoading(false);
     }
   };
@@ -219,10 +223,10 @@ export default function CasinoRoulette() {
             status: 'pending_approval'
           });
         });
-        toast.success(`Congratulations! You won ₹${winnings.toFixed(2)}!`);
+        setStatusMessage(`You won ${formatCurrency(winnings)}!`);
       } catch (e) {
         console.error("Payout transaction failed: ", e);
-        toast.error("Failed to credit winnings.");
+        setStatusMessage("Failed to credit winnings.");
       }
     } else {
       try {
@@ -233,7 +237,7 @@ export default function CasinoRoulette() {
       } catch (e) {
         console.error("Failed to update loss status:", e);
       }
-      toast.info("Better luck next time!");
+      setStatusMessage("Better luck next time.");
     }
   };
 
@@ -253,6 +257,11 @@ export default function CasinoRoulette() {
       <div className="w-full max-w-5xl flex flex-col lg:flex-row items-center justify-center gap-6">
         <div className="flex flex-col items-center justify-center space-y-4">
           <RouletteWheel spinning={spinning} />
+          {statusMessage && (
+            <div className="w-full rounded-xl bg-[#0a2d55] px-4 py-3 text-center text-sm font-semibold text-yellow-300">
+              {statusMessage}
+            </div>
+          )}
           {winningNumber !== null && !spinning && (
             <div className="p-4 bg-gray-900 rounded-lg text-center animate-pulse">
                 <span className="text-lg text-yellow-400">Winning Number</span>
@@ -287,6 +296,10 @@ export default function CasinoRoulette() {
         balance={balance}
         selectedBetType={selectedBetType}
       />
+
+      <div className="w-full max-w-5xl">
+        <GameHistoryPanel userId={user?.uid} collectionName="rouletteBets" mapRecord={rouletteHistoryMapper} title="Your Roulette History" />
+      </div>
     </div>
   );
 }

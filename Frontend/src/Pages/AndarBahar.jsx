@@ -4,9 +4,11 @@ import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, l
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { JokerBadge } from "../components/GameVisuals";
+import GameHistoryPanel from "../components/GameHistoryPanel";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatCurrency } from "../utils/formatMoney";
+import { USER_HISTORY_SOURCES } from "../utils/userHistorySources";
 
 const SUITS = ["S", "H", "D", "C"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
@@ -23,6 +25,7 @@ function SmallCard({ card }) {
 }
 
 const ROUND_SEC = 12;
+const andarBaharHistoryMapper = USER_HISTORY_SOURCES.find((item) => item.id === "andarbahar")?.mapRecord;
 
 export default function AndarBahar() {
   const auth = getAuth();
@@ -264,6 +267,8 @@ export default function AndarBahar() {
             </button>
           </div>
         </div>
+
+        <GameHistoryPanel userId={user?.uid} collectionName="abHistory" mapRecord={andarBaharHistoryMapper} title="Your Andar Bahar History" />
       </div>
     </div>
   );

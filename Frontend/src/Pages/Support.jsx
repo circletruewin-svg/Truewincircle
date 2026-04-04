@@ -12,9 +12,7 @@ const FaqItem = ({ qEn, aEn, qHi, aHi, isOpen, onClick }) => (
         <p className="text-lg font-semibold text-white">{qEn}</p>
         <p className="mt-1 text-sm text-slate-300">{qHi}</p>
       </div>
-      <ChevronDown
-        className={`ml-4 h-5 w-5 flex-shrink-0 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}
-      />
+      <ChevronDown className={`ml-4 h-5 w-5 flex-shrink-0 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`} />
     </button>
     {isOpen && (
       <div className="bg-slate-950/40 px-5 pb-5 text-slate-200">
@@ -33,26 +31,26 @@ const Support = () => {
     {
       qEn: 'How to deposit?',
       aEn: 'Open Add Cash, enter amount and payment note, pay with the shown QR, then upload the payment screenshot for admin approval.',
-      qHi: 'डिपॉजिट कैसे करें?',
-      aHi: 'Add Cash खोलें, amount aur payment note डालें, दिखाए गए QR se payment करें, फिर screenshot upload karke admin approval ka wait करें।',
+      qHi: 'Deposit kaise karein?',
+      aHi: 'Add Cash kholkar amount aur payment note daalein, dikhaye gaye QR se payment karein, phir screenshot upload karke admin approval ka wait karein.',
     },
     {
       qEn: 'How to withdraw?',
       aEn: 'Withdrawal is available only from winning money. Enter the amount, add your UPI or bank details, and submit the request.',
-      qHi: 'विड्रॉ कैसे करें?',
-      aHi: 'Withdrawal sirf winning money se hota hai. Amount डालें, UPI ya bank details भरें aur request submit करें।',
+      qHi: 'Withdraw kaise karein?',
+      aHi: 'Withdrawal sirf winning money se hota hai. Amount daalein, UPI ya bank details bharein aur request submit karein.',
     },
     {
       qEn: 'How does referral work?',
       aEn: 'Your referral bonus is credited when your invited user completes an eligible first deposit.',
-      qHi: 'रेफरल कैसे काम करता है?',
-      aHi: 'Referral bonus tab credit hota hai jab aapke invite kiye hue user ka eligible first deposit successful ho jata hai।',
+      qHi: 'Referral kaise kaam karta hai?',
+      aHi: 'Referral bonus tab credit hota hai jab aapke invite kiye hue user ka eligible first deposit successful ho jata hai.',
     },
     {
       qEn: 'Where can I see my history?',
       aEn: 'You can check wallet, deposit, withdrawal, and betting records from your account history sections.',
-      qHi: 'हिस्ट्री कहाँ दिखेगी?',
-      aHi: 'Wallet, deposit, withdrawal aur betting records aap account ke history sections me dekh sakte hain।',
+      qHi: 'History kahan dikhegi?',
+      aHi: 'Wallet, deposit, withdrawal aur betting records aap account ke history sections me dekh sakte hain.',
     },
   ];
 
@@ -86,7 +84,7 @@ const Support = () => {
             >
               <MessageCircle className="h-8 w-8 text-green-300" />
               <p className="mt-4 text-lg font-semibold">WhatsApp</p>
-              <p className="mt-2 text-sm text-slate-300">Home page wali same WhatsApp link yahin sync rahegi.</p>
+              <p className="mt-2 text-sm text-slate-300">Deposit, withdrawal, payment aur account support ke liye direct WhatsApp par message karein.</p>
             </a>
 
             <a
@@ -97,7 +95,7 @@ const Support = () => {
             >
               <Send className="h-8 w-8 text-blue-300" />
               <p className="mt-4 text-lg font-semibold">Telegram</p>
-              <p className="mt-2 text-sm text-slate-300">Home page wali same Telegram link yahin sync rahegi.</p>
+              <p className="mt-2 text-sm text-slate-300">Quick help ke liye Telegram support par apna issue aur details bhej sakte hain.</p>
             </a>
           </div>
         </div>

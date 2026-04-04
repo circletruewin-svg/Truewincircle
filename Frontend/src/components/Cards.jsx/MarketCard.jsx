@@ -4,7 +4,6 @@ import { Play, X } from "lucide-react";
 import ResultChart from "../ResultChart";
 import { db } from "../../firebase";
 import { collection, query, where, doc, onSnapshot } from "firebase/firestore";
-import { toast } from "react-toastify";
 import { markets } from "../../marketData";
 
 // ✅ TIME FORMAT FIX
@@ -95,8 +94,6 @@ const MarketCard = ({ marketName }) => {
   const handleCardClick = () => {
     if (isMarketOpen) {
       setOpen(true);
-    } else {
-      toast.info(`Betting closed. Opens at ${formatTime12h(openTime)}`);
     }
   };
 
@@ -123,10 +120,6 @@ const MarketCard = ({ marketName }) => {
     return () => unsubscribe();
   }, [marketName]);
 
-  if (showChart) {
-    return <ResultChart marketName={marketName} onClose={() => setShowChart(false)} />;
-  }
-
   if (open) {
     return (
       <div>
@@ -142,6 +135,7 @@ const MarketCard = ({ marketName }) => {
 
   return (
     <div className="w-full max-w-md mx-auto">
+      {showChart && <ResultChart marketName={marketName} onClose={() => setShowChart(false)} />}
 
       <div
         onClick={handleCardClick}

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Users, CreditCard, Trophy, DollarSign, Plus, Eye } from 'lucide-react';
-import { db } from '../../firebase'; // Import db
-import { doc, getDoc, setDoc } from 'firebase/firestore'; // Import Firestore functions
-import { toast } from 'react-toastify'; // Import toast
+import { ArrowDownCircle, ArrowUpCircle, CreditCard, DollarSign, Trophy, Users } from 'lucide-react';
+import { db } from '../../firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { toast } from 'react-toastify';
+import { formatCurrency } from '../../utils/formatMoney';
 
 const DashboardView = ({ stats }) => {
   const [jackpotAmount, setJackpotAmount] = useState('');
@@ -10,10 +11,12 @@ const DashboardView = ({ stats }) => {
   const [loading, setLoading] = useState(false);
 
   const statItems = [
-    { title: 'Total Users', value: stats.totalUsers.toString(), icon: Users, color: 'bg-blue-500' },
-    { title: 'Pending Payments', value: stats.pendingPayments.toString(), icon: CreditCard, color: 'bg-yellow-500' },
-    { title: 'Winners Announced', value: stats.winnersAnnounced.toString(), icon: Trophy, color: 'bg-green-500' },
-    { title: 'Pending Withdrawals', value: stats.pendingWithdrawals.toString(), icon: DollarSign, color: 'bg-red-500' }
+    { title: 'Total Users', value: String(stats.totalUsers || 0), icon: Users, color: 'bg-blue-500' },
+    { title: 'Pending Payments', value: String(stats.pendingPayments || 0), icon: CreditCard, color: 'bg-yellow-500' },
+    { title: 'Winners Announced', value: String(stats.winnersAnnounced || 0), icon: Trophy, color: 'bg-green-500' },
+    { title: 'Pending Withdrawals', value: String(stats.pendingWithdrawals || 0), icon: DollarSign, color: 'bg-red-500' },
+    { title: 'Approved Deposits', value: formatCurrency(stats.approvedDeposits || 0), icon: ArrowDownCircle, color: 'bg-emerald-500' },
+    { title: 'Approved Withdrawals', value: formatCurrency(stats.approvedWithdrawals || 0), icon: ArrowUpCircle, color: 'bg-rose-500' },
   ];
 
   useEffect(() => {
@@ -28,8 +31,8 @@ const DashboardView = ({ stats }) => {
           setLastWinnerName(data.lastWinner || '');
         }
       } catch (error) {
-        console.error("Error fetching jackpot info for admin:", error);
-        toast.error("Failed to fetch jackpot info.");
+        console.error('Error fetching jackpot info for admin:', error);
+        toast.error('Failed to fetch jackpot info.');
       }
       setLoading(false);
     };
@@ -41,13 +44,17 @@ const DashboardView = ({ stats }) => {
     setLoading(true);
     try {
       const jackpotRef = doc(db, 'settings', 'jackpot');
-      await setDoc(jackpotRef, {
-        currentJackpot: jackpotAmount,
-        lastWinner: lastWinnerName,
-      }, { merge: true });
+      await setDoc(
+        jackpotRef,
+        {
+          currentJackpot: jackpotAmount,
+          lastWinner: lastWinnerName,
+        },
+        { merge: true }
+      );
       toast.success('Jackpot information updated successfully!');
     } catch (error) {
-      console.error("Error updating jackpot info:", error);
+      console.error('Error updating jackpot info:', error);
       toast.error('Failed to update jackpot information.');
     }
     setLoading(false);
@@ -55,7 +62,7 @@ const DashboardView = ({ stats }) => {
 
   return (
     <div className="p-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3 mb-8">
         {statItems.map((stat, index) => (
           <div key={index} className="bg-white rounded-lg shadow-sm p-6">
             <div className="flex items-center justify-between">
@@ -70,13 +77,12 @@ const DashboardView = ({ stats }) => {
           </div>
         ))}
       </div>
-      
-      {/* Jackpot Winner Update Section */}
+
       <div className="bg-white rounded-lg shadow-sm p-6 mt-8">
         <h3 className="text-lg font-semibold mb-4">Jackpot Winner Management</h3>
         <div className="space-y-4">
           <div>
-            <label htmlFor="jackpotAmount" className="block text-sm font-medium text-gray-700">Current Jackpot Amount (e.g., 1,24,850)</label>
+            <label htmlFor="jackpotAmount" className="block text-sm font-medium text-gray-700">Current Jackpot Amount</label>
             <input
               type="text"
               id="jackpotAmount"
@@ -87,7 +93,7 @@ const DashboardView = ({ stats }) => {
             />
           </div>
           <div>
-            <label htmlFor="lastWinnerName" className="block text-sm font-medium text-gray-700">Last Winner Name (e.g., Rajesh K. (₹52,000))</label>
+            <label htmlFor="lastWinnerName" className="block text-sm font-medium text-gray-700">Last Winner Name</label>
             <input
               type="text"
               id="lastWinnerName"
@@ -99,7 +105,7 @@ const DashboardView = ({ stats }) => {
           </div>
           <button
             onClick={handleUpdateJackpot}
-            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center space-x-2"
+            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
             disabled={loading}
           >
             {loading ? 'Updating...' : 'Update Jackpot Info'}

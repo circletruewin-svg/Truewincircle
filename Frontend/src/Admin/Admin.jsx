@@ -40,6 +40,8 @@ import WinnerApprove from './components/WinnerApprove';
 import WithdrawApproval from './components/WithdrawApproval';
 import ReferralComponent from './components/Refferal';
 import Table from './components/Table';
+import TransactionSummary from './components/TransactionSummary';
+import { toDateValue } from '../utils/dateHelpers';
 
 // ── NEW ──────────────────────────────────────────────────────────
 import GamesStats from './components/GamesStats';
@@ -55,11 +57,7 @@ const AdminDashboard = () => {
   const [allPayments, setAllPayments] = useState([]);
   const [withdrawals, setWithdrawals] = useState([]);
   const [allWithdrawals, setAllWithdrawals] = useState([]);
-  const [winners, setWinners] = useState([
-    { id: 1, user: 'Alice Brown', prize: 'iPhone 15', status: 'announced', date: '2024-01-15' },
-    { id: 2, user: 'Bob Wilson', prize: 'Cash Prize ₹10000', status: 'pending', date: '2024-01-16' },
-    { id: 3, user: 'Carol Davis', prize: 'Laptop', status: 'announced', date: '2024-01-17' }
-  ]);
+  const [winners, setWinners] = useState([]);
   const [totalUsers, setTotalUsers] = useState(0);
   const [userDetails, setUserDetails] = useState({});
 
@@ -82,7 +80,8 @@ const AdminDashboard = () => {
     const unsubscribePayments = onSnapshot(paymentsQuery, (snapshot) => {
       const fetchedPayments = snapshot.docs.map(d => ({
         id: d.id, ...d.data(),
-        date: d.data().createdAt ? new Date(d.data().createdAt).toLocaleDateString() : 'N/A',
+        createdAt: d.data().createdAt || null,
+        date: toDateValue(d.data().createdAt)?.toLocaleDateString('en-IN') || 'N/A',
         userId: d.data().userId
       }));
       setAllPayments(fetchedPayments);
@@ -92,16 +91,24 @@ const AdminDashboard = () => {
     const unsubscribeWithdrawals = onSnapshot(withdrawalsQuery, (snapshot) => {
       const fetchedWithdrawals = snapshot.docs.map(d => ({
         id: d.id, ...d.data(),
-        date: d.data().createdAt ? new Date(d.data().createdAt).toLocaleDateString() : 'N/A',
+        createdAt: d.data().createdAt || null,
+        date: toDateValue(d.data().createdAt)?.toLocaleDateString('en-IN') || 'N/A',
         userId: d.data().userId
       }));
       setAllWithdrawals(fetchedWithdrawals);
+    });
+
+    const winnersQuery = query(collection(db, 'winners'));
+    const unsubscribeWinners = onSnapshot(winnersQuery, (snapshot) => {
+      const fetchedWinners = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setWinners(fetchedWinners);
     });
 
     return () => {
       unsubscribeTruewinUsers();
       unsubscribePayments();
       unsubscribeWithdrawals();
+      unsubscribeWinners();
     };
   }, [isAdmin]);
 
@@ -276,6 +283,7 @@ const AdminDashboard = () => {
           { id: 'socialLinks',  label: 'Social Links',        icon: LinkIcon   },
           { id: 'winGameBets',  label: 'Win Game Bets',       icon: Trophy     },
           { id: 'profitLoss',   label: 'Profit & Loss',       icon: TrendingUp },
+          { id: 'transactions', label: 'Transactions',        icon: CreditCard },
           // ── NEW ──────────────────────────────────────────────────────
           { id: 'gamesStats',   label: '🎮 Games Stats',      icon: Star       },
           // ─────────────────────────────────────────────────────────────
@@ -318,6 +326,7 @@ const AdminDashboard = () => {
             .replace('socialLinks', 'Social Links')
             .replace('winGameBets', 'Win Game Bets')
             .replace('profitLoss',  'Profit & Loss')
+            .replace('transactions','Transactions')
             .replace('referrals',   'Referrals')
             .replace('gamesStats',  '🎮 Games Stats')
           }
@@ -333,6 +342,8 @@ const AdminDashboard = () => {
       pendingPayments:    payments.filter(p => p.status === 'pending').length,
       winnersAnnounced:   winners.filter(w => w.status === 'announced').length,
       pendingWithdrawals: withdrawals.filter(w => w.status === 'pending').length,
+      approvedDeposits: payments.filter(p => p.status === 'approved').reduce((acc, item) => acc + Number(item.amount || 0), 0),
+      approvedWithdrawals: withdrawals.filter(w => w.status === 'approved').reduce((acc, item) => acc + Number(item.amount || 0), 0),
     };
 
     switch (activeTab) {
@@ -370,6 +381,7 @@ const AdminDashboard = () => {
       case 'socialLinks':   return <Links />;
       case 'winGameBets':   return <Bets />;
       case 'profitLoss':    return <ProfitLoss />;
+      case 'transactions':  return <TransactionSummary payments={payments} withdrawals={withdrawals} userDetails={userDetails} />;
 
       // ── NEW ────────────────────────────────────────────────────────
       case 'gamesStats':    return <GamesStats />;
@@ -400,3 +412,6 @@ const AdminDashboard = () => {
 };
 
 export default AdminDashboard;
+
+
+

@@ -7,5 +7,10 @@ export function formatAmount(value) {
 }
 
 export function formatCurrency(value, symbol = "\u20B9") {
-  return `${symbol}${formatAmount(value)}`;
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(roundMoney(value));
 }
