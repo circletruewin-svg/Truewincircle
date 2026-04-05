@@ -1,22 +1,12 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
-import { collection, onSnapshot, query, Timestamp, where } from "firebase/firestore";
+import { collection, onSnapshot } from "firebase/firestore";
 import { Activity, Calendar, RefreshCw, Users, Wallet } from "lucide-react";
 import { db } from "../../firebase";
-import { calculateGameMetrics, GAME_ANALYTICS_CONFIG } from "../../utils/gameAnalytics";
+import { calculateGameMetrics, filterAnalyticsRecords, GAME_ANALYTICS_CONFIG } from "../../utils/gameAnalytics";
+import { toDateValue } from "../../utils/dateHelpers";
 import { formatCurrency } from "../../utils/formatMoney";
-
-const buildTimestampRange = (startDate, endDate) => {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  start.setHours(0, 0, 0, 0);
-  end.setHours(23, 59, 59, 999);
-  return {
-    start: Timestamp.fromDate(start),
-    end: Timestamp.fromDate(end),
-  };
-};
 
 const applyPreset = (preset) => {
   const now = new Date();
@@ -53,62 +43,62 @@ export default function GamesStats() {
   const [stats, setStats] = useState(buildEmptyStats);
   const [loading, setLoading] = useState(true);
 
-  const range = useMemo(() => buildTimestampRange(startDate, endDate), [startDate, endDate]);
+  const dateRange = useMemo(() => ({ startDate, endDate }), [startDate, endDate]);
 
   useEffect(() => {
     setLoading(true);
-    setStats(buildEmptyStats());
-    const unsubscribers = GAME_ANALYTICS_CONFIG.map((config) => {
-      const statsQuery = query(
-        collection(db, config.collection),
-        where(config.timeField, ">=", range.start),
-        where(config.timeField, "<=", range.end)
-      );
+    const rawData = {};
 
-      return onSnapshot(
-        statsQuery,
-        (snapshot) => {
-          const records = snapshot.docs.map((item) => {
-            const data = item.data();
-            return {
-              userId: data.userId || null,
-              betAmount: Number(data[config.betField] || 0),
-              payout: Number(config.payoutResolver(data) || 0),
-              createdAt: data[config.timeField] || null,
-            };
-          });
+    const recalculateStats = () => {
+      const next = GAME_ANALYTICS_CONFIG.map((config) => {
+        const records = (rawData[config.id] || []).flatMap((entry) => entry.records);
+        const filtered = filterAnalyticsRecords(records, dateRange.startDate, dateRange.endDate);
+        const summary = calculateGameMetrics(filtered);
+        const latest = filtered
+          .map((item) => toDateValue(item.createdAt))
+          .filter(Boolean)
+          .sort((a, b) => b - a)[0] || null;
 
-          const summary = calculateGameMetrics(records);
-          const latest = records
-            .map((item) => item.createdAt?.toDate?.() || null)
-            .filter(Boolean)
-            .sort((a, b) => b - a)[0];
+        return {
+          id: config.id,
+          label: config.label,
+          betCount: summary.betCount,
+          players: summary.userIds.size,
+          totalWagered: summary.totalWagered,
+          totalPayout: summary.totalPayout,
+          net: summary.net,
+          latest,
+        };
+      });
 
-          setStats((prev) => {
-            const next = prev.filter((item) => item.id !== config.id);
-            next.push({
-              id: config.id,
-              label: config.label,
-              betCount: summary.betCount,
-              players: summary.userIds.size,
-              totalWagered: summary.totalWagered,
-              totalPayout: summary.totalPayout,
-              net: summary.net,
-              latest,
-            });
-            return next.sort((a, b) => a.label.localeCompare(b.label));
-          });
-          setLoading(false);
-        },
-        (error) => {
-          console.error(`Failed to stream ${config.label} stats:`, error);
-          setLoading(false);
-        }
-      );
-    });
+      setStats(next.sort((a, b) => a.label.localeCompare(b.label)));
+      setLoading(false);
+    };
+
+    const unsubscribers = GAME_ANALYTICS_CONFIG.flatMap((config) =>
+      config.sources.map((source) =>
+        onSnapshot(
+          collection(db, source.collection),
+          (snapshot) => {
+            rawData[config.id] = [
+              ...(rawData[config.id] || []).filter((entry) => entry.collection !== source.collection),
+              {
+                collection: source.collection,
+                records: snapshot.docs.map((item) => source.mapRecord(item.data())),
+              },
+            ];
+            recalculateStats();
+          },
+          (error) => {
+            console.error(`Failed to stream ${config.label} stats from ${source.collection}:`, error);
+            setLoading(false);
+          }
+        )
+      )
+    );
 
     return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
-  }, [range]);
+  }, [dateRange]);
 
   const totals = stats.reduce(
     (acc, item) => ({
@@ -224,4 +214,3 @@ export default function GamesStats() {
     </div>
   );
 }
-

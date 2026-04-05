@@ -1,3 +1,8 @@
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { isDateInRange, toDateValue } from "./dateHelpers";
+
+const buildFetchers = (source) => source.fetchers || [{ collection: source.collection, userIdField: "userId", mapRecord: source.mapRecord }];
+
 export const USER_HISTORY_SOURCES = [
   {
     id: "wingame",
@@ -60,9 +65,47 @@ export const USER_HISTORY_SOURCES = [
   {
     id: "aviator",
     collection: "aviatorBets",
+    fetchers: [
+      {
+        collection: "aviatorBets",
+        userIdField: "userId",
+        mapRecord: (docSnap) => {
+          const data = docSnap.data();
+          const status = data.won ? "win" : data.status || "loss";
+          return {
+            id: docSnap.id,
+            gameName: "Aviator",
+            title: data.cashoutMultiplier ? `Cashout ${Number(data.cashoutMultiplier).toFixed(2)}x` : `Crash ${Number(data.crashPoint || 0).toFixed(2)}x`,
+            subtitle: status,
+            amount: Number(data.betAmount || 0),
+            payout: Number(data.winAmount || 0),
+            status,
+            createdAt: data.createdAt || null,
+          };
+        },
+      },
+      {
+        collection: "aviatorHistory",
+        userIdField: "userId",
+        mapRecord: (docSnap) => {
+          const data = docSnap.data();
+          const status = data.won ? "win" : "loss";
+          return {
+            id: `history-${docSnap.id}`,
+            gameName: "Aviator",
+            title: data.cashoutMultiplier ? `Cashout ${Number(data.cashoutMultiplier).toFixed(2)}x` : `Crash ${Number(data.crashPoint || 0).toFixed(2)}x`,
+            subtitle: status,
+            amount: Number(data.betAmount || 0),
+            payout: Number(data.winAmount || 0),
+            status,
+            createdAt: data.createdAt || null,
+          };
+        },
+      },
+    ],
     mapRecord: (docSnap) => {
       const data = docSnap.data();
-      const status = data.won ? "win" : "loss";
+      const status = data.won ? "win" : data.status || "loss";
       return {
         id: docSnap.id,
         gameName: "Aviator",
@@ -193,4 +236,47 @@ export function summarizeUserHistory(records = []) {
     },
     { win: 0, loss: 0, winCount: 0, lossCount: 0 }
   );
+}
+
+export async function fetchUserHistoryRecords(db, userId, options = {}) {
+  if (!userId) return [];
+
+  const { startDate, endDate } = options;
+  const result = [];
+
+  for (const source of USER_HISTORY_SOURCES) {
+    const fetchers = buildFetchers(source);
+
+    for (const fetcher of fetchers) {
+      const snapshot = await getDocs(
+        query(collection(db, fetcher.collection), where(fetcher.userIdField || "userId", "==", userId))
+      );
+
+      snapshot.docs.forEach((docSnap) => {
+        const mapped = (fetcher.mapRecord || source.mapRecord)(docSnap);
+        if (!mapped) return;
+
+        const createdAt = mapped.createdAt || null;
+        if (startDate && endDate && !isDateInRange(createdAt, startDate, endDate)) return;
+
+        result.push({
+          ...mapped,
+          sourceId: source.id,
+          collectionName: fetcher.collection,
+          createdAt: createdAt || null,
+        });
+      });
+    }
+  }
+
+  const seen = new Set();
+  return result
+    .filter((item) => {
+      const stamp = toDateValue(item.createdAt)?.getTime() || 0;
+      const key = `${item.sourceId}:${item.collectionName}:${item.id}:${item.title}:${item.amount}:${stamp}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => (toDateValue(b.createdAt)?.getTime() || 0) - (toDateValue(a.createdAt)?.getTime() || 0));
 }

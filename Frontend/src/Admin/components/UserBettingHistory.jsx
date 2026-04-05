@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "../../firebase";
 import Loader from "../../components/Loader";
 import { formatCurrency } from "../../utils/formatMoney";
 import { formatDateTime, toDateValue } from "../../utils/dateHelpers";
-import { summarizeUserHistory, USER_HISTORY_SOURCES } from "../../utils/userHistorySources";
+import { fetchUserHistoryRecords, summarizeUserHistory } from "../../utils/userHistorySources";
 
 const UserBettingHistory = ({ userId }) => {
   const [history, setHistory] = useState([]);
@@ -19,18 +18,7 @@ const UserBettingHistory = ({ userId }) => {
 
       setLoading(true);
       try {
-        const snapshots = await Promise.all(
-          USER_HISTORY_SOURCES.map((source) =>
-            getDocs(query(collection(db, source.collection), where("userId", "==", userId)))
-          )
-        );
-
-        const allBets = snapshots.flatMap((snapshot, index) => {
-          const source = USER_HISTORY_SOURCES[index];
-          return snapshot.docs.map((docSnap) => source.mapRecord(docSnap));
-        });
-
-        allBets.sort((a, b) => (toDateValue(b.createdAt)?.getTime() || 0) - (toDateValue(a.createdAt)?.getTime() || 0));
+        const allBets = await fetchUserHistoryRecords(db, userId);
         setHistory(allBets);
       } catch (error) {
         console.error("Error fetching combined bet history:", error);

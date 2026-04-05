@@ -1,9 +1,136 @@
-import React, { useState, useEffect } from 'react';
-import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
-import { db } from '../firebase';
-import useAuthStore from '../store/authStore';
-import Loader from '../components/Loader';
-import { ArrowDownCircle, ArrowUpCircle, AlertTriangle, Trophy, ShieldX, Clock, Gift } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from "react";
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { ArrowDownCircle, ArrowUpCircle, AlertTriangle, Clock, Gift, ShieldX, Trophy } from "lucide-react";
+import { db } from "../firebase";
+import Loader from "../components/Loader";
+import Navbar from "../components/Navbar";
+import useAuthStore from "../store/authStore";
+import { formatDateTime, toDateValue } from "../utils/dateHelpers";
+import { formatCurrency, roundMoney } from "../utils/formatMoney";
+import { fetchUserHistoryRecords, summarizeUserHistory } from "../utils/userHistorySources";
+
+const normalizeDocDate = (value) => toDateValue(value);
+
+const buildFinancialItems = async (userId) => {
+  const depositsQuery = query(collection(db, "top-ups"), where("userId", "==", userId));
+  const withdrawalsQuery = query(collection(db, "withdrawals"), where("userId", "==", userId));
+  const referralBonusQuery = query(
+    collection(db, "transactions"),
+    where("userId", "==", userId),
+    where("type", "==", "referral_bonus")
+  );
+
+  const [depositsSnapshot, withdrawalsSnapshot, referralBonusSnapshot] = await Promise.all([
+    getDocs(depositsQuery),
+    getDocs(withdrawalsQuery),
+    getDocs(referralBonusQuery),
+  ]);
+
+  const deposits = depositsSnapshot.docs
+    .map((docSnap) => {
+      const data = docSnap.data();
+      const date = normalizeDocDate(data.createdAt);
+      if (!date) return null;
+
+      return {
+        id: `deposit-${docSnap.id}`,
+        type: "deposit",
+        title: "Deposit",
+        subtitle: data.status || "pending",
+        amount: Number(data.amount || 0),
+        date,
+        raw: data,
+      };
+    })
+    .filter(Boolean);
+
+  const withdrawals = withdrawalsSnapshot.docs
+    .map((docSnap) => {
+      const data = docSnap.data();
+      const date = normalizeDocDate(data.createdAt);
+      if (!date) return null;
+
+      return {
+        id: `withdrawal-${docSnap.id}`,
+        type: "withdrawal",
+        title: data.method === "upi" ? "Withdrawal (UPI)" : data.method === "bank" ? "Withdrawal (Bank)" : "Withdrawal",
+        subtitle: data.status || "pending",
+        amount: Number(data.amount || 0),
+        date,
+        raw: data,
+      };
+    })
+    .filter(Boolean);
+
+  const referralBonuses = referralBonusSnapshot.docs
+    .map((docSnap) => {
+      const data = docSnap.data();
+      const date = normalizeDocDate(data.createdAt);
+      if (!date) return null;
+
+      return {
+        id: `referral-${docSnap.id}`,
+        type: "referral_bonus",
+        title: "Referral Bonus",
+        subtitle: "Received",
+        amount: Number(data.amount || 0),
+        date,
+        raw: data,
+      };
+    })
+    .filter(Boolean);
+
+  return [...deposits, ...withdrawals, ...referralBonuses];
+};
+
+const mapGameRecordToFeedItem = (record) => {
+  const amount = Number(record.amount || 0);
+  const payout = Number(record.payout || 0);
+
+  if (record.status === "win") {
+    return {
+      id: `game-${record.sourceId}-${record.id}`,
+      type: "win",
+      title: `${record.gameName} Win`,
+      subtitle: record.title,
+      amount: payout,
+      betAmount: amount,
+      date: toDateValue(record.createdAt),
+      raw: record,
+    };
+  }
+
+  if (record.status === "loss") {
+    return {
+      id: `game-${record.sourceId}-${record.id}`,
+      type: "loss",
+      title: `${record.gameName} Loss`,
+      subtitle: record.title,
+      amount,
+      betAmount: amount,
+      date: toDateValue(record.createdAt),
+      raw: record,
+    };
+  }
+
+  return {
+    id: `game-${record.sourceId}-${record.id}`,
+    type: "bet_placed",
+    title: `${record.gameName} Bet`,
+    subtitle: record.title,
+    amount,
+    betAmount: amount,
+    date: toDateValue(record.createdAt),
+    raw: record,
+  };
+};
+
+const SummaryCard = ({ label, value, className = "" }) => (
+  <div className={`rounded-2xl border border-gray-800 bg-gray-800/80 p-4 ${className}`}>
+    <p className="text-sm text-gray-400">{label}</p>
+    <p className="mt-2 text-2xl font-black text-white">{value}</p>
+  </div>
+);
 
 const History = () => {
   const user = useAuthStore((state) => state.user);
@@ -19,203 +146,17 @@ const History = () => {
         return;
       }
 
+      setLoading(true);
+      setError(null);
+
       try {
-        // 1. Fetch Deposits
-        const depositsQuery = query(collection(db, 'top-ups'), where('userId', '==', user.uid));
-        
-        // 2. Fetch Withdrawals
-        const withdrawalsQuery = query(collection(db, 'withdrawals'), where('userId', '==', user.uid));
-
-        // 3. Fetch Game Bets
-        const betsQuery = query(collection(db, 'wingame_bets'), where('userId', '==', user.uid));
-
-        // 4. Fetch Referral Bonuses
-        const referralBonusQuery = query(collection(db, 'transactions'), where('userId', '==', user.uid), where('type', '==', 'referral_bonus'));
-
-        // 5. Fetch Haruf Bets
-        const harufBetsQuery = query(collection(db, 'harufBets'), where('userId', '==', user.uid));
-
-        // 6. Fetch Roulette Bets
-        const rouletteBetsQuery = query(collection(db, 'rouletteBets'), where('userId', '==', user.uid));
-
-        const [
-          depositsSnapshot, 
-          withdrawalsSnapshot, 
-          betsSnapshot, 
-          referralBonusSnapshot, 
-          harufBetsSnapshot,
-          rouletteBetsSnapshot
-        ] = await Promise.all([
-          getDocs(depositsQuery),
-          getDocs(withdrawalsQuery),
-          getDocs(betsQuery),
-          getDocs(referralBonusQuery),
-          getDocs(harufBetsQuery),
-          getDocs(rouletteBetsQuery),
+        const [financialItems, gameRecords] = await Promise.all([
+          buildFinancialItems(user.uid),
+          fetchUserHistoryRecords(db, user.uid),
         ]);
 
-        const deposits = depositsSnapshot.docs.map(doc => {
-          const data = doc.data();
-          let date;
-          if (data.createdAt) {
-            if (typeof data.createdAt.toDate === 'function') {
-              date = data.createdAt.toDate(); // It's a Firestore Timestamp
-            } else if (data.createdAt instanceof Date) {
-              date = data.createdAt; // It's already a JavaScript Date object
-            } else if (typeof data.createdAt === 'string') {
-              date = new Date(data.createdAt); // Attempt to parse as string
-            } else {
-                return null; // Unknown or unsupported date format
-            }
-          } else {
-              return null; // createdAt field is missing
-          }
-
-          if (isNaN(date.getTime())) {
-              console.warn("Invalid date for deposit:", data.createdAt);
-              return null; // Date parsing failed or resulted in an invalid date
-          }
-          return {
-            id: doc.id,
-            type: 'deposit',
-            amount: data.amount,
-            status: data.status || 'pending',
-            date: date,
-          };
-        }).filter(Boolean);
-
-        const withdrawals = withdrawalsSnapshot.docs.map(doc => {
-          const data = doc.data();
-          let date;
-          if (data.createdAt) {
-            if (typeof data.createdAt.toDate === 'function') {
-              date = data.createdAt.toDate();
-            } else if (data.createdAt instanceof Date) {
-              date = data.createdAt;
-            } else if (typeof data.createdAt === 'string') {
-              date = new Date(data.createdAt);
-            } else {
-              return null;
-            }
-          } else {
-            return null;
-          }
-
-          if (isNaN(date.getTime())) return null;
-
-          return {
-            id: doc.id,
-            type: 'withdrawal',
-            amount: data.amount,
-            status: data.status || 'pending',
-            date: date,
-            method: data.method,
-            upiId: data.upiId,
-            accountNumber: data.accountNumber,
-            bankName: data.bankName,
-          };
-        }).filter(Boolean);
-
-        const bets = betsSnapshot.docs.map(doc => {
-          const data = doc.data();
-          if (!data.createdAt || typeof data.createdAt.toDate !== 'function') return null;
-          const date = data.createdAt.toDate();
-          const status = data.status;
-
-          if (status === 'win') {
-            return {
-              id: doc.id,
-              type: 'win',
-              amount: data.winnings || (data.amount * 10),
-              status: `Bet on ${data.number}`,
-              date: date,
-            };
-          }
-      
-          if (status === 'loss') {
-            return {
-              id: doc.id,
-              type: 'loss',
-              amount: data.amount,
-              status: `Bet on ${data.number}`,
-              date: date,
-            };
-          }
-          
-          // Default to 'bet_placed' for 'open' or undefined statuses
-          return {
-            id: doc.id,
-            type: 'bet_placed',
-            amount: data.amount,
-            status: `Bet on ${data.number}`,
-            date: date,
-          };
-        }).filter(Boolean);
-
-        const referralBonuses = referralBonusSnapshot.docs.map(doc => {
-          const data = doc.data();
-          if (!data.createdAt || typeof data.createdAt.toDate !== 'function') return null;
-          return {
-            id: doc.id,
-            type: 'referral_bonus',
-            amount: data.amount,
-            status: 'Received',
-            date: data.createdAt.toDate(),
-          };
-        }).filter(Boolean);
-
-        const harufBets = harufBetsSnapshot.docs.map(doc => {
-          const data = doc.data();
-          if (!data.timestamp || typeof data.timestamp.toDate !== 'function') return null;
-          const date = data.timestamp.toDate();
-          let type = 'bet_placed';
-          let displayAmount = data.betAmount;
-
-          if (data.status === 'win') {
-            type = 'win';
-            displayAmount = data.winnings || (data.betAmount * 90); // Use winnings if available
-          } else if (data.status === 'loss') {
-            type = 'loss';
-          }
-
-          const betOn = data.marketName ? `${data.marketName} on ${data.selectedNumber}` : `Haruf on ${data.selectedNumber}`;
-
-          return {
-            id: doc.id,
-            type: type,
-            amount: displayAmount,
-            status: betOn,
-            date: date,
-            marketName: data.marketName,
-          };
-        }).filter(Boolean);
-
-        const rouletteBets = rouletteBetsSnapshot.docs.map(doc => {
-          const data = doc.data();
-          if (!data.timestamp || typeof data.timestamp.toDate !== 'function') return null;
-          const date = data.timestamp.toDate();
-          let type = 'bet_placed';
-          let displayAmount = data.betAmount;
-
-          if (data.status === 'win') {
-            type = 'win';
-            displayAmount = data.winnings || data.betAmount;
-          } else if (data.status === 'loss') {
-            type = 'loss';
-          }
-
-          return {
-            id: doc.id,
-            type: type,
-            amount: displayAmount,
-            status: `Roulette on ${data.betType}`,
-            date: date,
-          };
-        }).filter(Boolean);
-
-        const combinedHistory = [...deposits, ...withdrawals, ...bets, ...referralBonuses, ...harufBets, ...rouletteBets];
-        combinedHistory.sort((a, b) => b.date.getTime() - a.date.getTime());
-
+        const gameItems = gameRecords.map(mapGameRecordToFeedItem).filter((item) => item.date);
+        const combinedHistory = [...financialItems, ...gameItems].sort((a, b) => b.date.getTime() - a.date.getTime());
         setHistory(combinedHistory);
       } catch (err) {
         console.error("Error fetching transaction history:", err);
@@ -228,88 +169,102 @@ const History = () => {
     fetchHistory();
   }, [user?.uid]);
 
+  const summary = useMemo(() => {
+    const gameSummary = summarizeUserHistory(
+      history
+        .filter((item) => ["win", "loss", "bet_placed"].includes(item.type))
+        .map((item) => ({
+          status: item.type === "bet_placed" ? "pending" : item.type,
+          amount: item.betAmount || item.amount || 0,
+          payout: item.type === "win" ? item.amount || 0 : 0,
+        }))
+    );
+
+    const deposits = history
+      .filter((item) => item.type === "deposit" && item.subtitle === "approved")
+      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+
+    const withdrawals = history
+      .filter((item) => item.type === "withdrawal" && item.subtitle === "approved")
+      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+
+    return {
+      win: roundMoney(gameSummary.win),
+      loss: roundMoney(gameSummary.loss),
+      deposits: roundMoney(deposits),
+      withdrawals: roundMoney(withdrawals),
+    };
+  }, [history]);
+
   const renderHistoryItem = (item) => {
-    let Icon, title, amountColor, sign, statusText, statusColor;
+    let Icon;
+    let amountColor = "text-white";
+    let sign = "";
+    let statusColor = "text-gray-400";
 
     switch (item.type) {
-      case 'deposit':
+      case "deposit":
         Icon = <ArrowDownCircle className="text-green-500" />;
-        title = 'Deposit';
-        amountColor = 'text-green-500';
-        sign = '+';
-        statusText = item.status;
-        statusColor = item.status === 'approved' ? 'text-green-400' : item.status === 'rejected' ? 'text-red-400' : 'text-yellow-400';
+        amountColor = "text-green-500";
+        sign = "+";
+        statusColor = item.subtitle === "approved" ? "text-green-400" : item.subtitle === "rejected" ? "text-red-400" : "text-yellow-400";
         break;
-      case 'withdrawal':
+      case "withdrawal":
         Icon = <ArrowUpCircle className="text-red-500" />;
-        title = item.method === 'upi' ? 'Withdrawal (UPI)' : item.method === 'bank' ? 'Withdrawal (Bank)' : 'Withdrawal';
-        amountColor = 'text-red-500';
-        sign = '-';
-        statusText = item.status;
-        statusColor = item.status === 'approved' ? 'text-green-400' : item.status === 'rejected' ? 'text-red-400' : 'text-yellow-400';
+        amountColor = "text-red-500";
+        sign = "-";
+        statusColor = item.subtitle === "approved" ? "text-green-400" : item.subtitle === "rejected" ? "text-red-400" : "text-yellow-400";
         break;
-      case 'win':
+      case "win":
         Icon = <Trophy className="text-yellow-500" />;
-        title = item.marketName ? `${item.marketName} Win` : 'Game Win';
-        amountColor = 'text-yellow-500';
-        sign = '+';
-        statusText = item.status;
-        statusColor = 'text-gray-400';
+        amountColor = "text-yellow-500";
+        sign = "+";
         break;
-      case 'loss':
+      case "loss":
         Icon = <ShieldX className="text-gray-500" />;
-        title = item.marketName ? `${item.marketName} Loss` : 'Game Loss';
-        amountColor = 'text-gray-500';
-        sign = '-';
-        statusText = item.status;
-        statusColor = 'text-gray-400';
+        amountColor = "text-red-400";
+        sign = "-";
         break;
-      case 'bet_placed':
+      case "bet_placed":
         Icon = <Clock className="text-blue-400" />;
-        title = item.marketName ? `${item.marketName} Bet` : 'Bet Placed';
-        amountColor = 'text-gray-400';
-        sign = '-';
-        statusText = item.status;
-        statusColor = 'text-blue-400';
+        amountColor = "text-blue-300";
+        sign = "-";
+        statusColor = "text-blue-400";
         break;
-      case 'referral_bonus':
+      case "referral_bonus":
         Icon = <Gift className="text-purple-500" />;
-        title = 'Referral Bonus';
-        amountColor = 'text-purple-500';
-        sign = '+';
-        statusText = item.status;
-        statusColor = 'text-green-400';
+        amountColor = "text-purple-400";
+        sign = "+";
+        statusColor = "text-green-400";
         break;
-      default: return null;
+      default:
+        return null;
     }
+
+    const stamp = formatDateTime(item.date);
+    const detailLine =
+      item.type === "withdrawal"
+        ? item.raw?.method === "upi"
+          ? item.raw?.upiId
+          : [item.raw?.bankName, item.raw?.accountNumber].filter(Boolean).join(" - ")
+        : item.subtitle;
 
     return (
       <div key={item.id} className="bg-gray-800 p-4 rounded-lg flex items-center justify-between shadow-md">
         <div className="flex items-center space-x-4">
           <div className="p-2 rounded-full bg-gray-900">{Icon}</div>
           <div>
-            <p className="font-semibold capitalize">{title}</p>
-            <p className="text-xs text-gray-400">{item.date.toLocaleString()}</p>
-            {item.type === 'withdrawal' && (
-              <>
-                <p className="text-[10px] text-gray-500 mt-0.5">
-                  {item.method === 'upi' ? item.upiId : `${item.bankName} - ${item.accountNumber}`}
-                </p>
-                {item.status === 'pending' && (
-                  <p className="text-[9px] text-yellow-500/70 mt-0.5 italic">
-                    Credits within 10-24 hours
-                  </p>
-                )}
-              </>
-            )}
+            <p className="font-semibold">{item.title}</p>
+            <p className="text-xs text-gray-400">{stamp.date} {stamp.time}</p>
+            <p className="text-xs text-gray-500 mt-0.5">{detailLine}</p>
           </div>
         </div>
         <div className="text-right">
           <p className={`font-bold text-lg ${amountColor}`}>
-            {sign}₹{item.amount.toFixed(2)}
+            {sign}{formatCurrency(item.amount || 0)}
           </p>
           <p className={`text-xs capitalize font-semibold ${statusColor}`}>
-            {statusText}
+            {item.subtitle}
           </p>
         </div>
       </div>
@@ -329,15 +284,22 @@ const History = () => {
   }
 
   return (
-    <div className="font-roboto bg-gray-900 text-white min-h-screen p-4 pt-20">
-      <div className="max-w-2xl mx-auto">
-        <h1 className="text-2xl font-bold text-yellow-400 mb-6 text-center">Transaction History</h1>
+    <div className="font-roboto bg-gray-900 text-white min-h-screen">
+      <Navbar />
+      <div className="max-w-4xl mx-auto p-4 pt-24">
+        <h1 className="text-3xl font-black text-yellow-400 mb-6 text-center">Transaction History</h1>
+
+        <div className="grid grid-cols-1 gap-4 mb-6 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard label="Total Wins" value={formatCurrency(summary.win)} />
+          <SummaryCard label="Total Losses" value={formatCurrency(summary.loss)} />
+          <SummaryCard label="Approved Deposits" value={formatCurrency(summary.deposits)} />
+          <SummaryCard label="Approved Withdrawals" value={formatCurrency(summary.withdrawals)} />
+        </div>
+
         {history.length === 0 ? (
           <p className="text-center text-gray-400">You have no transactions yet.</p>
         ) : (
-          <div className="space-y-4">
-            {history.map(renderHistoryItem)}
-          </div>
+          <div className="space-y-4">{history.map(renderHistoryItem)}</div>
         )}
       </div>
     </div>

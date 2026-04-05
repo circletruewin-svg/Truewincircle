@@ -4,15 +4,11 @@ import { doc, onSnapshot, addDoc, collection, serverTimestamp } from "firebase/f
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { DiceFace as DiceVisual } from "../components/GameVisuals";
-import GameHistoryPanel from "../components/GameHistoryPanel";
 import { getDiceResult } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatCurrency } from "../utils/formatMoney";
-import { USER_HISTORY_SOURCES } from "../utils/userHistorySources";
 
 const DICE_LABELS = ["", "1", "2", "3", "4", "5", "6"];
-const diceRollHistoryMapper = USER_HISTORY_SOURCES.find((item) => item.id === "diceroll")?.mapRecord;
-
 function DiceFace({ value, className = "" }) {
   return <DiceVisual value={value} className={className} />;
 }
@@ -162,8 +158,6 @@ export default function DiceRoll() {
             {rolling ? "Rolling..." : "Roll Dice"}
           </button>
         </div>
-
-        <GameHistoryPanel userId={user?.uid} collectionName="diceBets" mapRecord={diceRollHistoryMapper} title="Your Dice Roll History" />
       </div>
     </div>
   );

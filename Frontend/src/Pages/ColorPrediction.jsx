@@ -4,11 +4,9 @@ import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, l
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { ColorOrb } from "../components/GameVisuals";
-import GameHistoryPanel from "../components/GameHistoryPanel";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatCurrency } from "../utils/formatMoney";
-import { USER_HISTORY_SOURCES } from "../utils/userHistorySources";
 
 const COLORS = [
   { id: "red", label: "RED", mult: 2, bg: "bg-red-600", ring: "ring-red-400" },
@@ -21,8 +19,6 @@ function ColorAsset({ color, className = "" }) {
 }
 
 const ROUND_SEC = 30;
-const colorPredictionHistoryMapper = USER_HISTORY_SOURCES.find((item) => item.id === "colorprediction")?.mapRecord;
-
 export default function ColorPrediction() {
   const auth = getAuth();
   const user = auth.currentUser;
@@ -242,8 +238,6 @@ export default function ColorPrediction() {
         <div className="mt-4 bg-[#12152b] rounded-xl p-3 border border-gray-800 text-xs text-gray-500 text-center">
           RED = 2x | GREEN = 3x | VIOLET = 4.5x
         </div>
-
-        <GameHistoryPanel userId={user?.uid} collectionName="colorBets" mapRecord={colorPredictionHistoryMapper} title="Your Color Prediction History" />
       </div>
     </div>
   );

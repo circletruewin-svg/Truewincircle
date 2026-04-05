@@ -1,84 +1,162 @@
+import { isDateInRange, toDateValue } from "./dateHelpers";
+
 const roundMoney = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
 export const GAME_ANALYTICS_CONFIG = [
   {
     id: "aviator",
     label: "Aviator",
-    collection: "aviatorBets",
-    timeField: "createdAt",
-    betField: "betAmount",
-    payoutResolver: (bet) => Number(bet.winAmount || 0),
+    sources: [
+      {
+        collection: "aviatorBets",
+        mapRecord: (bet) => ({
+          userId: bet.userId || null,
+          betAmount: Number(bet.betAmount || 0),
+          payout: Number(bet.winAmount || 0),
+          createdAt: bet.createdAt || null,
+        }),
+      },
+      {
+        collection: "aviatorHistory",
+        mapRecord: (bet) => ({
+          userId: bet.userId || null,
+          betAmount: Number(bet.betAmount || 0),
+          payout: Number(bet.winAmount || 0),
+          createdAt: bet.createdAt || null,
+        }),
+      },
+    ],
   },
   {
     id: "coinflip",
     label: "Coin Flip",
-    collection: "coinFlipHistory",
-    timeField: "createdAt",
-    betField: "betAmount",
-    payoutResolver: (bet) => Number(bet.winAmount || 0),
+    sources: [
+      {
+        collection: "coinFlipHistory",
+        mapRecord: (bet) => ({
+          userId: bet.userId || null,
+          betAmount: Number(bet.betAmount || 0),
+          payout: Number(bet.winAmount || 0),
+          createdAt: bet.createdAt || null,
+        }),
+      },
+    ],
   },
   {
     id: "teenpatti",
     label: "Teen Patti",
-    collection: "teenPattiHistory",
-    timeField: "createdAt",
-    betField: "betAmount",
-    payoutResolver: (bet) => (bet.won ? Number(bet.winAmount || (Number(bet.betAmount || 0) * 1.9)) : 0),
+    sources: [
+      {
+        collection: "teenPattiHistory",
+        mapRecord: (bet) => ({
+          userId: bet.userId || null,
+          betAmount: Number(bet.betAmount || 0),
+          payout: bet.won ? Number(bet.winAmount || (Number(bet.betAmount || 0) * 1.9)) : 0,
+          createdAt: bet.createdAt || null,
+        }),
+      },
+    ],
   },
   {
     id: "dragontiger",
     label: "Dragon Tiger",
-    collection: "dtHistory",
-    timeField: "createdAt",
-    betField: "betAmount",
-    payoutResolver: (bet) => {
-      if (!bet.won) return 0;
-      const betAmount = Number(bet.betAmount || 0);
-      const multiplier = bet.betSide === "tie" ? 8 : 1.9;
-      return Number(bet.winAmount || betAmount * multiplier);
-    },
+    sources: [
+      {
+        collection: "dtHistory",
+        mapRecord: (bet) => ({
+          userId: bet.userId || null,
+          betAmount: Number(bet.betAmount || 0),
+          payout: bet.won ? Number(bet.winAmount || 0) : 0,
+          createdAt: bet.createdAt || null,
+        }),
+      },
+    ],
   },
   {
     id: "andarbahar",
     label: "Andar Bahar",
-    collection: "abHistory",
-    timeField: "createdAt",
-    betField: "betAmount",
-    payoutResolver: (bet) => (bet.won ? Number(bet.winAmount || (Number(bet.betAmount || 0) * 1.9)) : 0),
+    sources: [
+      {
+        collection: "abHistory",
+        mapRecord: (bet) => ({
+          userId: bet.userId || null,
+          betAmount: Number(bet.betAmount || 0),
+          payout: bet.won ? Number(bet.winAmount || 0) : 0,
+          createdAt: bet.createdAt || null,
+        }),
+      },
+    ],
   },
   {
     id: "colorprediction",
     label: "Color Prediction",
-    collection: "colorBets",
-    timeField: "createdAt",
-    betField: "betAmount",
-    payoutResolver: (bet) => Number(bet.winAmount || 0),
+    sources: [
+      {
+        collection: "colorBets",
+        mapRecord: (bet) => ({
+          userId: bet.userId || null,
+          betAmount: Number(bet.betAmount || 0),
+          payout: Number(bet.winAmount || 0),
+          createdAt: bet.createdAt || null,
+        }),
+      },
+    ],
   },
   {
     id: "diceroll",
     label: "Dice Roll",
-    collection: "diceBets",
-    timeField: "createdAt",
-    betField: "betAmount",
-    payoutResolver: (bet) => Number(bet.winAmount || 0),
+    sources: [
+      {
+        collection: "diceBets",
+        mapRecord: (bet) => ({
+          userId: bet.userId || null,
+          betAmount: Number(bet.betAmount || 0),
+          payout: Number(bet.winAmount || 0),
+          createdAt: bet.createdAt || null,
+        }),
+      },
+    ],
   },
   {
     id: "wingame",
     label: "1 to 12 Win",
-    collection: "wingame_bets",
-    timeField: "createdAt",
-    betField: "amount",
-    payoutResolver: (bet) => Number(bet.winnings || 0),
+    sources: [
+      {
+        collection: "wingame_bets",
+        mapRecord: (bet) => ({
+          userId: bet.userId || null,
+          betAmount: Number(bet.amount || 0),
+          payout: Number(bet.winnings || 0),
+          createdAt: bet.createdAt || null,
+        }),
+      },
+    ],
   },
   {
     id: "roulette",
     label: "Roulette",
-    collection: "rouletteBets",
-    timeField: "timestamp",
-    betField: "betAmount",
-    payoutResolver: (bet) => Number(bet.winnings || 0),
+    sources: [
+      {
+        collection: "rouletteBets",
+        mapRecord: (bet) => ({
+          userId: bet.userId || null,
+          betAmount: Number(bet.betAmount || 0),
+          payout: Number(bet.winnings || 0),
+          createdAt: bet.timestamp || bet.createdAt || null,
+        }),
+      },
+    ],
   },
 ];
+
+export function filterAnalyticsRecords(records = [], startDate, endDate) {
+  return records.filter((record) => {
+    const createdAt = toDateValue(record.createdAt);
+    if (!createdAt) return false;
+    if (Number(record.betAmount || 0) <= 0) return false;
+    return isDateInRange(createdAt, startDate, endDate);
+  });
+}
 
 export function calculateGameMetrics(records = []) {
   return records.reduce(

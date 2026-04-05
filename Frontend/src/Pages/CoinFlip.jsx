@@ -4,13 +4,9 @@ import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, l
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { CoinToken } from "../components/GameVisuals";
-import GameHistoryPanel from "../components/GameHistoryPanel";
 import { getCoinResult } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatCurrency } from "../utils/formatMoney";
-import { USER_HISTORY_SOURCES } from "../utils/userHistorySources";
-
-const coinFlipHistoryMapper = USER_HISTORY_SOURCES.find((item) => item.id === "coinflip")?.mapRecord;
 
 function CoinFace({ side, fallback, className = "" }) {
   return <CoinToken side={side} className={className} />;
@@ -160,8 +156,6 @@ export default function CoinFlip() {
             FLIP!
           </button>
         </div>
-
-        <GameHistoryPanel userId={user?.uid} collectionName="coinFlipHistory" mapRecord={coinFlipHistoryMapper} title="Your Coin Flip History" />
       </div>
     </div>
   );

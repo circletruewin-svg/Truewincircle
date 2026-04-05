@@ -4,11 +4,9 @@ import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, l
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { DragonTigerBadge } from "../components/GameVisuals";
-import GameHistoryPanel from "../components/GameHistoryPanel";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatCurrency } from "../utils/formatMoney";
-import { USER_HISTORY_SOURCES } from "../utils/userHistorySources";
 
 const SUITS = ["S", "H", "D", "C"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
@@ -37,8 +35,6 @@ function BigCard({ card, hidden, side }) {
 }
 
 const ROUND_SEC = 12;
-const dragonTigerHistoryMapper = USER_HISTORY_SOURCES.find((item) => item.id === "dragontiger")?.mapRecord;
-
 export function DragonTiger() {
   const auth = getAuth();
   const user = auth.currentUser;
@@ -260,8 +256,6 @@ export function DragonTiger() {
             ))}
           </div>
         </div>
-
-        <GameHistoryPanel userId={user?.uid} collectionName="dtHistory" mapRecord={dragonTigerHistoryMapper} title="Your Dragon Tiger History" />
       </div>
     </div>
   );

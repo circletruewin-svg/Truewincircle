@@ -7,15 +7,11 @@ import {
 import { db } from '../firebase';
 import useAuthStore from '../store/authStore';
 import { Zap, Loader2 } from 'lucide-react';
-import GameHistoryPanel from '../components/GameHistoryPanel';
 import { getFundsDeductionResult, getUserFunds } from '../utils/userFunds';
 import { formatCurrency } from '../utils/formatMoney';
-import { USER_HISTORY_SOURCES } from '../utils/userHistorySources';
 
 const BETTING_DURATION_SECONDS = 5 * 60; // 5 minutes
 const RESULTS_DURATION_SECONDS = 1 * 60; // 1 minute
-const winGameHistoryMapper = USER_HISTORY_SOURCES.find((item) => item.id === "wingame")?.mapRecord;
-
 const WinGame = () => {
     const { user } = useAuthStore();
     
@@ -410,8 +406,6 @@ const WinGame = () => {
                         Winnings are 10x the bet amount and are credited to your wallet automatically.
                     </p>
                 </div>
-
-                <GameHistoryPanel userId={user?.uid} collectionName="wingame_bets" mapRecord={winGameHistoryMapper} title="Your 1 to 12 Win History" />
             </div>
         </div>
     );

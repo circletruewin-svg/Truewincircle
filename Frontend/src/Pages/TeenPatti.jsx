@@ -4,11 +4,9 @@ import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, l
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { CardBack } from "../components/GameVisuals";
-import GameHistoryPanel from "../components/GameHistoryPanel";
 import { getBiasedWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatCurrency } from "../utils/formatMoney";
-import { USER_HISTORY_SOURCES } from "../utils/userHistorySources";
 
 const SUITS = ["S", "H", "D", "C"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
@@ -32,8 +30,6 @@ function Card({ card, hidden }) {
 }
 
 const ROUND_SEC = 15;
-const teenPattiHistoryMapper = USER_HISTORY_SOURCES.find((item) => item.id === "teenpatti")?.mapRecord;
-
 export default function TeenPatti() {
   const auth = getAuth();
   const user = auth.currentUser;
@@ -227,8 +223,6 @@ export default function TeenPatti() {
             </button>
           </div>
         </div>
-
-        <GameHistoryPanel userId={user?.uid} collectionName="teenPattiHistory" mapRecord={teenPattiHistoryMapper} title="Your Teen Patti History" />
       </div>
     </div>
   );

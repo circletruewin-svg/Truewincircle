@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "../../firebase";
 import { formatCurrency } from "../../utils/formatMoney";
-import { summarizeUserHistory, USER_HISTORY_SOURCES } from "../../utils/userHistorySources";
+import { fetchUserHistoryRecords, summarizeUserHistory } from "../../utils/userHistorySources";
 
 const UserWinLoss = ({ userId }) => {
   const [winLoss, setWinLoss] = useState({ win: 0, loss: 0 });
@@ -17,16 +16,7 @@ const UserWinLoss = ({ userId }) => {
 
       setLoading(true);
       try {
-        const snapshots = await Promise.all(
-          USER_HISTORY_SOURCES.map((source) =>
-            getDocs(query(collection(db, source.collection), where("userId", "==", userId)))
-          )
-        );
-
-        const records = snapshots.flatMap((snapshot, index) =>
-          snapshot.docs.map((docSnap) => USER_HISTORY_SOURCES[index].mapRecord(docSnap))
-        );
-
+        const records = await fetchUserHistoryRecords(db, userId);
         const summary = summarizeUserHistory(records);
         setWinLoss({ win: summary.win, loss: summary.loss });
       } catch (error) {

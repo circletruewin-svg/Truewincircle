@@ -5,17 +5,13 @@ import useAuthStore from '../store/authStore';
 import { IndianRupee } from 'lucide-react';
 import RouletteBoard from '../components/RouletteBoard';
 import BettingPanel from '../components/BettingPanel';
-import GameHistoryPanel from '../components/GameHistoryPanel';
 import { buildFundsDeductionUpdate, getUserFunds } from '../utils/userFunds';
-import { USER_HISTORY_SOURCES } from '../utils/userHistorySources';
 import { formatCurrency } from '../utils/formatMoney';
 
 // --- Helper Functions and Data ---
 
 const wheelNumbers = [0, 28, 9, 26, 30, 11, 7, 20, 32, 17, 5, 22, 34, 15, 3, 24, 36, 13, 1, '00', 27, 10, 25, 29, 12, 8, 19, 31, 18, 6, 21, 33, 16, 4, 23, 35, 14, 2];
 const redNumbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36];
-const rouletteHistoryMapper = USER_HISTORY_SOURCES.find((item) => item.id === "roulette")?.mapRecord;
-
 const getNumberColor = (num) => {
   if (num === 0 || num === '00') return 'bg-green-600';
   if (redNumbers.includes(num)) return 'bg-red-600';
@@ -296,10 +292,6 @@ export default function CasinoRoulette() {
         balance={balance}
         selectedBetType={selectedBetType}
       />
-
-      <div className="w-full max-w-5xl">
-        <GameHistoryPanel userId={user?.uid} collectionName="rouletteBets" mapRecord={rouletteHistoryMapper} title="Your Roulette History" />
-      </div>
     </div>
   );
 }
