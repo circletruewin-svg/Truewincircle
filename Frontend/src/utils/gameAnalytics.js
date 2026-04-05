@@ -40,6 +40,15 @@ export const GAME_ANALYTICS_CONFIG = [
           createdAt: bet.createdAt || bet.timestamp || null,
         }),
       },
+      {
+        collection: "coinFlipBets",
+        mapRecord: (bet) => ({
+          userId: bet.userId || bet.uid || null,
+          betAmount: Number(bet.betAmount || bet.amount || 0),
+          payout: Number(bet.winAmount || bet.winnings || 0),
+          createdAt: bet.createdAt || bet.timestamp || null,
+        }),
+      },
     ],
   },
   {
@@ -49,7 +58,7 @@ export const GAME_ANALYTICS_CONFIG = [
       {
         collection: "teenPattiHistory",
         mapRecord: (bet) => ({
-          userId: bet.userId || null,
+          userId: bet.userId || bet.uid || null,
           betAmount: Number(bet.betAmount || bet.amount || 0),
           payout: bet.won ? Number(bet.winAmount || bet.winnings || (Number(bet.betAmount || bet.amount || 0) * 1.9)) : 0,
           createdAt: bet.createdAt || bet.timestamp || null,
@@ -64,7 +73,7 @@ export const GAME_ANALYTICS_CONFIG = [
       {
         collection: "dtHistory",
         mapRecord: (bet) => ({
-          userId: bet.userId || null,
+          userId: bet.userId || bet.uid || null,
           betAmount: Number(bet.betAmount || bet.amount || 0),
           payout: bet.won ? Number(bet.winAmount || bet.winnings || 0) : 0,
           createdAt: bet.createdAt || bet.timestamp || null,
@@ -79,7 +88,7 @@ export const GAME_ANALYTICS_CONFIG = [
       {
         collection: "abHistory",
         mapRecord: (bet) => ({
-          userId: bet.userId || null,
+          userId: bet.userId || bet.uid || null,
           betAmount: Number(bet.betAmount || bet.amount || 0),
           payout: bet.won ? Number(bet.winAmount || bet.winnings || 0) : 0,
           createdAt: bet.createdAt || bet.timestamp || null,
@@ -94,7 +103,16 @@ export const GAME_ANALYTICS_CONFIG = [
       {
         collection: "colorBets",
         mapRecord: (bet) => ({
-          userId: bet.userId || null,
+          userId: bet.userId || bet.uid || null,
+          betAmount: Number(bet.betAmount || bet.amount || 0),
+          payout: Number(bet.winAmount || bet.winnings || 0),
+          createdAt: bet.createdAt || bet.timestamp || null,
+        }),
+      },
+      {
+        collection: "colorHistory",
+        mapRecord: (bet) => ({
+          userId: bet.userId || bet.uid || null,
           betAmount: Number(bet.betAmount || bet.amount || 0),
           payout: Number(bet.winAmount || bet.winnings || 0),
           createdAt: bet.createdAt || bet.timestamp || null,
@@ -109,7 +127,16 @@ export const GAME_ANALYTICS_CONFIG = [
       {
         collection: "diceBets",
         mapRecord: (bet) => ({
-          userId: bet.userId || null,
+          userId: bet.userId || bet.uid || null,
+          betAmount: Number(bet.betAmount || bet.amount || 0),
+          payout: Number(bet.winAmount || bet.winnings || 0),
+          createdAt: bet.createdAt || bet.timestamp || null,
+        }),
+      },
+      {
+        collection: "diceRollHistory",
+        mapRecord: (bet) => ({
+          userId: bet.userId || bet.uid || null,
           betAmount: Number(bet.betAmount || bet.amount || 0),
           payout: Number(bet.winAmount || bet.winnings || 0),
           createdAt: bet.createdAt || bet.timestamp || null,

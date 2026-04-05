@@ -3,52 +3,37 @@ import { db } from "../../firebase";
 import Loader from "../../components/Loader";
 import { formatCurrency } from "../../utils/formatMoney";
 import { formatDateTime, toDateValue } from "../../utils/dateHelpers";
-import { fetchFinancialHistory } from "../../utils/accountHistory";
 import { fetchUserHistoryRecords, summarizeUserHistory } from "../../utils/userHistorySources";
 
-const UserBettingHistory = ({ userId }) => {
+const UserBettingHistory = ({ userIdentity, userId }) => {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchAllBetHistory = async () => {
-      if (!userId) {
+      const targetIdentity = userIdentity || userId;
+      if (!targetIdentity) {
         setLoading(false);
         return;
       }
 
       setLoading(true);
       try {
-        const [gameRecords, financialRecords] = await Promise.all([
-          fetchUserHistoryRecords(db, userId),
-          fetchFinancialHistory(db, userId),
-        ]);
-
-        const financialAsRows = financialRecords.map((item) => ({
-          id: item.id,
-          gameName: item.title,
-          title: item.subtitle,
-          subtitle: item.type,
-          amount: Number(item.amount || 0),
-          payout: item.type === "deposit" || item.type === "referral_bonus" ? Number(item.amount || 0) : 0,
-          status: item.type === "withdrawal" ? "loss" : "win",
-          createdAt: item.date || null,
-        }));
-
+        const gameRecords = await fetchUserHistoryRecords(db, targetIdentity);
         setHistory(
-          [...gameRecords, ...financialAsRows].sort(
+          [...gameRecords].sort(
             (a, b) => (toDateValue(b.createdAt)?.getTime() || 0) - (toDateValue(a.createdAt)?.getTime() || 0)
           )
         );
       } catch (error) {
-        console.error("Error fetching combined bet history:", error);
+        console.error("Error fetching bet history:", error);
       } finally {
         setLoading(false);
       }
     };
 
     fetchAllBetHistory();
-  }, [userId]);
+  }, [userIdentity, userId]);
 
   if (loading) {
     return <div className="flex justify-center items-center p-8"><Loader /></div>;
@@ -58,7 +43,7 @@ const UserBettingHistory = ({ userId }) => {
 
   return (
     <div className="bg-gray-50 p-4 md:p-6 rounded-lg shadow-lg mt-6">
-      <h2 className="text-2xl font-bold text-gray-800 mb-4">Combined Betting History</h2>
+      <h2 className="text-2xl font-bold text-gray-800 mb-4">Betting History</h2>
 
       <div className="grid grid-cols-2 gap-4 mb-4">
         <div className="bg-green-100 p-4 rounded-lg">
@@ -74,7 +59,7 @@ const UserBettingHistory = ({ userId }) => {
       </div>
 
       {history.length === 0 ? (
-        <p className="text-gray-500 text-center py-4">No betting history found for this user.</p>
+        <p className="text-gray-500 text-center py-4">No bet history found for this user.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left min-w-[820px]">

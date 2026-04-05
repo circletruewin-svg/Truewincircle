@@ -1,62 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { ArrowDownCircle, ArrowUpCircle, AlertTriangle, Clock, Gift, ShieldX, Trophy } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { AlertTriangle, Clock, ShieldX, Trophy } from "lucide-react";
 import { db } from "../firebase";
 import Loader from "../components/Loader";
 import Navbar from "../components/Navbar";
 import useAuthStore from "../store/authStore";
 import { formatDateTime, toDateValue } from "../utils/dateHelpers";
-import { formatCurrency, roundMoney } from "../utils/formatMoney";
-import { fetchFinancialHistory } from "../utils/accountHistory";
-import { fetchUserHistoryRecords, summarizeUserHistory } from "../utils/userHistorySources";
-
-const mapGameRecordToFeedItem = (record) => {
-  const amount = Number(record.amount || 0);
-  const payout = Number(record.payout || 0);
-
-  if (record.status === "win") {
-    return {
-      id: `game-${record.sourceId}-${record.id}`,
-      type: "win",
-      title: `${record.gameName} Win`,
-      subtitle: record.title,
-      amount: payout,
-      betAmount: amount,
-      date: toDateValue(record.createdAt),
-      raw: record,
-    };
-  }
-
-  if (record.status === "loss") {
-    return {
-      id: `game-${record.sourceId}-${record.id}`,
-      type: "loss",
-      title: `${record.gameName} Loss`,
-      subtitle: record.title,
-      amount,
-      betAmount: amount,
-      date: toDateValue(record.createdAt),
-      raw: record,
-    };
-  }
-
-  return {
-    id: `game-${record.sourceId}-${record.id}`,
-    type: "bet_placed",
-    title: `${record.gameName} Bet`,
-    subtitle: record.title,
-    amount,
-    betAmount: amount,
-    date: toDateValue(record.createdAt),
-    raw: record,
-  };
-};
-
-const SummaryCard = ({ label, value, className = "" }) => (
-  <div className={`rounded-2xl border border-gray-800 bg-gray-800/80 p-4 ${className}`}>
-    <p className="text-sm text-gray-400">{label}</p>
-    <p className="mt-2 text-2xl font-black text-white">{value}</p>
-  </div>
-);
+import { formatCurrency } from "../utils/formatMoney";
+import { fetchUserHistoryRecords } from "../utils/userHistorySources";
 
 const History = () => {
   const user = useAuthStore((state) => state.user);
@@ -76,104 +26,38 @@ const History = () => {
       setError(null);
 
       try {
-        const [financialItems, gameRecords] = await Promise.all([
-          fetchFinancialHistory(db, user.uid),
-          fetchUserHistoryRecords(db, user.uid),
-        ]);
+        const gameRecords = await fetchUserHistoryRecords(db, user);
+        const gameItems = gameRecords
+          .map((record) => ({
+            id: `game-${record.sourceId}-${record.id}`,
+            gameName: record.gameName,
+            title: record.title,
+            status: record.status,
+            amount: Number(record.amount || 0),
+            payout: Number(record.payout || 0),
+            date: toDateValue(record.createdAt),
+          }))
+          .filter((item) => item.date)
+          .sort((a, b) => b.date.getTime() - a.date.getTime());
 
-        const gameItems = gameRecords.map(mapGameRecordToFeedItem).filter((item) => item.date);
-        const combinedHistory = [...financialItems, ...gameItems].sort((a, b) => b.date.getTime() - a.date.getTime());
-        setHistory(combinedHistory);
+        setHistory(gameItems);
       } catch (err) {
-        console.error("Error fetching transaction history:", err);
-        setError("Failed to load transaction history.");
+        console.error("Error fetching bet history:", err);
+        setError("Failed to load bet history.");
       } finally {
         setLoading(false);
       }
     };
 
     fetchHistory();
-  }, [user?.uid]);
-
-  const summary = useMemo(() => {
-    const gameSummary = summarizeUserHistory(
-      history
-        .filter((item) => ["win", "loss", "bet_placed"].includes(item.type))
-        .map((item) => ({
-          status: item.type === "bet_placed" ? "pending" : item.type,
-          amount: item.betAmount || item.amount || 0,
-          payout: item.type === "win" ? item.amount || 0 : 0,
-        }))
-    );
-
-    const deposits = history
-      .filter((item) => item.type === "deposit" && item.subtitle === "approved")
-      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
-
-    const withdrawals = history
-      .filter((item) => item.type === "withdrawal" && item.subtitle === "approved")
-      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
-
-    return {
-      win: roundMoney(gameSummary.win),
-      loss: roundMoney(gameSummary.loss),
-      deposits: roundMoney(deposits),
-      withdrawals: roundMoney(withdrawals),
-    };
-  }, [history]);
+  }, [user]);
 
   const renderHistoryItem = (item) => {
-    let Icon;
-    let amountColor = "text-white";
-    let sign = "";
-    let statusColor = "text-gray-400";
-
-    switch (item.type) {
-      case "deposit":
-        Icon = <ArrowDownCircle className="text-green-500" />;
-        amountColor = "text-green-500";
-        sign = "+";
-        statusColor = item.subtitle === "approved" ? "text-green-400" : item.subtitle === "rejected" ? "text-red-400" : "text-yellow-400";
-        break;
-      case "withdrawal":
-        Icon = <ArrowUpCircle className="text-red-500" />;
-        amountColor = "text-red-500";
-        sign = "-";
-        statusColor = item.subtitle === "approved" ? "text-green-400" : item.subtitle === "rejected" ? "text-red-400" : "text-yellow-400";
-        break;
-      case "win":
-        Icon = <Trophy className="text-yellow-500" />;
-        amountColor = "text-yellow-500";
-        sign = "+";
-        break;
-      case "loss":
-        Icon = <ShieldX className="text-gray-500" />;
-        amountColor = "text-red-400";
-        sign = "-";
-        break;
-      case "bet_placed":
-        Icon = <Clock className="text-blue-400" />;
-        amountColor = "text-blue-300";
-        sign = "-";
-        statusColor = "text-blue-400";
-        break;
-      case "referral_bonus":
-        Icon = <Gift className="text-purple-500" />;
-        amountColor = "text-purple-400";
-        sign = "+";
-        statusColor = "text-green-400";
-        break;
-      default:
-        return null;
-    }
+    const Icon = item.status === "win" ? <Trophy className="text-yellow-500" /> : item.status === "loss" ? <ShieldX className="text-red-500" /> : <Clock className="text-blue-400" />;
+    const amountColor = item.status === "win" ? "text-yellow-400" : item.status === "loss" ? "text-red-400" : "text-blue-300";
+    const payoutLabel = item.status === "win" && item.payout > 0 ? `Win ${formatCurrency(item.payout)}` : item.status === "loss" ? "Loss" : "Bet placed";
 
     const stamp = formatDateTime(item.date);
-    const detailLine =
-      item.type === "withdrawal"
-        ? item.raw?.method === "upi"
-          ? item.raw?.upiId
-          : [item.raw?.bankName, item.raw?.accountNumber].filter(Boolean).join(" - ")
-        : item.subtitle;
 
     return (
       <div key={item.id} className="bg-gray-800 p-4 rounded-lg flex items-center justify-between shadow-md">
@@ -182,15 +66,13 @@ const History = () => {
           <div>
             <p className="font-semibold">{item.title}</p>
             <p className="text-xs text-gray-400">{stamp.date} {stamp.time}</p>
-            <p className="text-xs text-gray-500 mt-0.5">{detailLine}</p>
+            <p className="text-xs text-gray-500 mt-0.5">{item.gameName}</p>
           </div>
         </div>
         <div className="text-right">
-          <p className={`font-bold text-lg ${amountColor}`}>
-            {sign}{formatCurrency(item.amount || 0)}
-          </p>
-          <p className={`text-xs capitalize font-semibold ${statusColor}`}>
-            {item.subtitle}
+          <p className={`font-bold text-lg ${amountColor}`}>{formatCurrency(item.amount || 0)}</p>
+          <p className="text-xs capitalize font-semibold text-gray-400">
+            {payoutLabel}
           </p>
         </div>
       </div>
@@ -213,17 +95,10 @@ const History = () => {
     <div className="font-roboto bg-gray-900 text-white min-h-screen">
       <Navbar />
       <div className="max-w-4xl mx-auto p-4 pt-24">
-        <h1 className="text-3xl font-black text-yellow-400 mb-6 text-center">Transaction History</h1>
-
-        <div className="grid grid-cols-1 gap-4 mb-6 md:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard label="Total Wins" value={formatCurrency(summary.win)} />
-          <SummaryCard label="Total Losses" value={formatCurrency(summary.loss)} />
-          <SummaryCard label="Approved Deposits" value={formatCurrency(summary.deposits)} />
-          <SummaryCard label="Approved Withdrawals" value={formatCurrency(summary.withdrawals)} />
-        </div>
+        <h1 className="text-3xl font-black text-yellow-400 mb-6 text-center">Bet History</h1>
 
         {history.length === 0 ? (
-          <p className="text-center text-gray-400">You have no transactions yet.</p>
+          <p className="text-center text-gray-400">Aapki abhi tak koi bet history nahi mili.</p>
         ) : (
           <div className="space-y-4">{history.map(renderHistoryItem)}</div>
         )}

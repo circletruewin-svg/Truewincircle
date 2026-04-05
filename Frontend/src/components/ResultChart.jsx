@@ -12,14 +12,19 @@ const ResultChart = ({ marketName, onClose }) => {
       setLoading(true);
       try {
         const resultsRef = collection(db, 'results');
-        const allResultsSnapshot = await getDocs(resultsRef); // Fetch all documents
+        const allResultsSnapshot = await getDocs(resultsRef);
         let allResults = allResultsSnapshot.docs.map(doc => {
             const data = doc.data();
+            const parsedDate =
+              typeof data.date?.toDate === "function"
+                ? data.date.toDate()
+                : data.date
+                ? new Date(data.date)
+                : null;
             return {
                 id: doc.id,
                 ...data,
-                // Convert Firestore Timestamp to JS Date
-                date: data.date.toDate(),
+                date: parsedDate,
             };
         });
 
@@ -29,7 +34,8 @@ const ResultChart = ({ marketName, onClose }) => {
         const currentYear = now.getFullYear();
 
         allResults = allResults.filter(result => {
-            const isSameMarket = result.marketName === marketName;
+            if (!result.date || Number.isNaN(result.date.getTime())) return false;
+            const isSameMarket = String(result.marketName || "").trim().toUpperCase() === String(marketName || "").trim().toUpperCase();
             const isCurrentMonth = result.date.getMonth() === currentMonth && result.date.getFullYear() === currentYear;
             return isSameMarket && isCurrentMonth;
         });

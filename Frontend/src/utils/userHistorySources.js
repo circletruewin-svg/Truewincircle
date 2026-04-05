@@ -2,6 +2,14 @@ import { collection, getDocs, query, where } from "firebase/firestore";
 import { isDateInRange, toDateValue } from "./dateHelpers";
 
 const buildFetchers = (source) => source.fetchers || [{ collection: source.collection, userIdField: "userId", mapRecord: source.mapRecord }];
+const normalizeIdentity = (userOrId) =>
+  typeof userOrId === "string"
+    ? { uid: userOrId }
+    : {
+        uid: userOrId?.uid || userOrId?.id || userOrId?.userId || null,
+        phoneNumber: userOrId?.phoneNumber || null,
+        name: userOrId?.name || userOrId?.displayName || null,
+      };
 
 export const USER_HISTORY_SOURCES = [
   {
@@ -259,7 +267,8 @@ export function summarizeUserHistory(records = []) {
 }
 
 export async function fetchUserHistoryRecords(db, userId, options = {}) {
-  if (!userId) return [];
+  const identity = normalizeIdentity(userId);
+  if (!identity.uid && !identity.phoneNumber && !identity.name) return [];
 
   const { startDate, endDate } = options;
   const result = [];
@@ -268,17 +277,46 @@ export async function fetchUserHistoryRecords(db, userId, options = {}) {
     const fetchers = buildFetchers(source);
 
     for (const fetcher of fetchers) {
-      let snapshot;
-      try {
-        snapshot = await getDocs(
-          query(collection(db, fetcher.collection), where(fetcher.userIdField || "userId", "==", userId))
-        );
-      } catch (error) {
-        console.error(`Failed to fetch ${fetcher.collection} for user ${userId}:`, error);
-        continue;
+      const identifierQueries = [];
+
+      if (identity.uid) {
+        identifierQueries.push({ field: fetcher.userIdField || "userId", value: identity.uid });
+        if ((fetcher.userIdField || "userId") !== "uid") {
+          identifierQueries.push({ field: "uid", value: identity.uid });
+        }
+      }
+      if (identity.phoneNumber) {
+        identifierQueries.push({ field: "phoneNumber", value: identity.phoneNumber });
       }
 
-      snapshot.docs.forEach((docSnap) => {
+      let matchedDocs = [];
+      for (const identifierQuery of identifierQueries) {
+        try {
+          const snapshot = await getDocs(query(collection(db, fetcher.collection), where(identifierQuery.field, "==", identifierQuery.value)));
+          matchedDocs = [...matchedDocs, ...snapshot.docs];
+        } catch (error) {
+          console.error(`Failed to fetch ${fetcher.collection} using ${identifierQuery.field}:`, error);
+        }
+      }
+
+      if (matchedDocs.length === 0) {
+        try {
+          const snapshot = await getDocs(collection(db, fetcher.collection));
+          matchedDocs = snapshot.docs.filter((docSnap) => {
+            const data = docSnap.data();
+            return (
+              (identity.uid && (data.userId === identity.uid || data.uid === identity.uid)) ||
+              (identity.phoneNumber && data.phoneNumber === identity.phoneNumber) ||
+              (identity.name && data.name === identity.name)
+            );
+          });
+        } catch (error) {
+          console.error(`Failed fallback scan for ${fetcher.collection}:`, error);
+          continue;
+        }
+      }
+
+      matchedDocs.forEach((docSnap) => {
         const mapped = (fetcher.mapRecord || source.mapRecord)(docSnap);
         if (!mapped) return;
 

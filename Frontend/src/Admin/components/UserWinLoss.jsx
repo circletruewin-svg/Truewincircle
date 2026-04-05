@@ -3,31 +3,32 @@ import { db } from "../../firebase";
 import { formatCurrency } from "../../utils/formatMoney";
 import { fetchUserHistoryRecords, summarizeUserHistory } from "../../utils/userHistorySources";
 
-const UserWinLoss = ({ userId }) => {
+const UserWinLoss = ({ userIdentity, userId }) => {
   const [winLoss, setWinLoss] = useState({ win: 0, loss: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchHistory = async () => {
-      if (!userId) {
+      const targetIdentity = userIdentity || userId;
+      if (!targetIdentity) {
         setLoading(false);
         return;
       }
 
       setLoading(true);
       try {
-        const records = await fetchUserHistoryRecords(db, userId);
+        const records = await fetchUserHistoryRecords(db, targetIdentity);
         const summary = summarizeUserHistory(records);
         setWinLoss({ win: summary.win, loss: summary.loss });
       } catch (error) {
-        console.error(`Error fetching win/loss for user ${userId}`, error);
+        console.error("Error fetching win/loss for user", error);
       } finally {
         setLoading(false);
       }
     };
 
     fetchHistory();
-  }, [userId]);
+  }, [userIdentity, userId]);
 
   if (loading) {
     return <span className="text-xs text-gray-400">...</span>;
