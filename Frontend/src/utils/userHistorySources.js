@@ -11,6 +11,23 @@ const normalizeIdentity = (userOrId) =>
         name: userOrId?.name || userOrId?.displayName || null,
       };
 
+const buildIdentifierQueries = (identity, fetcher) => {
+  const queries = [];
+  const primaryField = fetcher.userIdField || "userId";
+
+  if (identity.uid) {
+    queries.push({ field: primaryField, value: identity.uid });
+    if (primaryField !== "uid") {
+      queries.push({ field: "uid", value: identity.uid });
+    }
+  }
+  if (identity.phoneNumber) {
+    queries.push({ field: "phoneNumber", value: identity.phoneNumber });
+  }
+
+  return queries;
+};
+
 export const USER_HISTORY_SOURCES = [
   {
     id: "wingame",
@@ -149,6 +166,42 @@ export const USER_HISTORY_SOURCES = [
   {
     id: "coinflip",
     collection: "coinFlipHistory",
+    fetchers: [
+      {
+        collection: "coinFlipHistory",
+        userIdField: "userId",
+        mapRecord: (docSnap) => {
+          const data = docSnap.data();
+          return {
+            id: docSnap.id,
+            gameName: "Coin Flip",
+            title: `${String(data.betSide || "-").toUpperCase()} vs ${String(data.result || "-").toUpperCase()}`,
+            subtitle: data.won ? "win" : "loss",
+            amount: Number(data.betAmount || data.amount || 0),
+            payout: Number(data.winAmount || data.winnings || 0),
+            status: data.won ? "win" : "loss",
+            createdAt: data.createdAt || data.timestamp || null,
+          };
+        },
+      },
+      {
+        collection: "coinFlipBets",
+        userIdField: "userId",
+        mapRecord: (docSnap) => {
+          const data = docSnap.data();
+          return {
+            id: `bets-${docSnap.id}`,
+            gameName: "Coin Flip",
+            title: `${String(data.betSide || "-").toUpperCase()}${data.result ? ` vs ${String(data.result).toUpperCase()}` : ""}`,
+            subtitle: data.won ? "win" : data.status || "loss",
+            amount: Number(data.betAmount || data.amount || 0),
+            payout: Number(data.winAmount || data.winnings || 0),
+            status: data.won ? "win" : data.status || "loss",
+            createdAt: data.createdAt || data.timestamp || null,
+          };
+        },
+      },
+    ],
     mapRecord: (docSnap) => {
       const data = docSnap.data();
       return {
@@ -166,6 +219,42 @@ export const USER_HISTORY_SOURCES = [
   {
     id: "teenpatti",
     collection: "teenPattiHistory",
+    fetchers: [
+      {
+        collection: "teenPattiHistory",
+        userIdField: "userId",
+        mapRecord: (docSnap) => {
+          const data = docSnap.data();
+          return {
+            id: docSnap.id,
+            gameName: "Teen Patti",
+            title: `${String(data.betSide || "-").toUpperCase()} / Winner ${String(data.winner || "-").toUpperCase()}`,
+            subtitle: data.won ? "win" : "loss",
+            amount: Number(data.betAmount || data.amount || 0),
+            payout: Number(data.winAmount || data.winnings || 0),
+            status: data.won ? "win" : "loss",
+            createdAt: data.createdAt || data.timestamp || null,
+          };
+        },
+      },
+      {
+        collection: "teenPattiBets",
+        userIdField: "userId",
+        mapRecord: (docSnap) => {
+          const data = docSnap.data();
+          return {
+            id: `bets-${docSnap.id}`,
+            gameName: "Teen Patti",
+            title: `${String(data.betSide || "-").toUpperCase()} / Winner ${String(data.winner || "-").toUpperCase()}`,
+            subtitle: data.won ? "win" : data.status || "loss",
+            amount: Number(data.betAmount || data.amount || 0),
+            payout: Number(data.winAmount || data.winnings || 0),
+            status: data.won ? "win" : data.status || "loss",
+            createdAt: data.createdAt || data.timestamp || null,
+          };
+        },
+      },
+    ],
     mapRecord: (docSnap) => {
       const data = docSnap.data();
       return {
@@ -183,6 +272,42 @@ export const USER_HISTORY_SOURCES = [
   {
     id: "dragontiger",
     collection: "dtHistory",
+    fetchers: [
+      {
+        collection: "dtHistory",
+        userIdField: "userId",
+        mapRecord: (docSnap) => {
+          const data = docSnap.data();
+          return {
+            id: docSnap.id,
+            gameName: "Dragon Tiger",
+            title: `${String(data.betSide || "-").toUpperCase()} / Winner ${String(data.winner || "-").toUpperCase()}`,
+            subtitle: data.won ? "win" : "loss",
+            amount: Number(data.betAmount || data.amount || 0),
+            payout: Number(data.winAmount || data.winnings || 0),
+            status: data.won ? "win" : "loss",
+            createdAt: data.createdAt || data.timestamp || null,
+          };
+        },
+      },
+      {
+        collection: "dragonTigerBets",
+        userIdField: "userId",
+        mapRecord: (docSnap) => {
+          const data = docSnap.data();
+          return {
+            id: `bets-${docSnap.id}`,
+            gameName: "Dragon Tiger",
+            title: `${String(data.betSide || "-").toUpperCase()} / Winner ${String(data.winner || "-").toUpperCase()}`,
+            subtitle: data.won ? "win" : data.status || "loss",
+            amount: Number(data.betAmount || data.amount || 0),
+            payout: Number(data.winAmount || data.winnings || 0),
+            status: data.won ? "win" : data.status || "loss",
+            createdAt: data.createdAt || data.timestamp || null,
+          };
+        },
+      },
+    ],
     mapRecord: (docSnap) => {
       const data = docSnap.data();
       return {
@@ -200,6 +325,42 @@ export const USER_HISTORY_SOURCES = [
   {
     id: "andarbahar",
     collection: "abHistory",
+    fetchers: [
+      {
+        collection: "abHistory",
+        userIdField: "userId",
+        mapRecord: (docSnap) => {
+          const data = docSnap.data();
+          return {
+            id: docSnap.id,
+            gameName: "Andar Bahar",
+            title: `${String(data.betSide || "-").toUpperCase()} / Winner ${String(data.winner || "-").toUpperCase()}`,
+            subtitle: data.won ? "win" : "loss",
+            amount: Number(data.betAmount || data.amount || 0),
+            payout: Number(data.winAmount || data.winnings || 0),
+            status: data.won ? "win" : "loss",
+            createdAt: data.createdAt || data.timestamp || null,
+          };
+        },
+      },
+      {
+        collection: "andarBaharBets",
+        userIdField: "userId",
+        mapRecord: (docSnap) => {
+          const data = docSnap.data();
+          return {
+            id: `bets-${docSnap.id}`,
+            gameName: "Andar Bahar",
+            title: `${String(data.betSide || "-").toUpperCase()} / Winner ${String(data.winner || "-").toUpperCase()}`,
+            subtitle: data.won ? "win" : data.status || "loss",
+            amount: Number(data.betAmount || data.amount || 0),
+            payout: Number(data.winAmount || data.winnings || 0),
+            status: data.won ? "win" : data.status || "loss",
+            createdAt: data.createdAt || data.timestamp || null,
+          };
+        },
+      },
+    ],
     mapRecord: (docSnap) => {
       const data = docSnap.data();
       return {
@@ -217,6 +378,42 @@ export const USER_HISTORY_SOURCES = [
   {
     id: "diceroll",
     collection: "diceBets",
+    fetchers: [
+      {
+        collection: "diceBets",
+        userIdField: "userId",
+        mapRecord: (docSnap) => {
+          const data = docSnap.data();
+          return {
+            id: docSnap.id,
+            gameName: "Dice Roll",
+            title: `Bet ${data.betNum ?? "-"} / Result ${data.result ?? "-"}`,
+            subtitle: data.won ? "win" : "loss",
+            amount: Number(data.betAmount || data.amount || 0),
+            payout: Number(data.winAmount || data.winnings || 0),
+            status: data.won ? "win" : "loss",
+            createdAt: data.createdAt || data.timestamp || null,
+          };
+        },
+      },
+      {
+        collection: "diceRollHistory",
+        userIdField: "userId",
+        mapRecord: (docSnap) => {
+          const data = docSnap.data();
+          return {
+            id: `history-${docSnap.id}`,
+            gameName: "Dice Roll",
+            title: `Bet ${data.betNum ?? "-"} / Result ${data.result ?? "-"}`,
+            subtitle: data.won ? "win" : data.status || "loss",
+            amount: Number(data.betAmount || data.amount || 0),
+            payout: Number(data.winAmount || data.winnings || 0),
+            status: data.won ? "win" : data.status || "loss",
+            createdAt: data.createdAt || data.timestamp || null,
+          };
+        },
+      },
+    ],
     mapRecord: (docSnap) => {
       const data = docSnap.data();
       return {
@@ -234,6 +431,42 @@ export const USER_HISTORY_SOURCES = [
   {
     id: "colorprediction",
     collection: "colorBets",
+    fetchers: [
+      {
+        collection: "colorBets",
+        userIdField: "userId",
+        mapRecord: (docSnap) => {
+          const data = docSnap.data();
+          return {
+            id: docSnap.id,
+            gameName: "Color Prediction",
+            title: `${String(data.betColor || "-").toUpperCase()} / Winner ${String(data.winnerColor || "-").toUpperCase()}`,
+            subtitle: data.won ? "win" : "loss",
+            amount: Number(data.betAmount || 0),
+            payout: Number(data.winAmount || 0),
+            status: data.won ? "win" : "loss",
+            createdAt: data.createdAt || data.timestamp || null,
+          };
+        },
+      },
+      {
+        collection: "colorHistory",
+        userIdField: "userId",
+        mapRecord: (docSnap) => {
+          const data = docSnap.data();
+          return {
+            id: `history-${docSnap.id}`,
+            gameName: "Color Prediction",
+            title: `${String(data.betColor || "-").toUpperCase()} / Winner ${String(data.winnerColor || data.winner || "-").toUpperCase()}`,
+            subtitle: data.won ? "win" : data.status || "loss",
+            amount: Number(data.betAmount || data.amount || 0),
+            payout: Number(data.winAmount || data.winnings || 0),
+            status: data.won ? "win" : data.status || "loss",
+            createdAt: data.createdAt || data.timestamp || null,
+          };
+        },
+      },
+    ],
     mapRecord: (docSnap) => {
       const data = docSnap.data();
       return {
@@ -244,7 +477,7 @@ export const USER_HISTORY_SOURCES = [
         amount: Number(data.betAmount || 0),
         payout: Number(data.winAmount || 0),
         status: data.won ? "win" : "loss",
-        createdAt: data.createdAt || null,
+        createdAt: data.createdAt || data.timestamp || null,
       };
     },
   },
@@ -270,26 +503,12 @@ export async function fetchUserHistoryRecords(db, userId, options = {}) {
   const identity = normalizeIdentity(userId);
   if (!identity.uid && !identity.phoneNumber && !identity.name) return [];
 
-  const { startDate, endDate } = options;
-  const result = [];
-
-  for (const source of USER_HISTORY_SOURCES) {
-    const fetchers = buildFetchers(source);
-
-    for (const fetcher of fetchers) {
-      const identifierQueries = [];
-
-      if (identity.uid) {
-        identifierQueries.push({ field: fetcher.userIdField || "userId", value: identity.uid });
-        if ((fetcher.userIdField || "userId") !== "uid") {
-          identifierQueries.push({ field: "uid", value: identity.uid });
-        }
-      }
-      if (identity.phoneNumber) {
-        identifierQueries.push({ field: "phoneNumber", value: identity.phoneNumber });
-      }
-
+  const { startDate, endDate, disableFallbackScan = false } = options;
+  const fetchTasks = USER_HISTORY_SOURCES.flatMap((source) =>
+    buildFetchers(source).map(async (fetcher) => {
+      const identifierQueries = buildIdentifierQueries(identity, fetcher);
       let matchedDocs = [];
+
       for (const identifierQuery of identifierQueries) {
         try {
           const snapshot = await getDocs(query(collection(db, fetcher.collection), where(identifierQuery.field, "==", identifierQuery.value)));
@@ -299,7 +518,7 @@ export async function fetchUserHistoryRecords(db, userId, options = {}) {
         }
       }
 
-      if (matchedDocs.length === 0) {
+      if (!disableFallbackScan && matchedDocs.length === 0) {
         try {
           const snapshot = await getDocs(collection(db, fetcher.collection));
           matchedDocs = snapshot.docs.filter((docSnap) => {
@@ -312,26 +531,30 @@ export async function fetchUserHistoryRecords(db, userId, options = {}) {
           });
         } catch (error) {
           console.error(`Failed fallback scan for ${fetcher.collection}:`, error);
-          continue;
         }
       }
 
-      matchedDocs.forEach((docSnap) => {
-        const mapped = (fetcher.mapRecord || source.mapRecord)(docSnap);
-        if (!mapped) return;
+      return matchedDocs
+        .map((docSnap) => {
+          const mapped = (fetcher.mapRecord || source.mapRecord)(docSnap);
+          if (!mapped) return null;
 
-        const createdAt = mapped.createdAt || null;
-        if (startDate && endDate && !isDateInRange(createdAt, startDate, endDate)) return;
+          const createdAt = mapped.createdAt || null;
+          if (startDate && endDate && !isDateInRange(createdAt, startDate, endDate)) return null;
 
-        result.push({
-          ...mapped,
-          sourceId: source.id,
-          collectionName: fetcher.collection,
-          createdAt: createdAt || null,
-        });
-      });
-    }
-  }
+          return {
+            ...mapped,
+            sourceId: source.id,
+            collectionName: fetcher.collection,
+            createdAt,
+          };
+        })
+        .filter(Boolean);
+    })
+  );
+
+  const settled = await Promise.allSettled(fetchTasks);
+  const result = settled.flatMap((entry) => (entry.status === "fulfilled" ? entry.value : []));
 
   const seen = new Set();
   return result

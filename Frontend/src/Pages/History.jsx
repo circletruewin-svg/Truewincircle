@@ -26,7 +26,7 @@ const History = () => {
       setError(null);
 
       try {
-        const gameRecords = await fetchUserHistoryRecords(db, user);
+        const gameRecords = await fetchUserHistoryRecords(db, user, { disableFallbackScan: true });
         const gameItems = gameRecords
           .map((record) => ({
             id: `game-${record.sourceId}-${record.id}`,
