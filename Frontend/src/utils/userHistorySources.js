@@ -10,8 +10,8 @@ export const USER_HISTORY_SOURCES = [
     mapRecord: (docSnap) => {
       const data = docSnap.data();
       const status = data.status || "pending";
-      const amount = Number(data.amount || 0);
-      const payout = status === "win" ? Number(data.winnings || 0) : 0;
+      const amount = Number(data.amount || data.betAmount || 0);
+      const payout = status === "win" ? Number(data.winnings || data.winAmount || 0) : 0;
       return {
         id: docSnap.id,
         gameName: "1 to 12 Win",
@@ -20,7 +20,27 @@ export const USER_HISTORY_SOURCES = [
         amount,
         payout,
         status,
-        createdAt: data.createdAt || null,
+        createdAt: data.createdAt || data.timestamp || null,
+      };
+    },
+  },
+  {
+    id: "fixnumber",
+    collection: "bets",
+    mapRecord: (docSnap) => {
+      const data = docSnap.data();
+      const status = data.status === "win" ? "win" : data.status === "loss" ? "loss" : "pending";
+      const amount = Number(data.betAmount || 0);
+      const payout = status === "win" ? Number(data.winnings || 0) : 0;
+      return {
+        id: docSnap.id,
+        gameName: data.gameName || "Fix Number",
+        title: `Number ${data.betNumber ?? "-"}`,
+        subtitle: status,
+        amount,
+        payout,
+        status,
+        createdAt: data.timestamp || data.createdAt || null,
       };
     },
   },
@@ -55,10 +75,10 @@ export const USER_HISTORY_SOURCES = [
         gameName: "Roulette",
         title: `${String(data.betType ?? "-")}`,
         subtitle: status,
-        amount: Number(data.betAmount || 0),
-        payout: status === "win" ? Number(data.winnings || 0) : 0,
+        amount: Number(data.betAmount || data.amount || 0),
+        payout: status === "win" ? Number(data.winnings || data.winAmount || 0) : 0,
         status,
-        createdAt: data.timestamp || null,
+        createdAt: data.timestamp || data.createdAt || null,
       };
     },
   },
@@ -77,10 +97,10 @@ export const USER_HISTORY_SOURCES = [
             gameName: "Aviator",
             title: data.cashoutMultiplier ? `Cashout ${Number(data.cashoutMultiplier).toFixed(2)}x` : `Crash ${Number(data.crashPoint || 0).toFixed(2)}x`,
             subtitle: status,
-            amount: Number(data.betAmount || 0),
-            payout: Number(data.winAmount || 0),
+            amount: Number(data.betAmount || data.amount || 0),
+            payout: Number(data.winAmount || data.winnings || 0),
             status,
-            createdAt: data.createdAt || null,
+            createdAt: data.createdAt || data.timestamp || null,
           };
         },
       },
@@ -95,10 +115,10 @@ export const USER_HISTORY_SOURCES = [
             gameName: "Aviator",
             title: data.cashoutMultiplier ? `Cashout ${Number(data.cashoutMultiplier).toFixed(2)}x` : `Crash ${Number(data.crashPoint || 0).toFixed(2)}x`,
             subtitle: status,
-            amount: Number(data.betAmount || 0),
-            payout: Number(data.winAmount || 0),
+            amount: Number(data.betAmount || data.amount || 0),
+            payout: Number(data.winAmount || data.winnings || 0),
             status,
-            createdAt: data.createdAt || null,
+            createdAt: data.createdAt || data.timestamp || null,
           };
         },
       },
@@ -111,10 +131,10 @@ export const USER_HISTORY_SOURCES = [
         gameName: "Aviator",
         title: data.cashoutMultiplier ? `Cashout ${Number(data.cashoutMultiplier).toFixed(2)}x` : `Crash ${Number(data.crashPoint || 0).toFixed(2)}x`,
         subtitle: status,
-        amount: Number(data.betAmount || 0),
-        payout: Number(data.winAmount || 0),
+        amount: Number(data.betAmount || data.amount || 0),
+        payout: Number(data.winAmount || data.winnings || 0),
         status,
-        createdAt: data.createdAt || null,
+        createdAt: data.createdAt || data.timestamp || null,
       };
     },
   },
@@ -128,10 +148,10 @@ export const USER_HISTORY_SOURCES = [
         gameName: "Coin Flip",
         title: `${String(data.betSide || "-").toUpperCase()} vs ${String(data.result || "-").toUpperCase()}`,
         subtitle: data.won ? "win" : "loss",
-        amount: Number(data.betAmount || 0),
-        payout: Number(data.winAmount || 0),
+        amount: Number(data.betAmount || data.amount || 0),
+        payout: Number(data.winAmount || data.winnings || 0),
         status: data.won ? "win" : "loss",
-        createdAt: data.createdAt || null,
+        createdAt: data.createdAt || data.timestamp || null,
       };
     },
   },
@@ -145,10 +165,10 @@ export const USER_HISTORY_SOURCES = [
         gameName: "Teen Patti",
         title: `${String(data.betSide || "-").toUpperCase()} / Winner ${String(data.winner || "-").toUpperCase()}`,
         subtitle: data.won ? "win" : "loss",
-        amount: Number(data.betAmount || 0),
-        payout: Number(data.winAmount || 0),
+        amount: Number(data.betAmount || data.amount || 0),
+        payout: Number(data.winAmount || data.winnings || 0),
         status: data.won ? "win" : "loss",
-        createdAt: data.createdAt || null,
+        createdAt: data.createdAt || data.timestamp || null,
       };
     },
   },
@@ -162,10 +182,10 @@ export const USER_HISTORY_SOURCES = [
         gameName: "Dragon Tiger",
         title: `${String(data.betSide || "-").toUpperCase()} / Winner ${String(data.winner || "-").toUpperCase()}`,
         subtitle: data.won ? "win" : "loss",
-        amount: Number(data.betAmount || 0),
-        payout: Number(data.winAmount || 0),
+        amount: Number(data.betAmount || data.amount || 0),
+        payout: Number(data.winAmount || data.winnings || 0),
         status: data.won ? "win" : "loss",
-        createdAt: data.createdAt || null,
+        createdAt: data.createdAt || data.timestamp || null,
       };
     },
   },
@@ -179,10 +199,10 @@ export const USER_HISTORY_SOURCES = [
         gameName: "Andar Bahar",
         title: `${String(data.betSide || "-").toUpperCase()} / Winner ${String(data.winner || "-").toUpperCase()}`,
         subtitle: data.won ? "win" : "loss",
-        amount: Number(data.betAmount || 0),
-        payout: Number(data.winAmount || 0),
+        amount: Number(data.betAmount || data.amount || 0),
+        payout: Number(data.winAmount || data.winnings || 0),
         status: data.won ? "win" : "loss",
-        createdAt: data.createdAt || null,
+        createdAt: data.createdAt || data.timestamp || null,
       };
     },
   },
@@ -196,10 +216,10 @@ export const USER_HISTORY_SOURCES = [
         gameName: "Dice Roll",
         title: `Bet ${data.betNum ?? "-"} / Result ${data.result ?? "-"}`,
         subtitle: data.won ? "win" : "loss",
-        amount: Number(data.betAmount || 0),
-        payout: Number(data.winAmount || 0),
+        amount: Number(data.betAmount || data.amount || 0),
+        payout: Number(data.winAmount || data.winnings || 0),
         status: data.won ? "win" : "loss",
-        createdAt: data.createdAt || null,
+        createdAt: data.createdAt || data.timestamp || null,
       };
     },
   },
@@ -248,9 +268,15 @@ export async function fetchUserHistoryRecords(db, userId, options = {}) {
     const fetchers = buildFetchers(source);
 
     for (const fetcher of fetchers) {
-      const snapshot = await getDocs(
-        query(collection(db, fetcher.collection), where(fetcher.userIdField || "userId", "==", userId))
-      );
+      let snapshot;
+      try {
+        snapshot = await getDocs(
+          query(collection(db, fetcher.collection), where(fetcher.userIdField || "userId", "==", userId))
+        );
+      } catch (error) {
+        console.error(`Failed to fetch ${fetcher.collection} for user ${userId}:`, error);
+        continue;
+      }
 
       snapshot.docs.forEach((docSnap) => {
         const mapped = (fetcher.mapRecord || source.mapRecord)(docSnap);

@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { collection, getDocs, query, where } from "firebase/firestore";
 import { ArrowDownCircle, ArrowUpCircle, AlertTriangle, Clock, Gift, ShieldX, Trophy } from "lucide-react";
 import { db } from "../firebase";
 import Loader from "../components/Loader";
@@ -7,81 +6,8 @@ import Navbar from "../components/Navbar";
 import useAuthStore from "../store/authStore";
 import { formatDateTime, toDateValue } from "../utils/dateHelpers";
 import { formatCurrency, roundMoney } from "../utils/formatMoney";
+import { fetchFinancialHistory } from "../utils/accountHistory";
 import { fetchUserHistoryRecords, summarizeUserHistory } from "../utils/userHistorySources";
-
-const normalizeDocDate = (value) => toDateValue(value);
-
-const buildFinancialItems = async (userId) => {
-  const depositsQuery = query(collection(db, "top-ups"), where("userId", "==", userId));
-  const withdrawalsQuery = query(collection(db, "withdrawals"), where("userId", "==", userId));
-  const referralBonusQuery = query(
-    collection(db, "transactions"),
-    where("userId", "==", userId),
-    where("type", "==", "referral_bonus")
-  );
-
-  const [depositsSnapshot, withdrawalsSnapshot, referralBonusSnapshot] = await Promise.all([
-    getDocs(depositsQuery),
-    getDocs(withdrawalsQuery),
-    getDocs(referralBonusQuery),
-  ]);
-
-  const deposits = depositsSnapshot.docs
-    .map((docSnap) => {
-      const data = docSnap.data();
-      const date = normalizeDocDate(data.createdAt);
-      if (!date) return null;
-
-      return {
-        id: `deposit-${docSnap.id}`,
-        type: "deposit",
-        title: "Deposit",
-        subtitle: data.status || "pending",
-        amount: Number(data.amount || 0),
-        date,
-        raw: data,
-      };
-    })
-    .filter(Boolean);
-
-  const withdrawals = withdrawalsSnapshot.docs
-    .map((docSnap) => {
-      const data = docSnap.data();
-      const date = normalizeDocDate(data.createdAt);
-      if (!date) return null;
-
-      return {
-        id: `withdrawal-${docSnap.id}`,
-        type: "withdrawal",
-        title: data.method === "upi" ? "Withdrawal (UPI)" : data.method === "bank" ? "Withdrawal (Bank)" : "Withdrawal",
-        subtitle: data.status || "pending",
-        amount: Number(data.amount || 0),
-        date,
-        raw: data,
-      };
-    })
-    .filter(Boolean);
-
-  const referralBonuses = referralBonusSnapshot.docs
-    .map((docSnap) => {
-      const data = docSnap.data();
-      const date = normalizeDocDate(data.createdAt);
-      if (!date) return null;
-
-      return {
-        id: `referral-${docSnap.id}`,
-        type: "referral_bonus",
-        title: "Referral Bonus",
-        subtitle: "Received",
-        amount: Number(data.amount || 0),
-        date,
-        raw: data,
-      };
-    })
-    .filter(Boolean);
-
-  return [...deposits, ...withdrawals, ...referralBonuses];
-};
 
 const mapGameRecordToFeedItem = (record) => {
   const amount = Number(record.amount || 0);
@@ -151,7 +77,7 @@ const History = () => {
 
       try {
         const [financialItems, gameRecords] = await Promise.all([
-          buildFinancialItems(user.uid),
+          fetchFinancialHistory(db, user.uid),
           fetchUserHistoryRecords(db, user.uid),
         ]);
 

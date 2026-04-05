@@ -3,6 +3,7 @@ import { db } from "../../firebase";
 import Loader from "../../components/Loader";
 import { formatCurrency } from "../../utils/formatMoney";
 import { formatDateTime, toDateValue } from "../../utils/dateHelpers";
+import { fetchFinancialHistory } from "../../utils/accountHistory";
 import { fetchUserHistoryRecords, summarizeUserHistory } from "../../utils/userHistorySources";
 
 const UserBettingHistory = ({ userId }) => {
@@ -18,8 +19,27 @@ const UserBettingHistory = ({ userId }) => {
 
       setLoading(true);
       try {
-        const allBets = await fetchUserHistoryRecords(db, userId);
-        setHistory(allBets);
+        const [gameRecords, financialRecords] = await Promise.all([
+          fetchUserHistoryRecords(db, userId),
+          fetchFinancialHistory(db, userId),
+        ]);
+
+        const financialAsRows = financialRecords.map((item) => ({
+          id: item.id,
+          gameName: item.title,
+          title: item.subtitle,
+          subtitle: item.type,
+          amount: Number(item.amount || 0),
+          payout: item.type === "deposit" || item.type === "referral_bonus" ? Number(item.amount || 0) : 0,
+          status: item.type === "withdrawal" ? "loss" : "win",
+          createdAt: item.date || null,
+        }));
+
+        setHistory(
+          [...gameRecords, ...financialAsRows].sort(
+            (a, b) => (toDateValue(b.createdAt)?.getTime() || 0) - (toDateValue(a.createdAt)?.getTime() || 0)
+          )
+        );
       } catch (error) {
         console.error("Error fetching combined bet history:", error);
       } finally {
