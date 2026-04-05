@@ -17,11 +17,11 @@ const buildIdentifierQueries = (identity, fetcher) => {
 
   if (identity.uid) {
     queries.push({ field: primaryField, value: identity.uid });
-    if (primaryField !== "uid") {
+    if (primaryField !== "uid" && fetcher.allowUidFallback) {
       queries.push({ field: "uid", value: identity.uid });
     }
   }
-  if (identity.phoneNumber) {
+  if (!identity.uid && identity.phoneNumber) {
     queries.push({ field: "phoneNumber", value: identity.phoneNumber });
   }
 
