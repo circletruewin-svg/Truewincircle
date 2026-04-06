@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Clock, ShieldX, Trophy } from "lucide-react";
 import { db } from "../firebase";
 import Loader from "../components/Loader";
@@ -13,10 +13,21 @@ const History = () => {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const historyIdentity = useMemo(
+    () =>
+      user?.uid
+        ? {
+            uid: user.uid,
+            phoneNumber: user.phoneNumber || null,
+            name: user.name || user.displayName || null,
+          }
+        : null,
+    [user?.uid, user?.phoneNumber, user?.name, user?.displayName]
+  );
 
   useEffect(() => {
     const fetchHistory = async () => {
-      if (!user?.uid) {
+      if (!historyIdentity?.uid) {
         setError("Please log in to view your history.");
         setLoading(false);
         return;
@@ -26,7 +37,7 @@ const History = () => {
       setError(null);
 
       try {
-        const gameRecords = await fetchUserHistoryRecords(db, user, { disableFallbackScan: true });
+        const gameRecords = await fetchUserHistoryRecords(db, historyIdentity);
         const gameItems = gameRecords
           .filter((record) => !LIVE_CASINO_SOURCE_IDS.includes(record.sourceId))
           .map((record) => ({
@@ -51,7 +62,7 @@ const History = () => {
     };
 
     fetchHistory();
-  }, [user]);
+  }, [historyIdentity]);
 
   const renderHistoryItem = (item) => {
     const Icon = item.status === "win" ? <Trophy className="text-yellow-500" /> : item.status === "loss" ? <ShieldX className="text-red-500" /> : <Clock className="text-blue-400" />;
