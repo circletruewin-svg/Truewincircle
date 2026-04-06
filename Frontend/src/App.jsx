@@ -25,6 +25,7 @@ import Spinner from './components/Loader';
 import Profile from './Pages/Profile';
 import Support from './Pages/Support';
 import History from './Pages/History';
+import CasinoHistory from './Pages/CasinoHistory';
 import PrivacyPolicy from './components/PrivacyPolicy';
 import BettingHistory from './components/BettingHistory';
 import PhoneSignIn from './Pages/PhoneSignIn';
@@ -84,6 +85,7 @@ const AppContent = () => {
         <Route path="/wallet" element={<MyWallet />} />
         <Route path="/support" element={<Support />} />
         <Route path="/history" element={<History />} />
+        <Route path="/casino-history" element={<CasinoHistory />} />
         <Route path="/privacy" element={<PrivacyPolicy/>} />
         <Route path="/p" element={<GameSummary />} />
         <Route path="/refer" element={<Referrals />} />

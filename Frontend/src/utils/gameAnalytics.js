@@ -40,15 +40,6 @@ export const GAME_ANALYTICS_CONFIG = [
           createdAt: bet.createdAt || bet.timestamp || null,
         }),
       },
-      {
-        collection: "coinFlipBets",
-        mapRecord: (bet) => ({
-          userId: bet.userId || bet.uid || null,
-          betAmount: Number(bet.betAmount || bet.amount || 0),
-          payout: Number(bet.winAmount || bet.winnings || 0),
-          createdAt: bet.createdAt || bet.timestamp || null,
-        }),
-      },
     ],
   },
   {
@@ -126,15 +117,6 @@ export const GAME_ANALYTICS_CONFIG = [
     sources: [
       {
         collection: "diceBets",
-        mapRecord: (bet) => ({
-          userId: bet.userId || bet.uid || null,
-          betAmount: Number(bet.betAmount || bet.amount || 0),
-          payout: Number(bet.winAmount || bet.winnings || 0),
-          createdAt: bet.createdAt || bet.timestamp || null,
-        }),
-      },
-      {
-        collection: "diceRollHistory",
         mapRecord: (bet) => ({
           userId: bet.userId || bet.uid || null,
           betAmount: Number(bet.betAmount || bet.amount || 0),

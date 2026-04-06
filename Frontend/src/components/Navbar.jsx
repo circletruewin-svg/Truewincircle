@@ -84,6 +84,7 @@ export default function Navbar() {
                   <Link to="/refer" className="block px-4 py-2 hover:bg-gray-100">Reffer & Earn</Link>
                   <Link to="/addcash" className="block px-4 py-2 hover:bg-gray-100">Add Cash</Link>
                   <Link to="/history" className="block px-4 py-2 hover:bg-gray-100">History</Link>
+                  <Link to="/casino-history" className="block px-4 py-2 hover:bg-gray-100">Casino History</Link>
                   <Link to="/support" className="block px-4 py-2 hover:bg-gray-100">Support</Link>
                   <button onClick={handleLogout} className="block w-full text-left px-4 py-2 hover:bg-gray-100">Logout</button>
                 </div>
@@ -121,6 +122,7 @@ export default function Navbar() {
               <Link to="/profile" className="hover:text-yellow-500" onClick={() => setMobileMenuOpen(false)}>Profile</Link>
               <Link to="/wallet" className="hover:text-yellow-500" onClick={() => setMobileMenuOpen(false)}>Wallet</Link>
               <Link to="/history" className="hover:text-yellow-500" onClick={() => setMobileMenuOpen(false)}>History</Link>
+              <Link to="/casino-history" className="hover:text-yellow-500" onClick={() => setMobileMenuOpen(false)}>Casino History</Link>
               <Link to="/withdraw" className="hover:text-yellow-500" onClick={() => setMobileMenuOpen(false)}>Withdraw</Link>
               <Link to="/addcash" className="hover:text-yellow-500" onClick={() => setMobileMenuOpen(false)}>Add Cash</Link>
               <Link to="/support" className="hover:text-yellow-500" onClick={() => setMobileMenuOpen(false)}>Support</Link>

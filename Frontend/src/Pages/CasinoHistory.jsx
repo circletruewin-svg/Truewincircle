@@ -8,7 +8,7 @@ import { formatDateTime, toDateValue } from "../utils/dateHelpers";
 import { formatCurrency } from "../utils/formatMoney";
 import { fetchUserHistoryRecords, LIVE_CASINO_SOURCE_IDS } from "../utils/userHistorySources";
 
-const History = () => {
+const CasinoHistory = () => {
   const user = useAuthStore((state) => state.user);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -17,7 +17,7 @@ const History = () => {
   useEffect(() => {
     const fetchHistory = async () => {
       if (!user?.uid) {
-        setError("Please log in to view your history.");
+        setError("Please log in to view your casino history.");
         setLoading(false);
         return;
       }
@@ -27,10 +27,10 @@ const History = () => {
 
       try {
         const gameRecords = await fetchUserHistoryRecords(db, user, { disableFallbackScan: true });
-        const gameItems = gameRecords
-          .filter((record) => !LIVE_CASINO_SOURCE_IDS.includes(record.sourceId))
+        const casinoItems = gameRecords
+          .filter((record) => LIVE_CASINO_SOURCE_IDS.includes(record.sourceId))
           .map((record) => ({
-            id: `game-${record.sourceId}-${record.id}`,
+            id: `casino-${record.sourceId}-${record.id}`,
             gameName: record.gameName,
             title: record.title,
             status: record.status,
@@ -41,10 +41,10 @@ const History = () => {
           .filter((item) => item.date)
           .sort((a, b) => b.date.getTime() - a.date.getTime());
 
-        setHistory(gameItems);
+        setHistory(casinoItems);
       } catch (err) {
-        console.error("Error fetching bet history:", err);
-        setError("Failed to load bet history.");
+        console.error("Error fetching casino history:", err);
+        setError("Failed to load casino history.");
       } finally {
         setLoading(false);
       }
@@ -57,7 +57,6 @@ const History = () => {
     const Icon = item.status === "win" ? <Trophy className="text-yellow-500" /> : item.status === "loss" ? <ShieldX className="text-red-500" /> : <Clock className="text-blue-400" />;
     const amountColor = item.status === "win" ? "text-yellow-400" : item.status === "loss" ? "text-red-400" : "text-blue-300";
     const payoutLabel = item.status === "win" && item.payout > 0 ? `Win ${formatCurrency(item.payout)}` : item.status === "loss" ? "Loss" : "Bet placed";
-
     const stamp = formatDateTime(item.date);
 
     return (
@@ -72,9 +71,7 @@ const History = () => {
         </div>
         <div className="text-right">
           <p className={`font-bold text-lg ${amountColor}`}>{formatCurrency(item.amount || 0)}</p>
-          <p className="text-xs capitalize font-semibold text-gray-400">
-            {payoutLabel}
-          </p>
+          <p className="text-xs capitalize font-semibold text-gray-400">{payoutLabel}</p>
         </div>
       </div>
     );
@@ -84,10 +81,13 @@ const History = () => {
 
   if (error) {
     return (
-      <div className="text-center text-red-400 mt-20 p-4 flex flex-col items-center">
-        <AlertTriangle className="w-12 h-12 mb-4" />
-        <h2 className="text-xl font-semibold">An Error Occurred</h2>
-        <p>{error}</p>
+      <div className="font-roboto bg-gray-900 text-white min-h-screen">
+        <Navbar />
+        <div className="text-center text-red-400 mt-20 p-4 flex flex-col items-center">
+          <AlertTriangle className="w-12 h-12 mb-4" />
+          <h2 className="text-xl font-semibold">An Error Occurred</h2>
+          <p>{error}</p>
+        </div>
       </div>
     );
   }
@@ -96,10 +96,9 @@ const History = () => {
     <div className="font-roboto bg-gray-900 text-white min-h-screen">
       <Navbar />
       <div className="max-w-4xl mx-auto p-4 pt-24">
-        <h1 className="text-3xl font-black text-yellow-400 mb-6 text-center">Bet History</h1>
-
+        <h1 className="text-3xl font-black text-yellow-400 mb-6 text-center">Casino History</h1>
         {history.length === 0 ? (
-          <p className="text-center text-gray-400">Aapki abhi tak koi bet history nahi mili.</p>
+          <p className="text-center text-gray-400">Aapki abhi tak koi casino bet history nahi mili.</p>
         ) : (
           <div className="space-y-4">{history.map(renderHistoryItem)}</div>
         )}
@@ -108,4 +107,4 @@ const History = () => {
   );
 };
 
-export default History;
+export default CasinoHistory;

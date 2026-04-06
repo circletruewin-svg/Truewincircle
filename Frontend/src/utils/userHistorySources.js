@@ -184,23 +184,6 @@ export const USER_HISTORY_SOURCES = [
           };
         },
       },
-      {
-        collection: "coinFlipBets",
-        userIdField: "userId",
-        mapRecord: (docSnap) => {
-          const data = docSnap.data();
-          return {
-            id: `bets-${docSnap.id}`,
-            gameName: "Coin Flip",
-            title: `${String(data.betSide || "-").toUpperCase()}${data.result ? ` vs ${String(data.result).toUpperCase()}` : ""}`,
-            subtitle: data.won ? "win" : data.status || "loss",
-            amount: Number(data.betAmount || data.amount || 0),
-            payout: Number(data.winAmount || data.winnings || 0),
-            status: data.won ? "win" : data.status || "loss",
-            createdAt: data.createdAt || data.timestamp || null,
-          };
-        },
-      },
     ],
     mapRecord: (docSnap) => {
       const data = docSnap.data();
@@ -233,23 +216,6 @@ export const USER_HISTORY_SOURCES = [
             amount: Number(data.betAmount || data.amount || 0),
             payout: Number(data.winAmount || data.winnings || 0),
             status: data.won ? "win" : "loss",
-            createdAt: data.createdAt || data.timestamp || null,
-          };
-        },
-      },
-      {
-        collection: "teenPattiBets",
-        userIdField: "userId",
-        mapRecord: (docSnap) => {
-          const data = docSnap.data();
-          return {
-            id: `bets-${docSnap.id}`,
-            gameName: "Teen Patti",
-            title: `${String(data.betSide || "-").toUpperCase()} / Winner ${String(data.winner || "-").toUpperCase()}`,
-            subtitle: data.won ? "win" : data.status || "loss",
-            amount: Number(data.betAmount || data.amount || 0),
-            payout: Number(data.winAmount || data.winnings || 0),
-            status: data.won ? "win" : data.status || "loss",
             createdAt: data.createdAt || data.timestamp || null,
           };
         },
@@ -290,23 +256,6 @@ export const USER_HISTORY_SOURCES = [
           };
         },
       },
-      {
-        collection: "dragonTigerBets",
-        userIdField: "userId",
-        mapRecord: (docSnap) => {
-          const data = docSnap.data();
-          return {
-            id: `bets-${docSnap.id}`,
-            gameName: "Dragon Tiger",
-            title: `${String(data.betSide || "-").toUpperCase()} / Winner ${String(data.winner || "-").toUpperCase()}`,
-            subtitle: data.won ? "win" : data.status || "loss",
-            amount: Number(data.betAmount || data.amount || 0),
-            payout: Number(data.winAmount || data.winnings || 0),
-            status: data.won ? "win" : data.status || "loss",
-            createdAt: data.createdAt || data.timestamp || null,
-          };
-        },
-      },
     ],
     mapRecord: (docSnap) => {
       const data = docSnap.data();
@@ -343,23 +292,6 @@ export const USER_HISTORY_SOURCES = [
           };
         },
       },
-      {
-        collection: "andarBaharBets",
-        userIdField: "userId",
-        mapRecord: (docSnap) => {
-          const data = docSnap.data();
-          return {
-            id: `bets-${docSnap.id}`,
-            gameName: "Andar Bahar",
-            title: `${String(data.betSide || "-").toUpperCase()} / Winner ${String(data.winner || "-").toUpperCase()}`,
-            subtitle: data.won ? "win" : data.status || "loss",
-            amount: Number(data.betAmount || data.amount || 0),
-            payout: Number(data.winAmount || data.winnings || 0),
-            status: data.won ? "win" : data.status || "loss",
-            createdAt: data.createdAt || data.timestamp || null,
-          };
-        },
-      },
     ],
     mapRecord: (docSnap) => {
       const data = docSnap.data();
@@ -392,23 +324,6 @@ export const USER_HISTORY_SOURCES = [
             amount: Number(data.betAmount || data.amount || 0),
             payout: Number(data.winAmount || data.winnings || 0),
             status: data.won ? "win" : "loss",
-            createdAt: data.createdAt || data.timestamp || null,
-          };
-        },
-      },
-      {
-        collection: "diceRollHistory",
-        userIdField: "userId",
-        mapRecord: (docSnap) => {
-          const data = docSnap.data();
-          return {
-            id: `history-${docSnap.id}`,
-            gameName: "Dice Roll",
-            title: `Bet ${data.betNum ?? "-"} / Result ${data.result ?? "-"}`,
-            subtitle: data.won ? "win" : data.status || "loss",
-            amount: Number(data.betAmount || data.amount || 0),
-            payout: Number(data.winAmount || data.winnings || 0),
-            status: data.won ? "win" : data.status || "loss",
             createdAt: data.createdAt || data.timestamp || null,
           };
         },
@@ -481,6 +396,16 @@ export const USER_HISTORY_SOURCES = [
       };
     },
   },
+];
+
+export const LIVE_CASINO_SOURCE_IDS = [
+  "aviator",
+  "coinflip",
+  "teenpatti",
+  "dragontiger",
+  "andarbahar",
+  "diceroll",
+  "colorprediction",
 ];
 
 export function summarizeUserHistory(records = []) {
