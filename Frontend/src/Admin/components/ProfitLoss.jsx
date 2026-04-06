@@ -1,13 +1,23 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Calendar, CircleDollarSign, Gamepad2, Receipt, TrendingDown, TrendingUp } from "lucide-react";
-import { collection, getDocs, query, Timestamp, where } from "firebase/firestore";
+import { collection, onSnapshot } from "firebase/firestore";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { db } from "../../firebase";
 import Loader from "../../components/Loader";
-import { calculateGameMetrics, GAME_ANALYTICS_CONFIG } from "../../utils/gameAnalytics";
+import { calculateGameMetrics, filterAnalyticsRecords, GAME_ANALYTICS_CONFIG } from "../../utils/gameAnalytics";
 import { formatCurrency } from "../../utils/formatMoney";
 import { getPresetRange } from "../../utils/dateHelpers";
+
+const buildEmptyRows = () =>
+  GAME_ANALYTICS_CONFIG.map((config) => ({
+    id: config.id,
+    label: config.label,
+    betCount: 0,
+    totalWagered: 0,
+    totalPayout: 0,
+    net: 0,
+  }));
 
 export default function ProfitLoss() {
   const [gameFilter, setGameFilter] = useState("all");
@@ -15,7 +25,7 @@ export default function ProfitLoss() {
   const initialRange = getPresetRange("today");
   const [startDate, setStartDate] = useState(initialRange.start);
   const [endDate, setEndDate] = useState(initialRange.end);
-  const [rows, setRows] = useState([]);
+  const [rows, setRows] = useState(buildEmptyRows);
 
   const summary = useMemo(() => {
     return rows.reduce(
@@ -36,65 +46,57 @@ export default function ProfitLoss() {
   };
 
   useEffect(() => {
-    const fetchProfitLossData = async () => {
-      setLoading(true);
+    setLoading(true);
+    const rawData = {};
 
-      const start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
-      const firestoreStart = Timestamp.fromDate(start);
-
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      const firestoreEnd = Timestamp.fromDate(end);
-
-      try {
-        const selectedConfigs = gameFilter === "all"
+    const recalculateRows = () => {
+      const selectedConfigs =
+        gameFilter === "all"
           ? GAME_ANALYTICS_CONFIG
           : GAME_ANALYTICS_CONFIG.filter((config) => config.id === gameFilter);
 
-        const snapshots = await Promise.all(
-          selectedConfigs.map((config) =>
-            getDocs(
-              query(
-                collection(db, config.collection),
-                where(config.timeField, ">=", firestoreStart),
-                where(config.timeField, "<=", firestoreEnd)
-              )
-            )
-          )
-        );
+      const nextRows = selectedConfigs.map((config) => {
+        const records = (rawData[config.id] || []).flatMap((entry) => entry.records);
+        const filtered = filterAnalyticsRecords(records, startDate, endDate);
+        const metrics = calculateGameMetrics(filtered);
 
-        const nextRows = snapshots.map((snapshot, index) => {
-          const config = selectedConfigs[index];
-          const records = snapshot.docs.map((item) => {
-            const data = item.data();
-            return {
-              userId: data.userId || null,
-              betAmount: Number(data[config.betField] || 0),
-              payout: Number(config.payoutResolver(data) || 0),
-            };
-          });
-          const metrics = calculateGameMetrics(records);
-          return {
-            id: config.id,
-            label: config.label,
-            betCount: metrics.betCount,
-            totalWagered: metrics.totalWagered,
-            totalPayout: metrics.totalPayout,
-            net: metrics.net,
-          };
-        });
+        return {
+          id: config.id,
+          label: config.label,
+          betCount: metrics.betCount,
+          totalWagered: metrics.totalWagered,
+          totalPayout: metrics.totalPayout,
+          net: metrics.net,
+        };
+      });
 
-        setRows(nextRows);
-      } catch (error) {
-        console.error("Error fetching profit/loss data:", error);
-        setRows([]);
-      } finally {
-        setLoading(false);
-      }
+      setRows(nextRows);
+      setLoading(false);
     };
 
-    fetchProfitLossData();
+    const unsubscribers = GAME_ANALYTICS_CONFIG.flatMap((config) =>
+      config.sources.map((source) =>
+        onSnapshot(
+          collection(db, source.collection),
+          (snapshot) => {
+            rawData[config.id] = [
+              ...(rawData[config.id] || []).filter((entry) => entry.collection !== source.collection),
+              {
+                collection: source.collection,
+                records: snapshot.docs.map((item) => source.mapRecord(item.data())),
+              },
+            ];
+            recalculateRows();
+          },
+          (error) => {
+            console.error(`Failed to stream profit/loss for ${config.label} from ${source.collection}:`, error);
+            setLoading(false);
+          }
+        )
+      )
+    );
+
+    return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
   }, [startDate, endDate, gameFilter]);
 
   return (
@@ -118,15 +120,23 @@ export default function ProfitLoss() {
             >
               <option value="all">All Games</option>
               {GAME_ANALYTICS_CONFIG.map((config) => (
-                <option key={config.id} value={config.id}>{config.label}</option>
+                <option key={config.id} value={config.id}>
+                  {config.label}
+                </option>
               ))}
             </select>
           </div>
 
           <div className="flex items-center gap-2">
-            <button onClick={() => setDateRange("today")} className="p-2 rounded-md bg-gray-700 hover:bg-yellow-500 hover:text-black transition-colors">Today</button>
-            <button onClick={() => setDateRange("yesterday")} className="p-2 rounded-md bg-gray-700 hover:bg-yellow-500 hover:text-black transition-colors">Yesterday</button>
-            <button onClick={() => setDateRange("7days")} className="p-2 rounded-md bg-gray-700 hover:bg-yellow-500 hover:text-black transition-colors">Last 7 Days</button>
+            <button onClick={() => setDateRange("today")} className="p-2 rounded-md bg-gray-700 hover:bg-yellow-500 hover:text-black transition-colors">
+              Today
+            </button>
+            <button onClick={() => setDateRange("yesterday")} className="p-2 rounded-md bg-gray-700 hover:bg-yellow-500 hover:text-black transition-colors">
+              Yesterday
+            </button>
+            <button onClick={() => setDateRange("7days")} className="p-2 rounded-md bg-gray-700 hover:bg-yellow-500 hover:text-black transition-colors">
+              Last 7 Days
+            </button>
           </div>
 
           <div className="flex items-center gap-2">
@@ -160,23 +170,33 @@ export default function ProfitLoss() {
           <>
             <div className="space-y-3 text-gray-300 text-sm">
               <p className="flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2"><Receipt className="w-4 h-4" /> Total amount collected:</span>
+                <span className="flex items-center gap-2">
+                  <Receipt className="w-4 h-4" /> Total amount collected:
+                </span>
                 <span className="font-semibold text-gray-100">{formatCurrency(summary.totalCollection)}</span>
               </p>
               <p className="flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2"><Receipt className="w-4 h-4" /> Total amount paid out:</span>
+                <span className="flex items-center gap-2">
+                  <Receipt className="w-4 h-4" /> Total amount paid out:
+                </span>
                 <span className="font-semibold text-gray-100">{formatCurrency(summary.loss)}</span>
               </p>
               <p className="flex items-center justify-between gap-2 text-green-400">
-                <span className="flex items-center gap-2"><TrendingUp className="w-4 h-4" /> Net profit:</span>
+                <span className="flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4" /> Net profit:
+                </span>
                 <span className="font-bold">{formatCurrency(summary.profit)}</span>
               </p>
               <p className="flex items-center justify-between gap-2 text-red-400">
-                <span className="flex items-center gap-2"><TrendingDown className="w-4 h-4" /> Total payouts:</span>
+                <span className="flex items-center gap-2">
+                  <TrendingDown className="w-4 h-4" /> Total payouts:
+                </span>
                 <span className="font-bold">{formatCurrency(summary.loss)}</span>
               </p>
               <p className="flex items-center justify-between gap-2 pt-2 border-t border-gray-700 mt-2">
-                <span className="flex items-center gap-2 font-semibold text-base"><CircleDollarSign className="w-5 h-5 text-yellow-400" /> Total bets placed:</span>
+                <span className="flex items-center gap-2 font-semibold text-base">
+                  <CircleDollarSign className="w-5 h-5 text-yellow-400" /> Total bets placed:
+                </span>
                 <span className="font-bold text-lg text-gray-100">{summary.betCount}</span>
               </p>
             </div>
@@ -199,7 +219,9 @@ export default function ProfitLoss() {
                       <td className="px-4 py-3 text-right">{row.betCount}</td>
                       <td className="px-4 py-3 text-right">{formatCurrency(row.totalWagered)}</td>
                       <td className="px-4 py-3 text-right">{formatCurrency(row.totalPayout)}</td>
-                      <td className={`px-4 py-3 text-right font-bold ${row.net >= 0 ? "text-green-400" : "text-red-400"}`}>{formatCurrency(row.net)}</td>
+                      <td className={`px-4 py-3 text-right font-bold ${row.net >= 0 ? "text-green-400" : "text-red-400"}`}>
+                        {formatCurrency(row.net)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -211,4 +233,3 @@ export default function ProfitLoss() {
     </div>
   );
 }
-
