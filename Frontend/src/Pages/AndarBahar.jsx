@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
-import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
+import { doc, onSnapshot, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { JokerBadge } from "../components/GameVisuals";
@@ -35,7 +35,6 @@ export default function AndarBahar() {
   const [bCards, setBCards] = useState([]);
   const [winner, setWinner] = useState(null);
   const [msg, setMsg] = useState("");
-  const [history, setHistory] = useState([]);
   const [timeLeft, setTimeLeft] = useState(ROUND_SEC);
 
   const betSideRef = useRef(null);
@@ -58,12 +57,6 @@ export default function AndarBahar() {
       if (snapshot.exists()) setBalance(getUserFunds(snapshot.data()).total);
     });
   }, [user]);
-
-  useEffect(() => {
-    return onSnapshot(query(collection(db, "abHistory"), orderBy("createdAt", "desc"), limit(12)), (snapshot) => {
-      setHistory(snapshot.docs.map((item) => item.data()));
-    });
-  }, []);
 
   useEffect(() => {
     startRound();
@@ -177,14 +170,6 @@ export default function AndarBahar() {
       <div className="max-w-lg mx-auto px-4 pb-8">
         <h1 className="text-2xl font-black text-center text-pink-400 py-4">Andar Bahar</h1>
 
-        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3 scrollbar-hide">
-          {history.map((item, index) => (
-            <span key={index} className={`px-2 py-1 rounded text-xs font-bold flex-shrink-0 ${item.winner === "andar" ? "bg-purple-700" : "bg-pink-700"}`}>
-              {item.winner === "andar" ? "A" : "B"}
-            </span>
-          ))}
-        </div>
-
         {phase === "betting" && <div className="text-center mb-3 text-gray-400">Bet in <span className="text-yellow-400 font-bold text-xl">{timeLeft}s</span></div>}
 
         <div className="bg-green-950 rounded-3xl p-4 mb-4 border-2 border-green-800">
@@ -237,11 +222,11 @@ export default function AndarBahar() {
             {[50, 100, 200, 500].map((amount) => (
               <button
                 key={amount}
-                onClick={() => setBetAmount(amount.toString())}
+                onClick={() => setBetAmount((prev) => String((parseFloat(prev) || 0) + amount))}
                 disabled={phase !== "betting" || hasBetRef.current}
                 className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
               >
-                {formatCurrency(amount)}
+                +{formatCurrency(amount)}
               </button>
             ))}
           </div>

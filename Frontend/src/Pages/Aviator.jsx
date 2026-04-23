@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
-import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
+import { doc, onSnapshot, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { AviatorPlane } from "../components/GameVisuals";
@@ -28,7 +28,6 @@ export default function Aviator() {
   const [cashMult, setCashMult] = useState(null);
   const [crashAt, setCrashAt] = useState(null);
   const [countdown, setCountdown] = useState(6);
-  const [history, setHistory] = useState([]);
   const [msg, setMsg] = useState("");
   const [planePos, setPlanePos] = useState({ x: 5, y: 5 });
   const betRef = useRef(null);
@@ -56,12 +55,6 @@ export default function Aviator() {
       if (snapshot.exists()) setBalance(getUserFunds(snapshot.data()).total);
     });
   }, [user]);
-
-  useEffect(() => {
-    return onSnapshot(query(collection(db, "aviatorHistory"), orderBy("createdAt", "desc"), limit(12)), (snapshot) => {
-      setHistory(snapshot.docs.map((item) => item.data()));
-    });
-  }, []);
 
   useEffect(() => {
     startWaiting();
@@ -206,14 +199,6 @@ export default function Aviator() {
       <div className="max-w-lg mx-auto px-4 pb-8">
         <h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">AVIATOR</h1>
 
-        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3 scrollbar-hide">
-          {history.map((item, index) => (
-            <span key={index} className={`px-2.5 py-1 rounded-full text-xs font-bold flex-shrink-0 ${item.crashPoint >= 2 ? "bg-green-800 text-green-300" : "bg-red-900 text-red-300"}`}>
-              {item.crashPoint?.toFixed(2)}x
-            </span>
-          ))}
-        </div>
-
         <div className="relative overflow-hidden rounded-2xl border border-slate-700 mb-3 bg-[radial-gradient(ellipse_at_top,#1a2f52_0%,#0f1a30_55%,#05070d_100%)]" style={{ height: 260 }}>
           {/* sky clouds */}
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_30%,rgba(255,255,255,0.08),transparent_35%),radial-gradient(circle_at_70%_15%,rgba(255,255,255,0.05),transparent_30%)]" />
@@ -304,8 +289,13 @@ export default function Aviator() {
 
           <div className="grid grid-cols-4 gap-2 mb-3">
             {[50, 100, 200, 500].map((amount) => (
-              <button key={amount} onClick={() => setBetAmount(amount.toString())} disabled={phase !== "waiting" || hasBet} className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">
-                {formatCurrency(amount)}
+              <button
+                key={amount}
+                onClick={() => setBetAmount((prev) => String((parseFloat(prev) || 0) + amount))}
+                disabled={phase !== "waiting" || hasBet}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
+              >
+                +{formatCurrency(amount)}
               </button>
             ))}
           </div>

@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
-import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
+import { doc, onSnapshot, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { CardBack } from "../components/GameVisuals";
@@ -42,7 +42,6 @@ export default function TeenPatti() {
   const [dealerCards, setDealerCards] = useState([]);
   const [winner, setWinner] = useState(null);
   const [msg, setMsg] = useState("");
-  const [history, setHistory] = useState([]);
   const [timeLeft, setTimeLeft] = useState(ROUND_SEC);
   const [revealed, setRevealed] = useState(false);
 
@@ -66,12 +65,6 @@ export default function TeenPatti() {
       if (snapshot.exists()) setBalance(getUserFunds(snapshot.data()).total);
     });
   }, [user]);
-
-  useEffect(() => {
-    return onSnapshot(query(collection(db, "teenPattiHistory"), orderBy("createdAt", "desc"), limit(12)), (snapshot) => {
-      setHistory(snapshot.docs.map((item) => item.data()));
-    });
-  }, []);
 
   useEffect(() => {
     startRound();
@@ -168,14 +161,6 @@ export default function TeenPatti() {
       <div className="max-w-lg mx-auto px-4 pb-8">
         <h1 className="text-2xl font-black text-center text-yellow-400 py-4">TEEN PATTI</h1>
 
-        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3 scrollbar-hide">
-          {history.map((item, index) => (
-            <span key={index} className={`px-2.5 py-1 rounded-full text-xs font-bold flex-shrink-0 ${item.winner === "player" ? "bg-blue-700" : "bg-red-700"}`}>
-              {item.winner === "player" ? "P" : "D"}
-            </span>
-          ))}
-        </div>
-
         {phase === "betting" && (
           <div className="mb-3">
             <div className="flex justify-between text-xs text-gray-500 mb-1">
@@ -209,8 +194,13 @@ export default function TeenPatti() {
           </div>
           <div className="grid grid-cols-4 gap-2 mb-3">
             {[50, 100, 200, 500].map((amount) => (
-              <button key={amount} onClick={() => setBetAmount(amount.toString())} disabled={phase !== "betting" || hasBetRef.current} className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">
-                {formatCurrency(amount)}
+              <button
+                key={amount}
+                onClick={() => setBetAmount((prev) => String((parseFloat(prev) || 0) + amount))}
+                disabled={phase !== "betting" || hasBetRef.current}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
+              >
+                +{formatCurrency(amount)}
               </button>
             ))}
           </div>

@@ -9,7 +9,6 @@ import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userF
 import { formatCurrency } from "../utils/formatMoney";
 import { gameApi, isServerRngEnabled } from "../utils/gameApi";
 
-const DICE_LABELS = ["", "1", "2", "3", "4", "5", "6"];
 function DiceFace({ value, className = "" }) {
   return <DiceVisual value={value} className={className} />;
 }
@@ -23,7 +22,6 @@ export default function DiceRoll() {
   const [rolling, setRolling] = useState(false);
   const [displayDice, setDisplayDice] = useState(1);
   const [msg, setMsg] = useState("");
-  const [history, setHistory] = useState([]);
   const balanceRef = useRef(0);
 
   useEffect(() => {
@@ -81,7 +79,6 @@ export default function DiceRoll() {
               ? `Rolled ${outcome}! You won ${formatCurrency(winAmount)}!`
               : `Rolled ${outcome}. You lost ${formatCurrency(amount)}`
           );
-          setHistory((prev) => [{ result: outcome }, ...prev].slice(0, 12));
         } catch (error) {
           console.error("Dice roll failed:", error);
           setMsg(error.message || "Roll failed. Try again.");
@@ -97,14 +94,6 @@ export default function DiceRoll() {
       <Navbar />
       <div className="max-w-sm mx-auto px-4 pb-8">
         <h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">Dice Roll</h1>
-
-        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-4 scrollbar-hide">
-          {history.map((item, index) => (
-            <span key={index} className="w-8 h-8 bg-gray-800 rounded-lg flex items-center justify-center text-sm flex-shrink-0">
-              {DICE_LABELS[item.result]}
-            </span>
-          ))}
-        </div>
 
         <div className="flex justify-center mb-6">
           <div className={`w-32 h-32 bg-white text-slate-900 rounded-3xl flex items-center justify-center text-6xl shadow-2xl ${rolling ? "animate-bounce" : ""} transition-all`}>
@@ -147,11 +136,11 @@ export default function DiceRoll() {
             {[50, 100, 200, 500].map((amount) => (
               <button
                 key={amount}
-                onClick={() => setBetAmount(amount.toString())}
+                onClick={() => setBetAmount((prev) => String((parseFloat(prev) || 0) + amount))}
                 disabled={rolling}
                 className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
               >
-                {formatCurrency(amount)}
+                +{formatCurrency(amount)}
               </button>
             ))}
           </div>

@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
-import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
+import { doc, onSnapshot, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { CoinToken } from "../components/GameVisuals";
@@ -23,7 +23,6 @@ export default function CoinFlip() {
   const [phase, setPhase] = useState("betting");
   const [result, setResult] = useState(null);
   const [msg, setMsg] = useState("");
-  const [history, setHistory] = useState([]);
   const [flipping, setFlipping] = useState(false);
   const [betLocked, setBetLocked] = useState(false);
   const balanceRef = useRef(0);
@@ -38,12 +37,6 @@ export default function CoinFlip() {
       if (snapshot.exists()) setBalance(getUserFunds(snapshot.data()).total);
     });
   }, [user]);
-
-  useEffect(() => {
-    return onSnapshot(query(collection(db, "coinFlipHistory"), orderBy("createdAt", "desc"), limit(15)), (snapshot) => {
-      setHistory(snapshot.docs.map((item) => item.data()));
-    });
-  }, []);
 
   const flip = async () => {
     const amount = parseFloat(betAmount);
@@ -118,14 +111,6 @@ export default function CoinFlip() {
       <div className="max-w-sm mx-auto px-4 pb-8">
         <h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">COIN FLIP</h1>
 
-        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-4 scrollbar-hide">
-          {history.map((item, index) => (
-            <span key={index} className={`px-2.5 py-1 rounded-full text-xs font-bold flex-shrink-0 ${item.result === "heads" ? "bg-yellow-700 text-yellow-200" : "bg-gray-600 text-gray-200"}`}>
-              {item.result === "heads" ? "H" : "T"}
-            </span>
-          ))}
-        </div>
-
         <div className="flex justify-center mb-6">
           <div className={`w-32 h-32 rounded-full border-4 border-yellow-500 flex items-center justify-center text-6xl shadow-2xl font-black transition-all duration-300 ${flipping ? "animate-spin" : ""} ${result === "heads" ? "bg-yellow-600" : result === "tails" ? "bg-gray-700" : "bg-gray-800"}`}>
             <CoinFace side={displaySide} fallback={displaySide === "heads" ? "H" : "T"} className="h-20 w-20 object-contain" />
@@ -158,8 +143,13 @@ export default function CoinFlip() {
           </div>
           <div className="grid grid-cols-4 gap-2 mb-3">
             {[50, 100, 200, 500].map((amount) => (
-              <button key={amount} onClick={() => setBetAmount(amount.toString())} disabled={betLocked} className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">
-                {formatCurrency(amount)}
+              <button
+                key={amount}
+                onClick={() => setBetAmount((prev) => String((parseFloat(prev) || 0) + amount))}
+                disabled={betLocked}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
+              >
+                +{formatCurrency(amount)}
               </button>
             ))}
           </div>
