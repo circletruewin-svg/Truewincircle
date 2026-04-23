@@ -41,7 +41,8 @@ async function requireAuth(req, res, next) {
 // ────────────────────────────────────────────────────────────
 function rand() { return Math.random(); }
 
-function shouldUserWin() { return rand() < 0.40; }
+// Option B: 35% user win on coin-style games ⇒ ~33% house edge on 1.9x payouts.
+function shouldUserWin() { return rand() < 0.35; }
 
 function biasedWinnerFromSides(userBet, sides) {
   if (shouldUserWin()) return userBet;
@@ -59,16 +60,13 @@ function rollAviatorCrash() {
   return +(15.00 + rand() * 25.00).toFixed(2);
 }
 
+// Per-colour win rate so the house keeps an edge on every choice
+// (2x, 3x, 4.5x payouts each need a different cap to stay house-positive).
 function rollColor(userBet) {
-  const r = rand();
-  let winner;
-  if (r < 0.42) winner = 'red';
-  else if (r < 0.84) winner = 'green';
-  else winner = 'violet';
-  if (winner === 'violet' && userBet === 'violet' && rand() < 0.35) {
-    winner = rand() < 0.5 ? 'red' : 'green';
-  }
-  return winner;
+  const winRates = { red: 0.35, green: 0.26, violet: 0.14 };
+  if (rand() < (winRates[userBet] ?? 0.25)) return userBet;
+  const losing = ['red', 'green', 'violet'].filter(c => c !== userBet);
+  return losing[Math.floor(rand() * losing.length)];
 }
 
 function rollDice(userBet) {

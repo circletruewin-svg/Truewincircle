@@ -12,13 +12,15 @@
 // ═══════════════════════════════════════════════════════════
 
 /**
- * User win probability for coin-flip style games.
- * Heads/Tails fair = 50%. We run ~40% — house keeps a ~10%
- * edge which matches typical casino-table house advantage
- * scaled up slightly.
+ * User win probability for coin-flip style games (CoinFlip, TeenPatti,
+ * DragonTiger, AndarBahar).
+ *
+ * Option B: 35% user win with 1.9x payout ⇒ ~33% house edge.
+ * Heavily house-favoured but still leaves users a real chance to win
+ * about 1 bet in 3.
  */
 export function shouldUserWin() {
-  return Math.random() < 0.40;
+  return Math.random() < 0.35;
 }
 
 /**
@@ -57,26 +59,22 @@ export function getAviatorCrashPoint() {
 
 /**
  * Color Prediction.
- * Red and green each expected ~45%, violet ~10% in a fair game.
- * We weight violet higher than the natural 10% to give the house
- * a small edge while keeping the payouts worthwhile.
+ *
+ * Per-colour win rates tuned to each payout so the house keeps an
+ * edge regardless of which colour the player picks (Option B tone):
+ *   Red (2x)   → 35% win ⇒ ~30% house edge
+ *   Green (3x) → 26% win ⇒ ~22% house edge
+ *   Violet (4.5x) → 14% win ⇒ ~37% house edge
+ *
+ * Note: the older 42/42/16 flat distribution accidentally gave the
+ * player a +26% edge on green bets. Fixed here.
  */
 export function getColorWinner(userBet) {
-  const rand = Math.random();
-  // Fair-ish distribution: red 42%, green 42%, violet 16%.
-  let winner;
-  if (rand < 0.42) winner = "red";
-  else if (rand < 0.84) winner = "green";
-  else winner = "violet";
+  const winRates = { red: 0.35, green: 0.26, violet: 0.14 };
+  if (Math.random() < (winRates[userBet] ?? 0.25)) return userBet;
 
-  // Apply a mild bias: if the user bet the headline-payout
-  // colour (violet) and the dice fell violet, flip a 35% chance
-  // to send them to red or green instead. Keeps violet a real
-  // outcome without letting it over-pay.
-  if (winner === "violet" && userBet === "violet" && Math.random() < 0.35) {
-    winner = Math.random() < 0.5 ? "red" : "green";
-  }
-  return winner;
+  const losing = ["red", "green", "violet"].filter((c) => c !== userBet);
+  return losing[Math.floor(Math.random() * losing.length)];
 }
 
 /**
