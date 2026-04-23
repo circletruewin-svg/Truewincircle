@@ -3,24 +3,62 @@ import React from "react";
 export function AviatorPlane({ className = "" }) {
   return (
     <div className={`relative ${className}`}>
-      <svg viewBox="0 0 240 120" className="h-full w-full drop-shadow-[0_0_18px_rgba(255,61,113,0.45)]">
+      <svg viewBox="0 0 260 140" className="h-full w-full drop-shadow-[0_6px_18px_rgba(0,0,0,0.55)]">
         <defs>
-          <linearGradient id="planeBody" x1="0%" x2="100%">
-            <stop offset="0%" stopColor="#ff4477" />
-            <stop offset="100%" stopColor="#c1124f" />
+          <linearGradient id="fuselage" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#f5f7fa" />
+            <stop offset="55%" stopColor="#d6dde5" />
+            <stop offset="100%" stopColor="#8892a1" />
           </linearGradient>
+          <linearGradient id="stripe" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#ef4444" />
+            <stop offset="100%" stopColor="#b91c1c" />
+          </linearGradient>
+          <linearGradient id="wingShade" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#e5ebf2" />
+            <stop offset="100%" stopColor="#9aa5b2" />
+          </linearGradient>
+          <radialGradient id="propDisc" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="rgba(255,255,255,0.85)" />
+            <stop offset="40%" stopColor="rgba(220,230,240,0.25)" />
+            <stop offset="100%" stopColor="rgba(220,230,240,0)" />
+          </radialGradient>
         </defs>
-        <path d="M28 72 L112 58 L168 58 L196 34 L214 40 L188 64 L204 76 L188 84 L160 72 L118 74 L84 92 L58 92 L82 72 L28 72 Z" fill="url(#planeBody)" />
-        <path d="M90 54 L126 28 L138 30 L118 56 Z" fill="#ff6a93" />
-        <path d="M104 72 L144 96 L124 96 L88 78 Z" fill="#ff6a93" />
-        <circle cx="203" cy="58" r="10" fill="#101828" stroke="#ff8cb1" strokeWidth="3" />
-        <circle cx="61" cy="70" r="5" fill="#991b3f" />
-        <text x="130" y="69" textAnchor="middle" fontSize="18" fontWeight="900" fill="#2b0014">X</text>
+
+        {/* tail fin */}
+        <path d="M36 66 L24 34 L44 40 L56 66 Z" fill="url(#wingShade)" stroke="#55606e" strokeWidth="0.8" />
+        {/* horizontal stabilizer */}
+        <path d="M28 70 L8 72 L12 82 L36 82 Z" fill="url(#wingShade)" stroke="#55606e" strokeWidth="0.8" />
+
+        {/* fuselage */}
+        <path d="M40 72 C 60 60, 120 58, 170 62 C 198 64, 220 70, 236 78 C 220 88, 196 92, 170 92 C 120 94, 60 90, 40 82 Z" fill="url(#fuselage)" stroke="#4b5563" strokeWidth="0.9" />
+
+        {/* red racing stripe */}
+        <path d="M56 78 C 96 74, 160 74, 218 80 L 218 84 C 160 78, 96 78, 56 82 Z" fill="url(#stripe)" />
+
+        {/* wing (behind fuselage, rendered after for visibility) */}
+        <path d="M96 82 L70 112 L132 98 L178 86 Z" fill="url(#wingShade)" stroke="#55606e" strokeWidth="0.8" />
+        <path d="M96 78 L86 52 L148 66 L178 76 Z" fill="url(#wingShade)" stroke="#55606e" strokeWidth="0.8" opacity="0.95" />
+
+        {/* cockpit canopy */}
+        <path d="M132 64 C 148 52, 176 54, 184 66 L 180 72 C 170 64, 148 62, 134 70 Z" fill="#1e3a8a" opacity="0.85" />
+        <path d="M136 66 C 150 58, 172 58, 180 68" fill="none" stroke="#93c5fd" strokeWidth="0.8" opacity="0.6" />
+
+        {/* nose cone */}
+        <path d="M230 74 C 244 76, 252 80, 244 86 C 238 88, 232 84, 230 82 Z" fill="#dc2626" stroke="#7f1d1d" strokeWidth="0.8" />
+
+        {/* propeller spinner */}
+        <circle cx="246" cy="80" r="3" fill="#1f2937" />
+
+        {/* spinning propeller disc (motion blur) */}
+        <g style={{ transformOrigin: "246px 80px" }} className="origin-center animate-[spin_0.25s_linear_infinite]">
+          <ellipse cx="246" cy="80" rx="4" ry="22" fill="url(#propDisc)" opacity="0.9" />
+        </g>
+
+        {/* window glints */}
+        <circle cx="154" cy="66" r="1.6" fill="#bfdbfe" opacity="0.9" />
+        <circle cx="166" cy="66" r="1.6" fill="#bfdbfe" opacity="0.9" />
       </svg>
-      <div className="absolute right-3 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-rose-200/40 bg-white/10 animate-spin">
-        <span className="absolute h-[2px] w-7 bg-rose-100/90" />
-        <span className="absolute h-7 w-[2px] bg-rose-100/90" />
-      </div>
     </div>
   );
 }

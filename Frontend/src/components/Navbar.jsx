@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-import { User, Menu, X, Wallet } from "lucide-react";
+import { User, Menu, X, Wallet, Bell } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import useAuthStore from "../store/authStore";
 import { getAuth, signOut } from "firebase/auth";
-import { doc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot, collection, query, where, limit } from "firebase/firestore";
 import { db } from "../firebase";
 import { formatAmount } from "../utils/formatMoney";
 import { buildSessionUser } from "../utils/sessionUser";
@@ -11,6 +11,7 @@ import { buildSessionUser } from "../utils/sessionUser";
 export default function Navbar() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const user = useAuthStore((state) => state.user);
   const login = useAuthStore((state) => state.login);
   const logout = useAuthStore((state) => state.logout);
@@ -29,6 +30,17 @@ export default function Navbar() {
 
     return () => unsubscribe();
   }, [auth, login, user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid) { setUnreadCount(0); return undefined; }
+    const q = query(
+      collection(db, "users", user.uid, "notifications"),
+      where("read", "==", false),
+      limit(50)
+    );
+    const unsub = onSnapshot(q, (snap) => setUnreadCount(snap.size), () => setUnreadCount(0));
+    return () => unsub();
+  }, [user?.uid]);
 
   const walletAmount = (Number(user?.balance) || 0) + (Number(user?.winningMoney) || 0);
 
@@ -72,6 +84,15 @@ export default function Navbar() {
               <span className="font-semibold">{formatAmount(walletAmount)}</span>
             </Link>
 
+            <Link to="/notifications" className="relative hover:text-yellow-500" aria-label="Notifications">
+              <Bell size={22} />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-2 bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              )}
+            </Link>
+
             <div className="relative">
               <button onClick={() => setAccountOpen(!accountOpen)} className="flex items-center gap-1 hover:text-yellow-500">
                 Account <User size={24} />
@@ -101,10 +122,20 @@ export default function Navbar() {
 
       <div className="md:hidden flex items-center gap-4">
         {user && (
-          <Link to="/wallet" className="relative flex items-center gap-1">
-            <Wallet size={26} />
-            <span className="font-semibold">{formatAmount(walletAmount)}</span>
-          </Link>
+          <>
+            <Link to="/wallet" className="relative flex items-center gap-1">
+              <Wallet size={26} />
+              <span className="font-semibold">{formatAmount(walletAmount)}</span>
+            </Link>
+            <Link to="/notifications" className="relative" aria-label="Notifications">
+              <Bell size={24} />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-2 bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              )}
+            </Link>
+          </>
         )}
 
         <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>

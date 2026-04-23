@@ -7,6 +7,7 @@ import { DiceFace as DiceVisual } from "../components/GameVisuals";
 import { getDiceResult } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatCurrency } from "../utils/formatMoney";
+import { gameApi, isServerRngEnabled } from "../utils/gameApi";
 
 const DICE_LABELS = ["", "1", "2", "3", "4", "5", "6"];
 function DiceFace({ value, className = "" }) {
@@ -46,7 +47,25 @@ export default function DiceRoll() {
 
     setRolling(true);
     setMsg("");
-    await debitUserFunds(db, user.uid, amount);
+
+    // Resolve the outcome authoritatively (server if enabled, else client).
+    const settle = isServerRngEnabled()
+      ? gameApi.dice(betNum, amount).then((res) => ({
+          outcome: res.result, won: res.won, winAmount: res.winAmount,
+        }))
+      : (async () => {
+          await debitUserFunds(db, user.uid, amount);
+          const outcome = getDiceResult(betNum);
+          const won = outcome === betNum;
+          const winAmount = won ? parseFloat((amount * 5.5).toFixed(2)) : 0;
+          if (won) await creditUserWinnings(db, user.uid, winAmount);
+          await addDoc(collection(db, "diceBets"), {
+            userId: user.uid, betNum, result: outcome,
+            betAmount: amount, winAmount, won,
+            createdAt: serverTimestamp(),
+          });
+          return { outcome, won, winAmount };
+        })();
 
     let flips = 0;
     const anim = setInterval(async () => {
@@ -54,32 +73,18 @@ export default function DiceRoll() {
       flips += 1;
       if (flips >= 12) {
         clearInterval(anim);
-        const outcome = getDiceResult(betNum);
-        setDisplayDice(outcome);
-        const won = outcome === betNum;
-        const winAmount = won ? parseFloat((amount * 5.5).toFixed(2)) : 0;
-
         try {
-          setMsg(won ? `Rolled ${outcome}! You won ${formatCurrency(winAmount)}!` : `Rolled ${outcome}. You lost ${formatCurrency(amount)}`);
-
-          if (won) {
-            await creditUserWinnings(db, user.uid, winAmount);
-          }
-
-          await addDoc(collection(db, "diceBets"), {
-            userId: user.uid,
-            betNum,
-            result: outcome,
-            betAmount: amount,
-            winAmount,
-            won,
-            createdAt: serverTimestamp(),
-          });
-
+          const { outcome, won, winAmount } = await settle;
+          setDisplayDice(outcome);
+          setMsg(
+            won
+              ? `Rolled ${outcome}! You won ${formatCurrency(winAmount)}!`
+              : `Rolled ${outcome}. You lost ${formatCurrency(amount)}`
+          );
           setHistory((prev) => [{ result: outcome }, ...prev].slice(0, 12));
         } catch (error) {
-          console.error("Failed to finish Dice Roll round:", error);
-          setMsg(`Rolled ${outcome}. Sync failed.`);
+          console.error("Dice roll failed:", error);
+          setMsg(error.message || "Roll failed. Try again.");
         } finally {
           setRolling(false);
         }

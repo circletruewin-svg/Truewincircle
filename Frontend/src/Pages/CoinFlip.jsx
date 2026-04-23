@@ -7,6 +7,7 @@ import { CoinToken } from "../components/GameVisuals";
 import { getCoinResult } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatCurrency } from "../utils/formatMoney";
+import { gameApi, isServerRngEnabled } from "../utils/gameApi";
 
 function CoinFace({ side, fallback, className = "" }) {
   return <CoinToken side={side} className={className} />;
@@ -56,36 +57,46 @@ export default function CoinFlip() {
     setPhase("flipping");
     setFlipping(true);
     setMsg("");
-    await debitUserFunds(db, user.uid, amount);
+
+    // Pre-resolve the outcome so the animation shows the authoritative result.
+    let outcomePromise;
+    if (isServerRngEnabled()) {
+      outcomePromise = gameApi.coinFlip(betSide, amount).then((res) => ({
+        outcome: res.winner,
+        won: res.won,
+        winAmount: res.winAmount,
+        serverSettled: true,
+      }));
+    } else {
+      // Client fallback — debit + compute locally, credit on win.
+      outcomePromise = (async () => {
+        await debitUserFunds(db, user.uid, amount);
+        const outcome = getCoinResult(betSide);
+        const won = outcome === betSide;
+        const winAmount = won ? parseFloat((amount * 1.9).toFixed(2)) : 0;
+        if (won) await creditUserWinnings(db, user.uid, winAmount);
+        await addDoc(collection(db, "coinFlipHistory"), {
+          userId: user.uid, betSide, result: outcome,
+          betAmount: amount, winAmount, won,
+          createdAt: serverTimestamp(),
+        });
+        return { outcome, won, winAmount, serverSettled: false };
+      })();
+    }
 
     setTimeout(async () => {
       setFlipping(false);
-      const outcome = getCoinResult(betSide);
-      setResult(outcome);
-
-      const won = outcome === betSide;
-      const winAmount = won ? parseFloat((amount * 1.9).toFixed(2)) : 0;
-
       try {
-        if (won) {
-          setMsg(`${outcome.toUpperCase()}! You won ${formatCurrency(winAmount)}`);
-          await creditUserWinnings(db, user.uid, winAmount);
-        } else {
-          setMsg(`${outcome.toUpperCase()}! You lost ${formatCurrency(amount)}`);
-        }
-
-        await addDoc(collection(db, "coinFlipHistory"), {
-          userId: user.uid,
-          betSide,
-          result: outcome,
-          betAmount: amount,
-          winAmount,
-          won,
-          createdAt: serverTimestamp(),
-        });
+        const { outcome, won, winAmount } = await outcomePromise;
+        setResult(outcome);
+        setMsg(
+          won
+            ? `${outcome.toUpperCase()}! You won ${formatCurrency(winAmount)}`
+            : `${outcome.toUpperCase()}! You lost ${formatCurrency(amount)}`
+        );
       } catch (error) {
-        console.error("Failed to finish Coin Flip round:", error);
-        setMsg(`${outcome.toUpperCase()} round finished. Stats sync failed.`);
+        console.error("Coin Flip failed:", error);
+        setMsg(error.message || "Something went wrong. Try again.");
       } finally {
         setPhase("result");
         setTimeout(() => {

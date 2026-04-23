@@ -39,6 +39,7 @@ const AndarBahar = lazy(() => import('./Pages/AndarBahar'));
 const ColorPrediction = lazy(() => import('./Pages/ColorPrediction'));
 const CoinFlip = lazy(() => import('./Pages/CoinFlip'));
 const DiceRoll = lazy(() => import('./Pages/DiceRoll'));
+const Notifications = lazy(() => import('./Pages/Notifications'));
 
 const RouteFallback = () => (
   <div className="min-h-screen bg-[#042346] text-white flex items-center justify-center">
@@ -102,6 +103,7 @@ const AppContent = () => {
           <Route path="/colorprediction" element={<ColorPrediction />} />
           <Route path="/coinflip" element={<CoinFlip />} />
           <Route path="/diceroll" element={<DiceRoll />} />
+          <Route path="/notifications" element={<Notifications />} />
           <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
         </Routes>
       </Suspense>

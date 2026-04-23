@@ -26,10 +26,26 @@ service cloud.firestore {
       allow update: if request.auth != null && (
         isAdmin() ||
         (request.auth.uid == userId && (
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) ||
-          (request.resource.data.role == resource.data.role)
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'suspended']) ||
+          (request.resource.data.role == resource.data.role &&
+           request.resource.data.get('suspended', false) == resource.data.get('suspended', false))
         ))
       );
+
+      // Per-user notifications subcollection.
+      // Owner can read and mark as read; admins and backend can write.
+      match /notifications/{notifId} {
+        allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
+        allow create: if isAdmin();
+        allow update: if request.auth != null && request.auth.uid == userId;
+        allow delete: if isAdmin();
+      }
+    }
+
+    // Aviator rounds published by backend
+    match /aviator_rounds/{roundId} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
     }
 
     // Rules for the main game state document (1-12 Win Game)
