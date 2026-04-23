@@ -9,6 +9,7 @@ import Marquee from '../components/Marquee'
 import SocialButtons from '../components/Soical'
 import WinGame from './WinGame'
 import LiveCasinoSection from '../components/LiveCasinoSection'
+import SportsSection from '../components/SportsSection'
 
 const Home = () => {
   return (
@@ -18,8 +19,13 @@ const Home = () => {
       <SocialButtons/>
 
       <div className='mx-auto max-w-7xl px-4 md:px-6'>
+        {/* Section 1 — Cricket (IPL first) */}
+        <SportsSection />
+
         <NextResultTimer/>
         <LiveBettingHighlights/>
+
+        {/* Section 2 — Gali / Disawar markets */}
         <div className='mb-5'><MarketCard marketName="GALI" openTime="03:00 PM" closeTime="08:40 PM" /></div>
         <div className='mb-5'><MarketCard marketName="DELHI BAZAAR" openTime="08:00 PM" closeTime="06:40 PM" /></div>
         <div className='mb-5'><MarketCard marketName="SHREE GANESH" openTime="12:00 PM" closeTime="08:00 PM" /></div>
@@ -29,6 +35,7 @@ const Home = () => {
         <div className='mb-5'><MarketCard marketName="DISAWAR" openTime="03:00 PM" closeTime="08:40 PM" /></div>
       </div>
 
+      {/* Section 3 — Live casino */}
       <LiveCasinoSection />
 
       <div className='mx-auto max-w-7xl px-4 pb-10 md:px-6'>

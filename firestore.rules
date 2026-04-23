@@ -48,6 +48,27 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // ── Cricket / sports betting ─────────────────────────────
+    // Matches: publicly readable (anyone can see upcoming matches
+    // and past results); only admins can create / edit / settle.
+    match /matches/{matchId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // User bets on sports matches. Owner may create their own, owner
+    // or admin may read. Updates (status/winAmount after settlement)
+    // are admin-only to prevent users from flipping their own bets
+    // to "won" client-side.
+    match /sportsBets/{betId} {
+      allow create: if request.auth != null &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.status == "pending";
+      allow read: if request.auth != null &&
+        (resource.data.userId == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin();
+    }
+
     // Rules for the main game state document (1-12 Win Game)
     match /game_state/{docId} {
       allow read, write: if request.auth != null;
