@@ -3,7 +3,6 @@ import { collection, query, onSnapshot, where, doc, updateDoc, Timestamp } from 
 import { db } from '../../firebase';
 import { Loader2, Trophy } from 'lucide-react';
 import { markets as allMarkets } from '../../marketData';
-import { toast } from 'react-toastify';
 
 const GAME_CONFIG = {
   winGame: {
@@ -36,7 +35,6 @@ const Bets = () => {
   const [betsSummary, setBetsSummary] = useState([]);
   const [totalBets, setTotalBets] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   // State for round-based games
   const [currentRoundId, setCurrentRoundId] = useState(null);
@@ -173,34 +171,9 @@ const Bets = () => {
       setBetsSummary(summary);
       setTotalBets(total);
       setLoading(false);
-
-      if (!isInitialLoad) {
-        toast.success('Bets updated!', {
-          position: "top-right",
-          autoClose: 1500,
-          hideProgressBar: false,
-          closeOnClick: true,
-          pauseOnHover: true,
-          draggable: true,
-          progress: undefined,
-        });
-      } else {
-        setIsInitialLoad(false);
-      }
     }, (error) => {
       console.error(`Error fetching bets for ${config.name}:`, error);
       setLoading(false);
-      if (!isInitialLoad) {
-        toast.error('Failed to update bets!', {
-          position: "top-right",
-          autoClose: 1500,
-          hideProgressBar: false,
-          closeOnClick: true,
-          pauseOnHover: true,
-          draggable: true,
-          progress: undefined,
-        });
-      }
     });
 
     return () => unsubscribeBets();

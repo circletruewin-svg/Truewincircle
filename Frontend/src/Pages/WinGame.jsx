@@ -106,10 +106,10 @@ const WinGame = () => {
             }
     
             const batch = writeBatch(db);
-            betsSnapshot.forEach(doc => {
-                const bet = doc.data();
-                const betRef = doc.ref;
-                
+            betsSnapshot.forEach(betSnap => {
+                const bet = betSnap.data();
+                const betRef = betSnap.ref;
+
                 const userRef = doc(db, 'users', bet.userId);
                 const refundToBalance = Number(bet.debitedFromBalance || bet.amount || 0);
                 const refundToWinnings = Number(bet.debitedFromWinnings || 0);
@@ -118,7 +118,7 @@ const WinGame = () => {
                     balance: increment(refundToBalance),
                     winningMoney: increment(refundToWinnings),
                 });
-    
+
                 batch.update(betRef, { status: 'refunded' });
             });
             

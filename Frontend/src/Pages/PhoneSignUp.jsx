@@ -25,9 +25,8 @@ const PhoneSignUp = () => {
 
     const verifier = new RecaptchaVerifier(auth, "recaptcha-container", {
       size: "invisible",
-      callback: () => console.log("reCAPTCHA solved"),
+      callback: () => {},
       "expired-callback": () => {
-        console.warn("reCAPTCHA expired");
         if (window.recaptchaVerifier) {
           window.recaptchaVerifier.clear();
           window.recaptchaVerifier = null;
