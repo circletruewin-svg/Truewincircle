@@ -19,6 +19,11 @@ const getNumberColor = (num) => {
 };
 
 // --- RouletteWheel Component ---
+//
+// Behaviour: the wheel video stays as a static first-frame image whenever
+// the user is not spinning. The moment a bet is placed (`spinning` flips
+// to true) the video starts playing. When spinning ends it rewinds to
+// frame 0 and freezes again. The user has no manual playback controls.
 
 const RouletteWheel = ({ spinning }) => {
   const videoRef = useRef(null);
@@ -26,14 +31,19 @@ const RouletteWheel = ({ spinning }) => {
 
   // Pre-warm the video on mount: a muted .play() + immediate pause unlocks
   // playback on iOS Safari and other mobile browsers that otherwise reject
-  // programmatic play() calls outside the original tap handler.
+  // programmatic play() calls outside the original tap handler. We rewind
+  // to 0 after the unlock so the static frame the user sees is the very
+  // first frame of the clip.
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
     const unlock = () => {
       const p = v.play();
       if (p && typeof p.then === "function") {
-        p.then(() => v.pause()).catch(() => {});
+        p.then(() => {
+          v.pause();
+          try { v.currentTime = 0; } catch (_) { /* ignore */ }
+        }).catch(() => {});
       }
     };
     if (v.readyState >= 2) unlock();
@@ -53,21 +63,32 @@ const RouletteWheel = ({ spinning }) => {
       }
     } else {
       v.pause();
+      // Reset to the first frame so the wheel always looks like a static
+      // poster between rounds (instead of freezing on whatever frame the
+      // pause happened to land on).
+      try { v.currentTime = 0; } catch (_) { /* ignore */ }
     }
   }, [spinning]);
 
+  // Block right-click / long-press menus that would expose Save Video,
+  // Picture-in-Picture, Show Controls, etc.
+  const blockMenu = (e) => e.preventDefault();
+
   return (
-    <div className="relative w-full aspect-video max-w-md md:max-w-lg lg:max-w-xl">
+    <div className="relative w-full aspect-video max-w-md md:max-w-lg lg:max-w-xl select-none">
       {!videoFailed ? (
         <video
           ref={videoRef}
-          className="w-full h-full object-cover rounded-lg bg-black"
+          className="w-full h-full object-cover rounded-lg bg-black pointer-events-none"
           loop
           muted
           playsInline
-          autoPlay
           preload="auto"
           src="/roulet.mp4"
+          controlsList="nodownload nofullscreen noremoteplayback noplaybackrate"
+          disablePictureInPicture
+          disableRemotePlayback
+          onContextMenu={blockMenu}
           onError={() => setVideoFailed(true)}
         >
           Your browser does not support the video tag.
@@ -75,13 +96,20 @@ const RouletteWheel = ({ spinning }) => {
       ) : (
         // Visual fallback if the video can't load at all (slow network,
         // blocked codec, etc.) so the page never looks broken.
-        <div className={`w-full h-full rounded-lg bg-gradient-to-br from-emerald-900 via-slate-900 to-emerald-950 flex items-center justify-center ${spinning ? "animate-pulse" : ""}`}>
+        <div className={`w-full h-full rounded-lg bg-gradient-to-br from-emerald-900 via-slate-900 to-emerald-950 flex items-center justify-center`}>
           <div className="relative w-48 h-48 rounded-full border-8 border-yellow-500 bg-[radial-gradient(circle_at_center,#1e3a8a_0%,#0c0a09_70%)] shadow-[0_0_60px_rgba(234,179,8,0.35)]">
-            <div className={`absolute inset-4 rounded-full border-4 border-yellow-600/40 ${spinning ? "animate-spin" : ""}`} style={{ animationDuration: "2s" }} />
+            <div
+              className={`absolute inset-4 rounded-full border-4 border-yellow-600/40 ${spinning ? "animate-spin" : ""}`}
+              style={{ animationDuration: "2s" }}
+            />
             <div className="absolute inset-0 flex items-center justify-center text-yellow-400 font-black text-2xl tracking-widest">ROULETTE</div>
           </div>
         </div>
       )}
+      {/* Transparent overlay to swallow any taps on the video element so
+          the user can never trigger native controls (long-press menu,
+          tap-to-pause behaviours, etc.). */}
+      <div className="absolute inset-0 rounded-lg" onContextMenu={blockMenu} />
     </div>
   );
 };
