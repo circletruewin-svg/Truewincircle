@@ -22,31 +22,66 @@ const getNumberColor = (num) => {
 
 const RouletteWheel = ({ spinning }) => {
   const videoRef = useRef(null);
+  const [videoFailed, setVideoFailed] = useState(false);
+
+  // Pre-warm the video on mount: a muted .play() + immediate pause unlocks
+  // playback on iOS Safari and other mobile browsers that otherwise reject
+  // programmatic play() calls outside the original tap handler.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const unlock = () => {
+      const p = v.play();
+      if (p && typeof p.then === "function") {
+        p.then(() => v.pause()).catch(() => {});
+      }
+    };
+    if (v.readyState >= 2) unlock();
+    else v.addEventListener("canplay", unlock, { once: true });
+    return () => v.removeEventListener("canplay", unlock);
+  }, []);
 
   useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
     if (spinning) {
-      videoRef.current.play();
-    } else {
-      if (videoRef.current) {
-        videoRef.current.pause();
+      const p = v.play();
+      if (p && typeof p.catch === "function") {
+        p.catch((err) => {
+          console.warn("Roulette video play blocked:", err?.message || err);
+        });
       }
+    } else {
+      v.pause();
     }
   }, [spinning]);
 
   return (
     <div className="relative w-full aspect-video max-w-md md:max-w-lg lg:max-w-xl">
-      <video
-        ref={videoRef}
-        className="w-full h-full object-cover rounded-lg"
-        loop
-        muted
-        playsInline
-        autoplay
-        // Make sure you have a roulette video in your /public folder
-        src="/roulet.mp4" 
-      >
-        Your browser does not support the video tag.
-      </video>
+      {!videoFailed ? (
+        <video
+          ref={videoRef}
+          className="w-full h-full object-cover rounded-lg bg-black"
+          loop
+          muted
+          playsInline
+          autoPlay
+          preload="auto"
+          src="/roulet.mp4"
+          onError={() => setVideoFailed(true)}
+        >
+          Your browser does not support the video tag.
+        </video>
+      ) : (
+        // Visual fallback if the video can't load at all (slow network,
+        // blocked codec, etc.) so the page never looks broken.
+        <div className={`w-full h-full rounded-lg bg-gradient-to-br from-emerald-900 via-slate-900 to-emerald-950 flex items-center justify-center ${spinning ? "animate-pulse" : ""}`}>
+          <div className="relative w-48 h-48 rounded-full border-8 border-yellow-500 bg-[radial-gradient(circle_at_center,#1e3a8a_0%,#0c0a09_70%)] shadow-[0_0_60px_rgba(234,179,8,0.35)]">
+            <div className={`absolute inset-4 rounded-full border-4 border-yellow-600/40 ${spinning ? "animate-spin" : ""}`} style={{ animationDuration: "2s" }} />
+            <div className="absolute inset-0 flex items-center justify-center text-yellow-400 font-black text-2xl tracking-widest">ROULETTE</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
