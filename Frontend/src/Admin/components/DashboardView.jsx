@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowDownCircle, ArrowUpCircle, CreditCard, DollarSign, Trophy, Users } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpCircle, CreditCard, DollarSign, Trophy, Users, Eye, EyeOff } from 'lucide-react';
 import { db } from '../../firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 import { toast } from 'react-toastify';
 import { formatCurrency } from '../../utils/formatMoney';
 
@@ -9,6 +9,8 @@ const DashboardView = ({ stats }) => {
   const [jackpotAmount, setJackpotAmount] = useState('');
   const [lastWinnerName, setLastWinnerName] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showCountdown, setShowCountdown] = useState(true);
+  const [layoutSaving, setLayoutSaving] = useState(false);
 
   const statItems = [
     { title: 'Total Users', value: String(stats.totalUsers || 0), icon: Users, color: 'bg-blue-500' },
@@ -39,6 +41,35 @@ const DashboardView = ({ stats }) => {
 
     fetchJackpotInfo();
   }, []);
+
+  // Live subscription to the Home layout toggle so the Dashboard
+  // switch always reflects the current setting.
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, 'settings', 'layout'),
+      (snap) => {
+        if (snap.exists()) setShowCountdown(snap.data().showCountdown !== false);
+        else setShowCountdown(true);
+      },
+      () => setShowCountdown(true)
+    );
+    return () => unsub();
+  }, []);
+
+  const toggleCountdown = async () => {
+    const next = !showCountdown;
+    setShowCountdown(next);
+    setLayoutSaving(true);
+    try {
+      await setDoc(doc(db, 'settings', 'layout'), { showCountdown: next }, { merge: true });
+      toast.success(next ? 'Countdown banner enabled.' : 'Countdown banner disabled.');
+    } catch (err) {
+      setShowCountdown(!next); // rollback on error
+      toast.error('Update failed: ' + err.message);
+    } finally {
+      setLayoutSaving(false);
+    }
+  };
 
   const handleUpdateJackpot = async () => {
     setLoading(true);
@@ -76,6 +107,37 @@ const DashboardView = ({ stats }) => {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm p-5 mt-8">
+        <h3 className="text-lg font-semibold mb-4">Home page layout</h3>
+        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border">
+          <div className="flex items-start gap-3">
+            <div className={`mt-0.5 w-9 h-9 rounded-full flex items-center justify-center ${showCountdown ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-500"}`}>
+              {showCountdown ? <Eye size={18} /> : <EyeOff size={18} />}
+            </div>
+            <div>
+              <p className="font-semibold text-gray-800">Show Countdown & Jackpot banner on Home</p>
+              <p className="text-xs text-gray-500">
+                Toggle the dark card with the Next Result Countdown (left) and Jackpot (right) that appears above the cricket section.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={toggleCountdown}
+            disabled={layoutSaving}
+            className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors disabled:opacity-50 ${
+              showCountdown ? "bg-green-500" : "bg-gray-400"
+            }`}
+            aria-pressed={showCountdown}
+          >
+            <span
+              className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                showCountdown ? "translate-x-8" : "translate-x-1"
+              }`}
+            />
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow-sm p-6 mt-8">

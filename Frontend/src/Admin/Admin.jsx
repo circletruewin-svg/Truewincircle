@@ -28,7 +28,6 @@ import 'react-toastify/dist/ReactToastify.css';
 import { createNotification } from '../utils/notifications';
 import { formatCurrency } from '../utils/formatMoney';
 import MatchManagement from './components/MatchManagement';
-import LayoutSettings from './components/LayoutSettings';
 
 // Component Imports
 import AllUsers from './components/AllUsers';
@@ -339,7 +338,6 @@ const AdminDashboard = () => {
           { id: 'payments',     label: 'Payment Approvals',   icon: CreditCard },
           { id: 'withdrawals',  label: 'Withdrawal Approval', icon: DollarSign },
           { id: 'marquee',      label: 'Screen Text',         icon: Edit       },
-          { id: 'layout',       label: 'Home Layout',         icon: Eye        },
           { id: 'matches',      label: '🏏 Cricket Matches',  icon: Trophy     },
           { id: 'harufUpdate',  label: 'Market Results',      icon: Edit       },
           { id: 'sliderUpdate', label: 'Carousel Slides',     icon: Edit       },
@@ -439,7 +437,6 @@ const AdminDashboard = () => {
           />
         );
       case 'marquee':       return <MarqueeUpdate />;
-      case 'layout':        return <LayoutSettings />;
       case 'matches':       return <MatchManagement />;
       case 'harufUpdate':   return <Table />;
       case 'sliderUpdate':  return <SliderUpdate />;
