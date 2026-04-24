@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { db } from "../firebase";
-import { doc, onSnapshot, getDoc } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 
 export default function NextResultTimer() {
   // Default visibility: true (show banner) unless admin has explicitly
@@ -48,14 +48,12 @@ export default function NextResultTimer() {
     return () => clearInterval(timer);
   }, [visible]);
 
+  // Real-time jackpot subscription so admin edits propagate instantly.
   useEffect(() => {
-    if (!visible) return;
-    let cancelled = false;
-    const fetchJackpotInfo = async () => {
-      try {
-        const jackpotRef = doc(db, "settings", "jackpot");
-        const docSnap = await getDoc(jackpotRef);
-        if (cancelled) return;
+    if (!visible) return undefined;
+    const unsub = onSnapshot(
+      doc(db, "settings", "jackpot"),
+      (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
           setCurrentJackpot(data.currentJackpot || "N/A");
@@ -64,19 +62,16 @@ export default function NextResultTimer() {
           setCurrentJackpot("N/A");
           setLastWinner("N/A");
         }
-      } catch (error) {
-        console.error("Error fetching jackpot info:", error);
-        if (!cancelled) {
-          setCurrentJackpot("Error");
-          setLastWinner("Error");
-        }
-      } finally {
-        if (!cancelled) setJackpotLoading(false);
+        setJackpotLoading(false);
+      },
+      (err) => {
+        console.error("Error fetching jackpot info:", err);
+        setCurrentJackpot("Error");
+        setLastWinner("Error");
+        setJackpotLoading(false);
       }
-    };
-
-    fetchJackpotInfo();
-    return () => { cancelled = true; };
+    );
+    return () => unsub();
   }, [visible]);
 
   // When admin disables the banner, render nothing — keeps the page tight
