@@ -19,12 +19,16 @@ const Home = () => {
       <SocialButtons/>
 
       <div className='mx-auto max-w-7xl px-4 md:px-6'>
-        {/* Section 1 — Cricket (IPL first) */}
-        <SportsSection />
-
         <NextResultTimer/>
         <LiveBettingHighlights/>
+      </div>
 
+      {/* Section 1 — Cricket (IPL first, full-width prominent section) */}
+      <div className='mx-auto max-w-7xl px-4 md:px-6'>
+        <SportsSection />
+      </div>
+
+      <div className='mx-auto max-w-7xl px-4 md:px-6'>
         {/* Section 2 — Gali / Disawar markets */}
         <div className='mb-5'><MarketCard marketName="GALI" openTime="03:00 PM" closeTime="08:40 PM" /></div>
         <div className='mb-5'><MarketCard marketName="DELHI BAZAAR" openTime="08:00 PM" closeTime="06:40 PM" /></div>
