@@ -1,12 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { 
-  Users, 
-  CreditCard, 
-  Trophy, 
-  DollarSign, 
-  QrCode, 
-  Check, 
-  X, 
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Users,
+  CreditCard,
+  Trophy,
+  DollarSign,
+  QrCode,
+  Check,
+  X,
   Eye,
   Edit,
   Plus,
@@ -19,12 +19,15 @@ import {
   TrendingUp,
   UserPlus,
   Star,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, query, onSnapshot, doc, runTransaction, getDocs, getDoc, where, deleteDoc, updateDoc, addDoc } from 'firebase/firestore';
 import useAuthStore from '../store/authStore';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
+import useNotificationSound from './hooks/useNotificationSound';
 
 // Component Imports
 import AllUsers from './components/AllUsers';
@@ -64,6 +67,16 @@ const AdminDashboard = () => {
   const { user, setUser } = useAuthStore();
   const isAdmin = user?.role === 'admin';
 
+  // --- SOUND NOTIFICATIONS ---
+  const { enabled: soundEnabled, setEnabled: setSoundEnabled, play: playNotification } =
+    useNotificationSound();
+  // Refs so the snapshot callbacks always read the latest values
+  // without needing to be torn down and re-subscribed on each change.
+  const truewinUserMapRef = useRef({});
+  const playNotificationRef = useRef(playNotification);
+  useEffect(() => { truewinUserMapRef.current = truewinUserMap; }, [truewinUserMap]);
+  useEffect(() => { playNotificationRef.current = playNotification; }, [playNotification]);
+
   // --- DATA FETCHING ---
   useEffect(() => {
     if (!isAdmin) return;
@@ -76,6 +89,9 @@ const AdminDashboard = () => {
       setTotalUsers(snapshot.size);
     });
 
+    // Skip the initial snapshot (which reports every existing doc as "added")
+    // so we only ring on records that arrive after the dashboard is open.
+    let isFirstPaymentSnapshot = true;
     const paymentsQuery = query(collection(db, 'top-ups'));
     const unsubscribePayments = onSnapshot(paymentsQuery, (snapshot) => {
       const fetchedPayments = snapshot.docs.map(d => ({
@@ -85,8 +101,27 @@ const AdminDashboard = () => {
         userId: d.data().userId
       }));
       setAllPayments(fetchedPayments);
+
+      if (!isFirstPaymentSnapshot) {
+        const map = truewinUserMapRef.current;
+        const mapReady = Object.keys(map).length > 0;
+        const newPending = snapshot.docChanges().filter(c => {
+          if (c.type !== 'added') return false;
+          const data = c.doc.data();
+          if (data.status !== 'pending') return false;
+          return mapReady ? !!map[data.userId] : true;
+        });
+        if (newPending.length > 0) {
+          playNotificationRef.current?.();
+          toast.info(
+            `💰 ${newPending.length} new payment approval${newPending.length > 1 ? 's' : ''} received!`
+          );
+        }
+      }
+      isFirstPaymentSnapshot = false;
     });
 
+    let isFirstWithdrawalSnapshot = true;
     const withdrawalsQuery = query(collection(db, 'withdrawals'));
     const unsubscribeWithdrawals = onSnapshot(withdrawalsQuery, (snapshot) => {
       const fetchedWithdrawals = snapshot.docs.map(d => ({
@@ -96,6 +131,24 @@ const AdminDashboard = () => {
         userId: d.data().userId
       }));
       setAllWithdrawals(fetchedWithdrawals);
+
+      if (!isFirstWithdrawalSnapshot) {
+        const map = truewinUserMapRef.current;
+        const mapReady = Object.keys(map).length > 0;
+        const newPending = snapshot.docChanges().filter(c => {
+          if (c.type !== 'added') return false;
+          const data = c.doc.data();
+          if (data.status !== 'pending') return false;
+          return mapReady ? !!map[data.userId] : true;
+        });
+        if (newPending.length > 0) {
+          playNotificationRef.current?.();
+          toast.info(
+            `🏦 ${newPending.length} new withdrawal approval${newPending.length > 1 ? 's' : ''} received!`
+          );
+        }
+      }
+      isFirstWithdrawalSnapshot = false;
     });
 
     const winnersQuery = query(collection(db, 'winners'));
@@ -331,6 +384,29 @@ const AdminDashboard = () => {
             .replace('gamesStats',  '🎮 Games Stats')
           }
         </h2>
+      </div>
+      <div className="flex items-center space-x-2">
+        <button
+          onClick={() => {
+            const next = !soundEnabled;
+            setSoundEnabled(next);
+            if (next) {
+              // Play once so admin confirms it works (and unlocks AudioContext on this gesture).
+              playNotification();
+              toast.success('Sound notifications enabled');
+            } else {
+              toast.info('Sound notifications muted');
+            }
+          }}
+          title={soundEnabled ? 'Mute notifications' : 'Enable notification sound'}
+          className={`p-2 rounded-lg border transition-colors ${
+            soundEnabled
+              ? 'bg-blue-50 border-blue-200 text-blue-600 hover:bg-blue-100'
+              : 'bg-gray-100 border-gray-200 text-gray-500 hover:bg-gray-200'
+          }`}
+        >
+          {soundEnabled ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
+        </button>
       </div>
     </div>
   );

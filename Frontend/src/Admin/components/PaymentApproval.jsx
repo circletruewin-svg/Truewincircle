@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Check, X, Trash2, Eye } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Check, X, Trash2, Eye, Search } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatMoney';
 
 // Modal for showing the full payment message
@@ -77,6 +77,7 @@ const PaymentApproval = ({ payments, userDetails, handlePaymentApproval, handleD
   const [rejectionModal, setRejectionModal] = useState({ isOpen: false, payment: null });
   const [userInfoModal, setUserInfoModal] = useState({ isOpen: false, user: null });
   const [processingIds, setProcessingIds] = useState({});
+  const [searchTerm, setSearchTerm] = useState('');
 
   const handleApproveClick = (payment) => {
     if (processingIds[payment.id]) return;
@@ -96,6 +97,17 @@ const PaymentApproval = ({ payments, userDetails, handlePaymentApproval, handleD
     }
   };
 
+  const filteredPayments = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return payments;
+    return payments.filter(payment => {
+      const user = userDetails[payment.userId] || {};
+      const name = (payment.name || user.name || '').toLowerCase();
+      const phone = (user.phoneNumber || '').toLowerCase();
+      return name.includes(term) || phone.includes(term);
+    });
+  }, [payments, userDetails, searchTerm]);
+
   return (
     <div className="p-6">
       {messageModal.isOpen && <MessageModal message={messageModal.message} onClose={() => setMessageModal({ isOpen: false, message: '' })} />}
@@ -103,8 +115,18 @@ const PaymentApproval = ({ payments, userDetails, handlePaymentApproval, handleD
       {rejectionModal.isOpen && <RejectionModal onCancel={() => setRejectionModal({ isOpen: false, payment: null })} onConfirm={confirmRejection} />}
 
       <div className="bg-white rounded-lg shadow-sm">
-        <div className="p-6 border-b">
+        <div className="p-6 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <h3 className="text-lg font-semibold">Payment Approvals</h3>
+          <div className="relative w-full sm:w-72">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search by name or phone…"
+              className="w-full pl-9 pr-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            />
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -121,7 +143,14 @@ const PaymentApproval = ({ payments, userDetails, handlePaymentApproval, handleD
               </tr>
             </thead>
             <tbody>
-              {payments.map(payment => (
+              {filteredPayments.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="p-6 text-center text-gray-500">
+                    {searchTerm ? 'No payments match your search.' : 'No payments to display.'}
+                  </td>
+                </tr>
+              )}
+              {filteredPayments.map(payment => (
                 <tr key={payment.id} className="border-b hover:bg-gray-50">
                   <td className="p-4">
                     <button onClick={() => setUserInfoModal({ isOpen: true, user: userDetails[payment.userId] })} className="font-medium text-blue-600 hover:underline">
