@@ -78,8 +78,14 @@ const AdminDashboard = () => {
     vibrate: soundVibrate, setVibrate: setSoundVibrate,
     play: playNotification,
     options: soundOptions,
+    customSounds,
+    addCustomSound,
+    removeCustomSound,
   } = useNotificationSound();
   const [soundPanelOpen, setSoundPanelOpen] = useState(false);
+  const [customLabel, setCustomLabel] = useState('');
+  const [customUrl, setCustomUrl] = useState('');
+  const [customError, setCustomError] = useState('');
   // Refs so the snapshot callbacks always read the latest values
   // without needing to be torn down and re-subscribed on each change.
   const truewinUserMapRef = useRef({});
@@ -113,13 +119,13 @@ const AdminDashboard = () => {
       setAllPayments(fetchedPayments);
 
       if (!isFirstPaymentSnapshot) {
-        const map = truewinUserMapRef.current;
-        const mapReady = Object.keys(map).length > 0;
+        // Don't filter by appName — admin should hear about every new
+        // pending deposit. The table view does its own filtering for
+        // display, but the sound is a safety net.
         const newPending = snapshot.docChanges().filter(c => {
           if (c.type !== 'added') return false;
           const data = c.doc.data();
-          if (data.status !== 'pending') return false;
-          return mapReady ? !!map[data.userId] : true;
+          return data.status === 'pending';
         });
         if (newPending.length > 0) {
           playNotificationRef.current?.();
@@ -143,13 +149,10 @@ const AdminDashboard = () => {
       setAllWithdrawals(fetchedWithdrawals);
 
       if (!isFirstWithdrawalSnapshot) {
-        const map = truewinUserMapRef.current;
-        const mapReady = Object.keys(map).length > 0;
         const newPending = snapshot.docChanges().filter(c => {
           if (c.type !== 'added') return false;
           const data = c.doc.data();
-          if (data.status !== 'pending') return false;
-          return mapReady ? !!map[data.userId] : true;
+          return data.status === 'pending';
         });
         if (newPending.length > 0) {
           playNotificationRef.current?.();
@@ -547,6 +550,94 @@ const AdminDashboard = () => {
                   className="h-4 w-4 accent-blue-600"
                 />
               </label>
+
+              <div className="pt-2 border-t">
+                <p className="text-sm font-semibold text-gray-700 mb-2">Custom sounds</p>
+
+                {customSounds.length > 0 ? (
+                  <ul className="mb-2 space-y-1 max-h-28 overflow-y-auto">
+                    {customSounds.map((s) => (
+                      <li key={s.id} className="flex items-center justify-between text-xs bg-gray-50 rounded-md px-2 py-1.5">
+                        <span className="truncate text-gray-700">{s.label}</span>
+                        <button
+                          onClick={() => removeCustomSound(s.id)}
+                          className="ml-2 text-red-500 hover:text-red-700"
+                          title="Delete"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-gray-500 mb-2">No custom sounds yet. Upload an MP3/WAV or paste a URL.</p>
+                )}
+
+                <input
+                  type="text"
+                  value={customLabel}
+                  onChange={(e) => { setCustomLabel(e.target.value); setCustomError(''); }}
+                  placeholder="Label (e.g. Loud bell)"
+                  className="w-full mb-2 p-2 border rounded-md bg-gray-50 text-sm"
+                />
+                <input
+                  type="text"
+                  value={customUrl}
+                  onChange={(e) => { setCustomUrl(e.target.value); setCustomError(''); }}
+                  placeholder="https://example.com/sound.mp3 (optional)"
+                  className="w-full mb-2 p-2 border rounded-md bg-gray-50 text-sm"
+                />
+                <div className="flex items-center gap-2">
+                  <label className="flex-1 cursor-pointer text-center px-3 py-2 text-xs font-medium border rounded-md bg-gray-50 text-gray-700 hover:bg-gray-100">
+                    Upload file
+                    <input
+                      type="file"
+                      accept="audio/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        try {
+                          const entry = await addCustomSound({ label: customLabel || file.name, file });
+                          setSoundChoice(entry.id);
+                          setCustomLabel('');
+                          setCustomUrl('');
+                          setCustomError('');
+                          toast.success('Custom sound added');
+                        } catch (err) {
+                          setCustomError(err.message || 'Failed to add sound');
+                        } finally {
+                          e.target.value = '';
+                        }
+                      }}
+                    />
+                  </label>
+                  <button
+                    onClick={async () => {
+                      if (!customUrl.trim()) {
+                        setCustomError('Paste a URL or use Upload file');
+                        return;
+                      }
+                      try {
+                        const entry = await addCustomSound({ label: customLabel || 'Custom URL', url: customUrl.trim() });
+                        setSoundChoice(entry.id);
+                        setCustomLabel('');
+                        setCustomUrl('');
+                        setCustomError('');
+                        toast.success('Custom sound added');
+                      } catch (err) {
+                        setCustomError(err.message || 'Failed to add sound');
+                      }
+                    }}
+                    className="flex-1 px-3 py-2 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                  >
+                    Add URL
+                  </button>
+                </div>
+                {customError && (
+                  <p className="text-xs text-red-600 mt-1.5">{customError}</p>
+                )}
+              </div>
             </div>
           </>
         )}

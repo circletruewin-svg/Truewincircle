@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Bell, Check, Trophy, IndianRupee, UserPlus, AlertCircle } from "lucide-react";
+import { ArrowLeft, Bell, Check, Trophy, IndianRupee, UserPlus, AlertCircle, Volume2, VolumeX, X } from "lucide-react";
 import { collection, onSnapshot, query, orderBy, limit } from "firebase/firestore";
 import { db } from "../firebase";
 import useAuthStore from "../store/authStore";
 import { markNotificationRead, markAllNotificationsRead } from "../utils/notifications";
+import { useUserSoundContext } from "../contexts/UserSoundContext";
 
 const ICONS = {
   win: Trophy,
@@ -27,6 +28,11 @@ export default function Notifications() {
   const navigate = useNavigate();
   const [notifs, setNotifs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showSoundSettings, setShowSoundSettings] = useState(false);
+  const sound = useUserSoundContext();
+  const [customLabel, setCustomLabel] = useState('');
+  const [customUrl, setCustomUrl] = useState('');
+  const [customError, setCustomError] = useState('');
 
   useEffect(() => {
     if (!user?.uid) { setLoading(false); return; }
@@ -83,15 +89,215 @@ export default function Notifications() {
             </button>
             <h1 className="text-2xl font-bold">Notifications</h1>
           </div>
-          {unread > 0 && (
+          <div className="flex items-center gap-3">
+            {unread > 0 && (
+              <button
+                onClick={handleMarkAll}
+                className="text-xs font-semibold text-yellow-400 hover:text-yellow-300 flex items-center gap-1"
+              >
+                <Check size={14} /> Mark all read
+              </button>
+            )}
             <button
-              onClick={handleMarkAll}
-              className="text-xs font-semibold text-yellow-400 hover:text-yellow-300 flex items-center gap-1"
+              onClick={() => setShowSoundSettings((s) => !s)}
+              title="Sound settings"
+              className={`p-2 rounded-lg border transition-colors ${
+                sound.enabled
+                  ? 'bg-yellow-500/10 border-yellow-400/30 text-yellow-300 hover:bg-yellow-500/20'
+                  : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
+              }`}
             >
-              <Check size={14} /> Mark all read
+              {sound.enabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
             </button>
-          )}
+          </div>
         </div>
+
+        {showSoundSettings && (
+          <div className="mb-6 rounded-2xl border border-white/10 bg-[#0a2d55] p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-yellow-400">Sound Settings</h3>
+              <button onClick={() => setShowSoundSettings(false)} className="text-gray-400 hover:text-white">
+                <X size={18} />
+              </button>
+            </div>
+
+            <label className="flex items-center justify-between text-sm">
+              <span className="font-medium">Sounds enabled</span>
+              <input
+                type="checkbox"
+                checked={sound.enabled}
+                onChange={(e) => {
+                  sound.setEnabled(e.target.checked);
+                  if (e.target.checked) sound.playApproval();
+                }}
+                className="h-4 w-4 accent-yellow-500"
+              />
+            </label>
+
+            <div className={sound.enabled ? '' : 'opacity-50 pointer-events-none'}>
+              <div className="flex items-center justify-between text-sm mb-1">
+                <span className="font-medium">Volume</span>
+                <span className="text-xs text-gray-400">{Math.round(sound.volume * 100)}%</span>
+              </div>
+              <input
+                type="range" min="0" max="1" step="0.05"
+                value={sound.volume}
+                onChange={(e) => sound.setVolume(e.target.value)}
+                className="w-full accent-yellow-500"
+              />
+            </div>
+
+            {/* Approval sound */}
+            <div className={sound.enabled ? '' : 'opacity-50 pointer-events-none'}>
+              <label className="block text-sm font-medium mb-1">When deposit/withdrawal is APPROVED</label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={sound.approvalChoice}
+                  onChange={(e) => sound.setApprovalChoice(e.target.value)}
+                  className="flex-1 p-2 rounded-lg bg-[#042346] border border-white/10 text-sm"
+                >
+                  {sound.approvalOptions.map((o) => (
+                    <option key={o.id} value={o.id}>{o.label}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => sound.playApproval()}
+                  className="px-3 py-2 text-xs font-semibold bg-green-500 text-black rounded-lg hover:bg-green-400"
+                >Test</button>
+              </div>
+            </div>
+
+            {/* Rejection sound */}
+            <div className={sound.enabled ? '' : 'opacity-50 pointer-events-none'}>
+              <label className="block text-sm font-medium mb-1">When deposit/withdrawal is REJECTED</label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={sound.rejectionChoice}
+                  onChange={(e) => sound.setRejectionChoice(e.target.value)}
+                  className="flex-1 p-2 rounded-lg bg-[#042346] border border-white/10 text-sm"
+                >
+                  {sound.rejectionOptions.map((o) => (
+                    <option key={o.id} value={o.id}>{o.label}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => sound.playRejection()}
+                  className="px-3 py-2 text-xs font-semibold bg-red-500 text-white rounded-lg hover:bg-red-400"
+                >Test</button>
+              </div>
+            </div>
+
+            {/* Click sound (cricket +bet buttons etc) */}
+            <div className={sound.enabled ? '' : 'opacity-50 pointer-events-none'}>
+              <label className="block text-sm font-medium mb-1">Click feedback (cricket bet +₹100 etc.)</label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={sound.clickChoice}
+                  onChange={(e) => sound.setClickChoice(e.target.value)}
+                  className="flex-1 p-2 rounded-lg bg-[#042346] border border-white/10 text-sm"
+                >
+                  {sound.clickOptions.map((o) => (
+                    <option key={o.id} value={o.id}>{o.label}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => sound.playClick()}
+                  className="px-3 py-2 text-xs font-semibold bg-yellow-500 text-black rounded-lg hover:bg-yellow-400"
+                >Test</button>
+              </div>
+            </div>
+
+            <label className="flex items-center justify-between text-sm pt-3 border-t border-white/10">
+              <span className="font-medium">
+                Vibrate on mobile
+                {typeof navigator !== 'undefined' && typeof navigator.vibrate !== 'function' && (
+                  <span className="block text-xs text-gray-500 font-normal">(not supported on this device)</span>
+                )}
+              </span>
+              <input
+                type="checkbox"
+                checked={sound.vibrate}
+                onChange={(e) => sound.setVibrate(e.target.checked)}
+                className="h-4 w-4 accent-yellow-500"
+              />
+            </label>
+
+            {/* Custom sounds */}
+            <div className="pt-3 border-t border-white/10">
+              <p className="text-sm font-semibold mb-2">Your custom sounds</p>
+              {sound.customSounds.length > 0 ? (
+                <ul className="mb-2 space-y-1 max-h-32 overflow-y-auto">
+                  {sound.customSounds.map((s) => (
+                    <li key={s.id} className="flex items-center justify-between text-xs bg-[#042346] rounded-md px-2 py-1.5">
+                      <span className="truncate">{s.label}</span>
+                      <button
+                        onClick={() => sound.removeCustomSound(s.id)}
+                        className="ml-2 text-red-400 hover:text-red-300"
+                      >
+                        <X size={14} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-gray-400 mb-2">Upload an MP3/WAV (max 1 MB) or paste a public URL.</p>
+              )}
+              <input
+                type="text"
+                value={customLabel}
+                onChange={(e) => { setCustomLabel(e.target.value); setCustomError(''); }}
+                placeholder="Label (e.g. My ringtone)"
+                className="w-full mb-2 p-2 rounded-lg bg-[#042346] border border-white/10 text-sm"
+              />
+              <input
+                type="text"
+                value={customUrl}
+                onChange={(e) => { setCustomUrl(e.target.value); setCustomError(''); }}
+                placeholder="https://...mp3 (optional)"
+                className="w-full mb-2 p-2 rounded-lg bg-[#042346] border border-white/10 text-sm"
+              />
+              <div className="flex items-center gap-2">
+                <label className="flex-1 cursor-pointer text-center px-3 py-2 text-xs font-medium border border-white/10 rounded-md bg-[#042346] hover:bg-[#053163]">
+                  Upload file
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      try {
+                        await sound.addCustomSound({ label: customLabel || file.name, file });
+                        setCustomLabel('');
+                        setCustomUrl('');
+                        setCustomError('');
+                      } catch (err) {
+                        setCustomError(err.message || 'Failed to add sound');
+                      } finally {
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                </label>
+                <button
+                  onClick={async () => {
+                    if (!customUrl.trim()) { setCustomError('Paste a URL or use Upload file'); return; }
+                    try {
+                      await sound.addCustomSound({ label: customLabel || 'Custom URL', url: customUrl.trim() });
+                      setCustomLabel('');
+                      setCustomUrl('');
+                      setCustomError('');
+                    } catch (err) {
+                      setCustomError(err.message || 'Failed to add sound');
+                    }
+                  }}
+                  className="flex-1 px-3 py-2 text-xs font-medium bg-yellow-500 text-black rounded-md hover:bg-yellow-400"
+                >Add URL</button>
+              </div>
+              {customError && <p className="text-xs text-red-400 mt-1.5">{customError}</p>}
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <p className="text-center text-gray-400 py-10">Loading…</p>

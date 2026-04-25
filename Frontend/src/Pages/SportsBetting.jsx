@@ -9,6 +9,7 @@ import { toast } from "react-toastify";
 import Navbar from "../components/Navbar";
 import { formatCurrency } from "../utils/formatMoney";
 import { getFundsDeductionResult, getUserFunds } from "../utils/userFunds";
+import { useUserSoundContext } from "../contexts/UserSoundContext";
 
 // Single card that represents one cricket match and its four bet types.
 function MatchCard({ match, balance, onPick }) {
@@ -141,6 +142,7 @@ function BetModal({ pick, balance, onClose, onPlaced }) {
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
   const user = useAuthStore((s) => s.user);
+  const { playClick } = useUserSoundContext();
 
   if (!pick) return null;
 
@@ -224,7 +226,10 @@ function BetModal({ pick, balance, onClose, onPlaced }) {
           {[50, 100, 200, 500].map((v) => (
             <button
               key={v}
-              onClick={() => setAmount((p) => String((parseFloat(p) || 0) + v))}
+              onClick={() => {
+                playClick();
+                setAmount((p) => String((parseFloat(p) || 0) + v));
+              }}
               className="bg-[#042346] hover:bg-[#053163] rounded-lg py-1.5 text-xs font-bold"
             >
               +{formatCurrency(v)}

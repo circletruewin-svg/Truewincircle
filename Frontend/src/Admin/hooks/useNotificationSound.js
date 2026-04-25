@@ -1,105 +1,59 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ADMIN_BUILTIN_SOUNDS,
+  VIBRATION_PATTERNS,
+} from '../../utils/soundLibrary';
+import {
+  fileToDataUrl,
+  initSoundUnlocker,
+  playSoundEntry,
+  vibrate as vibrateNow,
+} from '../../utils/soundPlayer';
 
 const KEYS = {
   enabled: 'admin_sound_enabled',
   volume: 'admin_sound_volume',
   choice: 'admin_sound_choice',
   vibrate: 'admin_vibrate_enabled',
+  custom: 'admin_custom_sounds',
 };
 
-// Each "sound" is a sequence of {at, freq, dur, type, peak} segments
-// scheduled on a Web Audio context. peak is multiplied by user volume.
-export const SOUND_OPTIONS = [
-  {
-    id: 'ding',
-    label: 'Ding (default)',
-    notes: [
-      { at: 0.00, freq: 880,  dur: 0.40, type: 'sine', peak: 0.30 },
-      { at: 0.22, freq: 1175, dur: 0.40, type: 'sine', peak: 0.30 },
-    ],
-  },
-  {
-    id: 'chime',
-    label: 'Chime (soft)',
-    notes: [
-      { at: 0.00, freq: 1568, dur: 0.50, type: 'sine', peak: 0.22 },
-      { at: 0.18, freq: 2093, dur: 0.50, type: 'sine', peak: 0.22 },
-      { at: 0.36, freq: 2637, dur: 0.55, type: 'sine', peak: 0.22 },
-    ],
-  },
-  {
-    id: 'bell',
-    label: 'Bell',
-    notes: [
-      { at: 0.00, freq: 1760, dur: 0.90, type: 'triangle', peak: 0.28 },
-      { at: 0.06, freq: 2637, dur: 0.85, type: 'triangle', peak: 0.18 },
-    ],
-  },
-  {
-    id: 'alert',
-    label: 'Alert (urgent)',
-    notes: [
-      { at: 0.00, freq: 880, dur: 0.18, type: 'square', peak: 0.22 },
-      { at: 0.20, freq: 660, dur: 0.18, type: 'square', peak: 0.22 },
-      { at: 0.40, freq: 880, dur: 0.18, type: 'square', peak: 0.22 },
-      { at: 0.60, freq: 660, dur: 0.18, type: 'square', peak: 0.22 },
-    ],
-  },
-  {
-    id: 'cash',
-    label: 'Cash register',
-    notes: [
-      { at: 0.00, freq: 1318, dur: 0.18, type: 'sine', peak: 0.30 },
-      { at: 0.10, freq: 1568, dur: 0.18, type: 'sine', peak: 0.30 },
-      { at: 0.20, freq: 2093, dur: 0.20, type: 'sine', peak: 0.30 },
-      { at: 0.32, freq: 2637, dur: 0.40, type: 'sine', peak: 0.30 },
-    ],
-  },
-];
-
-const VIBRATION_PATTERNS = {
-  ding: [180, 80, 180],
-  chime: [120, 60, 120, 60, 120],
-  bell: [400],
-  alert: [120, 80, 120, 80, 120, 80, 120],
-  cash: [80, 40, 80, 40, 80, 40, 200],
-};
+// Re-export for callers that imported it from here previously.
+export const SOUND_OPTIONS = ADMIN_BUILTIN_SOUNDS;
 
 const readBool = (key, fallback) => {
   try {
-    const stored = localStorage.getItem(key);
-    if (stored === null) return fallback;
-    return stored === 'true';
-  } catch {
-    return fallback;
-  }
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : v === 'true';
+  } catch { return fallback; }
 };
-
 const readNumber = (key, fallback) => {
   try {
-    const stored = localStorage.getItem(key);
-    if (stored === null) return fallback;
-    const n = Number(stored);
+    const v = localStorage.getItem(key);
+    if (v === null) return fallback;
+    const n = Number(v);
     return Number.isFinite(n) ? n : fallback;
-  } catch {
-    return fallback;
-  }
+  } catch { return fallback; }
 };
-
 const readString = (key, fallback) => {
-  try {
-    return localStorage.getItem(key) || fallback;
-  } catch {
-    return fallback;
-  }
+  try { return localStorage.getItem(key) || fallback; }
+  catch { return fallback; }
 };
-
-const writeStorage = (key, value) => {
+const readJson = (key, fallback) => {
   try {
-    localStorage.setItem(key, String(value));
-  } catch {
-    /* ignore */
-  }
+    const v = localStorage.getItem(key);
+    if (!v) return fallback;
+    const parsed = JSON.parse(v);
+    return Array.isArray(parsed) ? parsed : fallback;
+  } catch { return fallback; }
+};
+const writeStorage = (key, value) => {
+  try { localStorage.setItem(key, typeof value === 'string' ? value : String(value)); }
+  catch { /* ignore quota errors */ }
+};
+const writeJson = (key, value) => {
+  try { localStorage.setItem(key, JSON.stringify(value)); }
+  catch { /* ignore quota errors — likely a too-big custom sound */ }
 };
 
 export default function useNotificationSound() {
@@ -108,96 +62,82 @@ export default function useNotificationSound() {
     const v = readNumber(KEYS.volume, 0.7);
     return Math.min(1, Math.max(0, v));
   });
-  const [choice, setChoiceState] = useState(() => {
-    const stored = readString(KEYS.choice, 'ding');
-    return SOUND_OPTIONS.some(o => o.id === stored) ? stored : 'ding';
-  });
   const [vibrate, setVibrateState] = useState(() => readBool(KEYS.vibrate, true));
+  const [customSounds, setCustomSounds] = useState(() => readJson(KEYS.custom, []));
+  const [choice, setChoiceState] = useState(() => readString(KEYS.choice, 'ding'));
 
-  const audioCtxRef = useRef(null);
-  const unlockedRef = useRef(false);
+  // Combined options = built-in + custom (with id, label, and either notes or url).
+  const options = useMemo(() => [...ADMIN_BUILTIN_SOUNDS, ...customSounds], [customSounds]);
 
-  const ensureCtx = () => {
-    if (audioCtxRef.current) return audioCtxRef.current;
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return null;
-    audioCtxRef.current = new Ctx();
-    return audioCtxRef.current;
-  };
-
-  // Browsers require a user gesture before audio can play. Resume the
-  // AudioContext on the first click / key / touch so subsequent automatic
-  // notifications go through without being blocked.
+  // If the persisted choice no longer exists (e.g. custom sound deleted),
+  // gracefully fall back to default.
   useEffect(() => {
-    const unlock = () => {
-      if (unlockedRef.current) return;
-      const ctx = ensureCtx();
-      if (!ctx) return;
-      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-      unlockedRef.current = true;
-    };
-    window.addEventListener('click', unlock);
-    window.addEventListener('keydown', unlock);
-    window.addEventListener('touchstart', unlock);
-    return () => {
-      window.removeEventListener('click', unlock);
-      window.removeEventListener('keydown', unlock);
-      window.removeEventListener('touchstart', unlock);
-    };
-  }, []);
+    if (!options.some((o) => o.id === choice)) {
+      setChoiceState('ding');
+    }
+  }, [options, choice]);
+
+  // Set up the autoplay-unlock listener once.
+  useEffect(() => { initSoundUnlocker(); }, []);
 
   const setEnabled = useCallback((value) => {
     setEnabledState(value);
     writeStorage(KEYS.enabled, value);
   }, []);
-
   const setVolume = useCallback((value) => {
     const clamped = Math.min(1, Math.max(0, Number(value) || 0));
     setVolumeState(clamped);
     writeStorage(KEYS.volume, clamped.toFixed(2));
   }, []);
-
   const setChoice = useCallback((value) => {
-    if (!SOUND_OPTIONS.some(o => o.id === value)) return;
     setChoiceState(value);
     writeStorage(KEYS.choice, value);
   }, []);
-
   const setVibrate = useCallback((value) => {
     setVibrateState(value);
     writeStorage(KEYS.vibrate, value);
   }, []);
 
+  const addCustomSound = useCallback(async ({ label, file, url }) => {
+    const trimmed = (label || '').trim();
+    if (!trimmed) throw new Error('Please give the sound a name');
+    if (!file && !url) throw new Error('Provide a file or a URL');
+
+    const id = `custom-${Date.now().toString(36)}`;
+    let resolvedUrl = url;
+    if (file) {
+      if (!file.type.startsWith('audio/')) throw new Error('Pick an audio file (MP3 / WAV / etc.)');
+      // ~1 MB cap so we don't blow past localStorage quota.
+      if (file.size > 1_200_000) throw new Error('File too large (max ~1 MB)');
+      resolvedUrl = await fileToDataUrl(file);
+    }
+    const entry = { id, label: `${trimmed} (custom)`, url: resolvedUrl };
+    setCustomSounds((prev) => {
+      const next = [...prev, entry];
+      writeJson(KEYS.custom, next);
+      return next;
+    });
+    return entry;
+  }, []);
+
+  const removeCustomSound = useCallback((id) => {
+    setCustomSounds((prev) => {
+      const next = prev.filter((s) => s.id !== id);
+      writeJson(KEYS.custom, next);
+      return next;
+    });
+  }, []);
+
   const activeSound = useMemo(
-    () => SOUND_OPTIONS.find(o => o.id === choice) || SOUND_OPTIONS[0],
-    [choice]
+    () => options.find((o) => o.id === choice) || ADMIN_BUILTIN_SOUNDS[0],
+    [options, choice]
   );
 
   const play = useCallback(() => {
     if (!enabled) return;
-    const ctx = ensureCtx();
-    if (ctx) {
-      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-      const now = ctx.currentTime;
-      activeSound.notes.forEach(note => {
-        const start = now + note.at;
-        const stop = start + note.dur;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = note.type || 'sine';
-        osc.frequency.value = note.freq;
-        const peak = Math.max(0.0001, note.peak * volume);
-        gain.gain.setValueAtTime(0, start);
-        gain.gain.linearRampToValueAtTime(peak, start + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001, stop);
-        osc.connect(gain).connect(ctx.destination);
-        osc.start(start);
-        osc.stop(stop + 0.05);
-      });
-    }
-    if (vibrate && typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-      const pattern = VIBRATION_PATTERNS[activeSound.id] || VIBRATION_PATTERNS.ding;
-      try { navigator.vibrate(pattern); } catch { /* ignore */ }
+    playSoundEntry(activeSound, volume);
+    if (vibrate) {
+      vibrateNow(activeSound.id, VIBRATION_PATTERNS[activeSound.id]);
     }
   }, [enabled, volume, vibrate, activeSound]);
 
@@ -207,6 +147,9 @@ export default function useNotificationSound() {
     choice, setChoice,
     vibrate, setVibrate,
     play,
-    options: SOUND_OPTIONS,
+    options,
+    customSounds,
+    addCustomSound,
+    removeCustomSound,
   };
 }

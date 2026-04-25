@@ -10,6 +10,8 @@ import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import Spinner from './components/Loader';
 import { buildSessionUser } from './utils/sessionUser';
+import { UserSoundProvider } from './contexts/UserSoundContext';
+import UserSoundListener from './components/UserSoundListener';
 
 const Home = lazy(() => import('./Pages/Home'));
 const SpinWheel = lazy(() => import('./Pages/SpinWheel'));
@@ -61,7 +63,7 @@ const AppContent = () => {
   }, [user, navigate]);
 
   return (
-    <>
+    <UserSoundProvider>
       {showNavbar && <Navbar />}
       <ToastContainer
         position="top-right"
@@ -75,6 +77,8 @@ const AppContent = () => {
         pauseOnHover
         theme="dark"
       />
+
+      {user && <UserSoundListener />}
 
       <Suspense fallback={<RouteFallback />}>
         <Routes>
@@ -109,7 +113,7 @@ const AppContent = () => {
           <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
         </Routes>
       </Suspense>
-    </>
+    </UserSoundProvider>
   );
 }
 
