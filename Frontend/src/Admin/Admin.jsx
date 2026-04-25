@@ -1,12 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { 
-  Users, 
-  CreditCard, 
-  Trophy, 
-  DollarSign, 
-  QrCode, 
-  Check, 
-  X, 
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Users,
+  CreditCard,
+  Trophy,
+  DollarSign,
+  QrCode,
+  Check,
+  X,
   Eye,
   Edit,
   Plus,
@@ -19,12 +19,18 @@ import {
   TrendingUp,
   UserPlus,
   Star,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, query, onSnapshot, doc, runTransaction, getDocs, getDoc, where, deleteDoc, updateDoc, addDoc } from 'firebase/firestore';
 import useAuthStore from '../store/authStore';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
+import useNotificationSound from './hooks/useNotificationSound';
+import { createNotification } from '../utils/notifications';
+import { formatCurrency } from '../utils/formatMoney';
+import MatchManagement from './components/MatchManagement';
 
 // Component Imports
 import AllUsers from './components/AllUsers';
@@ -64,6 +70,23 @@ const AdminDashboard = () => {
   const { user, setUser } = useAuthStore();
   const isAdmin = user?.role === 'admin';
 
+  // --- SOUND NOTIFICATIONS ---
+  const {
+    enabled: soundEnabled, setEnabled: setSoundEnabled,
+    volume: soundVolume, setVolume: setSoundVolume,
+    choice: soundChoice, setChoice: setSoundChoice,
+    vibrate: soundVibrate, setVibrate: setSoundVibrate,
+    play: playNotification,
+    options: soundOptions,
+  } = useNotificationSound();
+  const [soundPanelOpen, setSoundPanelOpen] = useState(false);
+  // Refs so the snapshot callbacks always read the latest values
+  // without needing to be torn down and re-subscribed on each change.
+  const truewinUserMapRef = useRef({});
+  const playNotificationRef = useRef(playNotification);
+  useEffect(() => { truewinUserMapRef.current = truewinUserMap; }, [truewinUserMap]);
+  useEffect(() => { playNotificationRef.current = playNotification; }, [playNotification]);
+
   // --- DATA FETCHING ---
   useEffect(() => {
     if (!isAdmin) return;
@@ -76,6 +99,9 @@ const AdminDashboard = () => {
       setTotalUsers(snapshot.size);
     });
 
+    // Skip the initial snapshot (which reports every existing doc as "added")
+    // so we only ring on records that arrive after the dashboard is open.
+    let isFirstPaymentSnapshot = true;
     const paymentsQuery = query(collection(db, 'top-ups'));
     const unsubscribePayments = onSnapshot(paymentsQuery, (snapshot) => {
       const fetchedPayments = snapshot.docs.map(d => ({
@@ -85,8 +111,27 @@ const AdminDashboard = () => {
         userId: d.data().userId
       }));
       setAllPayments(fetchedPayments);
+
+      if (!isFirstPaymentSnapshot) {
+        const map = truewinUserMapRef.current;
+        const mapReady = Object.keys(map).length > 0;
+        const newPending = snapshot.docChanges().filter(c => {
+          if (c.type !== 'added') return false;
+          const data = c.doc.data();
+          if (data.status !== 'pending') return false;
+          return mapReady ? !!map[data.userId] : true;
+        });
+        if (newPending.length > 0) {
+          playNotificationRef.current?.();
+          toast.info(
+            `💰 ${newPending.length} new payment approval${newPending.length > 1 ? 's' : ''} received!`
+          );
+        }
+      }
+      isFirstPaymentSnapshot = false;
     });
 
+    let isFirstWithdrawalSnapshot = true;
     const withdrawalsQuery = query(collection(db, 'withdrawals'));
     const unsubscribeWithdrawals = onSnapshot(withdrawalsQuery, (snapshot) => {
       const fetchedWithdrawals = snapshot.docs.map(d => ({
@@ -96,6 +141,24 @@ const AdminDashboard = () => {
         userId: d.data().userId
       }));
       setAllWithdrawals(fetchedWithdrawals);
+
+      if (!isFirstWithdrawalSnapshot) {
+        const map = truewinUserMapRef.current;
+        const mapReady = Object.keys(map).length > 0;
+        const newPending = snapshot.docChanges().filter(c => {
+          if (c.type !== 'added') return false;
+          const data = c.doc.data();
+          if (data.status !== 'pending') return false;
+          return mapReady ? !!map[data.userId] : true;
+        });
+        if (newPending.length > 0) {
+          playNotificationRef.current?.();
+          toast.info(
+            `🏦 ${newPending.length} new withdrawal approval${newPending.length > 1 ? 's' : ''} received!`
+          );
+        }
+      }
+      isFirstWithdrawalSnapshot = false;
     });
 
     const winnersQuery = query(collection(db, 'winners'));
@@ -150,6 +213,7 @@ const AdminDashboard = () => {
 
   // --- ACTION HANDLERS ---
   const handlePaymentApproval = async (paymentId, action, userId, amount, reason = null) => {
+    let notifyReferrer = null; // track if a referral bonus needs a notification
     try {
       await runTransaction(db, async (transaction) => {
         const paymentRef = doc(db, 'top-ups', paymentId);
@@ -182,10 +246,40 @@ const AdminDashboard = () => {
                 referredUserName: userData.name,
                 createdAt: new Date(),
               });
+              notifyReferrer = { referrerId: userData.referredBy, referredName: userData.name };
             }
           }
         }
       });
+
+      // Notify the user — runs outside the transaction (notifications
+      // are subcollection writes that don't need to be atomic with the
+      // payment update).
+      if (action === 'approved') {
+        await createNotification(userId, {
+          type: 'deposit',
+          title: `Deposit of ${formatCurrency(amount)} approved`,
+          body: 'Your wallet balance has been credited.',
+          link: '/wallet',
+        });
+      } else if (action === 'rejected') {
+        await createNotification(userId, {
+          type: 'deposit',
+          title: `Deposit of ${formatCurrency(amount)} rejected`,
+          body: reason || 'Please contact support for details.',
+          link: '/addcash',
+        });
+      }
+
+      if (notifyReferrer) {
+        await createNotification(notifyReferrer.referrerId, {
+          type: 'referral',
+          title: `Referral bonus ${formatCurrency(50)} credited`,
+          body: `${notifyReferrer.referredName || 'Your referred user'} made their first deposit.`,
+          link: '/refer',
+        });
+      }
+
       toast.success(`Payment ${action} successfully!`);
     } catch (error) {
       toast.error(`Failed to ${action} payment. ${error.message}`);
@@ -206,6 +300,20 @@ const AdminDashboard = () => {
           }
         }
       });
+
+      await createNotification(userId, {
+        type: 'withdrawal',
+        title:
+          action === 'approved'
+            ? `Withdrawal of ${formatCurrency(amount)} approved`
+            : `Withdrawal of ${formatCurrency(amount)} rejected`,
+        body:
+          action === 'approved'
+            ? 'Funds will reach your account within 10–24 hours.'
+            : 'The amount has been returned to your winning balance.',
+        link: '/withdraw',
+      });
+
       toast.success(`Withdrawal ${action} successfully!`);
     } catch (error) {
       toast.error(`Failed to ${action} withdrawal.`);
@@ -222,6 +330,7 @@ const AdminDashboard = () => {
   };
 
   const handleWinnerAnnouncement = async (winnerId) => {
+    let notifyWinner = null;
     try {
       await runTransaction(db, async (transaction) => {
         const winnerRef = doc(db, 'winners', winnerId);
@@ -236,7 +345,18 @@ const AdminDashboard = () => {
         transaction.update(winnerRef, { status: 'announced' });
         const currentWinnings = userSnap.data().winningMoney || 0;
         transaction.update(userRef, { winningMoney: currentWinnings + prize });
+        notifyWinner = { userId, prize };
       });
+
+      if (notifyWinner) {
+        await createNotification(notifyWinner.userId, {
+          type: 'win',
+          title: `You won ${formatCurrency(notifyWinner.prize)}!`,
+          body: 'Your prize has been credited to your winning balance.',
+          link: '/wallet',
+        });
+      }
+
       toast.success('Winner announced and credited successfully!');
     } catch (error) {
       toast.error(error.message || 'Failed to announce winner.');
@@ -278,6 +398,7 @@ const AdminDashboard = () => {
           { id: 'payments',     label: 'Payment Approvals',   icon: CreditCard },
           { id: 'withdrawals',  label: 'Withdrawal Approval', icon: DollarSign },
           { id: 'marquee',      label: 'Screen Text',         icon: Edit       },
+          { id: 'matches',      label: '🏏 Cricket Matches',  icon: Trophy     },
           { id: 'harufUpdate',  label: 'Market Results',      icon: Edit       },
           { id: 'sliderUpdate', label: 'Carousel Slides',     icon: Edit       },
           { id: 'socialLinks',  label: 'Social Links',        icon: LinkIcon   },
@@ -332,6 +453,104 @@ const AdminDashboard = () => {
           }
         </h2>
       </div>
+      <div className="relative flex items-center space-x-2">
+        <button
+          onClick={() => setSoundPanelOpen(o => !o)}
+          title="Notification settings"
+          className={`p-2 rounded-lg border transition-colors ${
+            soundEnabled
+              ? 'bg-blue-50 border-blue-200 text-blue-600 hover:bg-blue-100'
+              : 'bg-gray-100 border-gray-200 text-gray-500 hover:bg-gray-200'
+          }`}
+        >
+          {soundEnabled ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
+        </button>
+        {soundPanelOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setSoundPanelOpen(false)}
+            />
+            <div className="absolute right-0 top-12 z-50 w-80 bg-white rounded-xl shadow-2xl border p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="font-semibold text-gray-800">Notification Settings</h4>
+                <button
+                  onClick={() => setSoundPanelOpen(false)}
+                  className="p-1 text-gray-400 hover:text-gray-700"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <label className="flex items-center justify-between text-sm">
+                <span className="text-gray-700 font-medium">Sound on new approval</span>
+                <input
+                  type="checkbox"
+                  checked={soundEnabled}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    setSoundEnabled(next);
+                    if (next) playNotification();
+                  }}
+                  className="h-4 w-4 accent-blue-600"
+                />
+              </label>
+
+              <div className={soundEnabled ? '' : 'opacity-50 pointer-events-none'}>
+                <div className="flex items-center justify-between text-sm mb-1">
+                  <span className="text-gray-700 font-medium">Volume</span>
+                  <span className="text-gray-500 text-xs">{Math.round(soundVolume * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={soundVolume}
+                  onChange={(e) => setSoundVolume(e.target.value)}
+                  className="w-full accent-blue-600"
+                />
+              </div>
+
+              <div className={soundEnabled ? '' : 'opacity-50 pointer-events-none'}>
+                <label className="block text-sm text-gray-700 font-medium mb-1">Sound</label>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={soundChoice}
+                    onChange={(e) => setSoundChoice(e.target.value)}
+                    className="flex-1 p-2 border rounded-lg bg-gray-50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {soundOptions.map(o => (
+                      <option key={o.id} value={o.id}>{o.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => playNotification()}
+                    className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  >
+                    Test
+                  </button>
+                </div>
+              </div>
+
+              <label className="flex items-center justify-between text-sm pt-1 border-t">
+                <span className="text-gray-700 font-medium">
+                  Vibrate on mobile
+                  {typeof navigator !== 'undefined' && typeof navigator.vibrate !== 'function' && (
+                    <span className="block text-xs text-gray-400 font-normal">(not supported on this device)</span>
+                  )}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={soundVibrate}
+                  onChange={(e) => setSoundVibrate(e.target.checked)}
+                  className="h-4 w-4 accent-blue-600"
+                />
+              </label>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 
@@ -376,6 +595,7 @@ const AdminDashboard = () => {
           />
         );
       case 'marquee':       return <MarqueeUpdate />;
+      case 'matches':       return <MatchManagement />;
       case 'harufUpdate':   return <Table />;
       case 'sliderUpdate':  return <SliderUpdate />;
       case 'socialLinks':   return <Links />;

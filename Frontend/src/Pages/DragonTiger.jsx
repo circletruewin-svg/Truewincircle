@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
-import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
+import { doc, onSnapshot, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { DragonTigerBadge } from "../components/GameVisuals";
@@ -46,7 +46,6 @@ export function DragonTiger() {
   const [tc, setTc] = useState(null);
   const [winner, setWinner] = useState(null);
   const [msg, setMsg] = useState("");
-  const [history, setHistory] = useState([]);
   const [timeLeft, setTimeLeft] = useState(ROUND_SEC);
   const [revealed, setRevealed] = useState(false);
 
@@ -70,12 +69,6 @@ export function DragonTiger() {
       if (snapshot.exists()) setBalance(getUserFunds(snapshot.data()).total);
     });
   }, [user]);
-
-  useEffect(() => {
-    return onSnapshot(query(collection(db, "dtHistory"), orderBy("createdAt", "desc"), limit(15)), (snapshot) => {
-      setHistory(snapshot.docs.map((item) => item.data()));
-    });
-  }, []);
 
   useEffect(() => {
     startRound();
@@ -180,17 +173,6 @@ export function DragonTiger() {
       <div className="max-w-lg mx-auto px-4 pb-8">
         <h1 className="text-2xl font-black text-center py-4">Dragon vs Tiger</h1>
 
-        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3 scrollbar-hide">
-          {history.map((item, index) => (
-            <span
-              key={index}
-              className={`w-7 h-7 rounded-full text-xs font-bold flex items-center justify-center flex-shrink-0 ${item.winner === "dragon" ? "bg-red-700" : item.winner === "tiger" ? "bg-blue-700" : "bg-green-700"}`}
-            >
-              {item.winner === "dragon" ? "D" : item.winner === "tiger" ? "T" : "="}
-            </span>
-          ))}
-        </div>
-
         {phase === "betting" && <div className="text-center mb-3 text-gray-400">Bet in <span className="text-yellow-400 font-bold text-xl">{timeLeft}s</span></div>}
 
         <div className="flex justify-around items-center bg-green-950 rounded-3xl p-6 mb-4 border-2 border-green-800">
@@ -230,11 +212,11 @@ export function DragonTiger() {
             {[50, 100, 200, 500].map((amount) => (
               <button
                 key={amount}
-                onClick={() => setBetAmount(amount.toString())}
+                onClick={() => setBetAmount((prev) => String((parseFloat(prev) || 0) + amount))}
                 disabled={phase !== "betting" || hasBetRef.current}
                 className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
               >
-                {formatCurrency(amount)}
+                +{formatCurrency(amount)}
               </button>
             ))}
           </div>

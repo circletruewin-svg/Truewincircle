@@ -86,8 +86,8 @@ const MarketCard = ({ marketName }) => {
       }
     };
 
-    const interval = setInterval(check, 1000);
     check();
+    const interval = setInterval(check, 15000);
     return () => clearInterval(interval);
   }, [openTime, closeTime]);
 

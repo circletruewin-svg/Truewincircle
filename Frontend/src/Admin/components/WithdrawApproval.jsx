@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Check, X } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Check, X, Search } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatMoney';
 
 // Modal for showing detailed user info - Copied from PaymentApproval.jsx
@@ -24,13 +24,35 @@ const UserInfoModal = ({ user, onClose }) => (
 
 const WithdrawApproval = ({ withdrawals, userDetails, handleWithdrawalApproval }) => {
   const [userInfoModal, setUserInfoModal] = useState({ isOpen: false, user: null });
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const filteredWithdrawals = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return withdrawals;
+    return withdrawals.filter(withdrawal => {
+      const user = userDetails[withdrawal.userId] || {};
+      const name = (withdrawal.name || user.name || '').toLowerCase();
+      const phone = (user.phoneNumber || '').toLowerCase();
+      return name.includes(term) || phone.includes(term);
+    });
+  }, [withdrawals, userDetails, searchTerm]);
 
   return (
     <div className="p-6">
       {userInfoModal.isOpen && <UserInfoModal user={userInfoModal.user} onClose={() => setUserInfoModal({ isOpen: false, user: null })} />}
       <div className="bg-white rounded-lg shadow-sm">
-        <div className="p-6 border-b">
+        <div className="p-6 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <h3 className="text-lg font-semibold">Withdrawal Approvals</h3>
+          <div className="relative w-full sm:w-72">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search by name or phone…"
+              className="w-full pl-9 pr-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            />
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -46,7 +68,14 @@ const WithdrawApproval = ({ withdrawals, userDetails, handleWithdrawalApproval }
               </tr>
             </thead>
             <tbody>
-              {withdrawals.map(withdrawal => (
+              {filteredWithdrawals.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="p-6 text-center text-gray-500">
+                    {searchTerm ? 'No withdrawals match your search.' : 'No withdrawals to display.'}
+                  </td>
+                </tr>
+              )}
+              {filteredWithdrawals.map(withdrawal => (
                 <tr key={withdrawal.id} className="border-b hover:bg-gray-50">
                   <td className="p-4">
                     <button

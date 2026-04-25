@@ -1,12 +1,17 @@
 ﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
-import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
+import { doc, onSnapshot, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { AviatorPlane } from "../components/GameVisuals";
 import { getAviatorCrashPoint } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatCurrency } from "../utils/formatMoney";
+// NOTE: Aviator still uses client-side RNG for the flight animation so
+// the visible crash matches the multiplier the user sees in real time.
+// Full server-authoritative Aviator needs a streaming backend (websocket
+// or Cloud Function) to hide the crash point until reveal — flagged as
+// follow-up work. Coin/Dice/Color are already server-side via gameApi.
 
 const ROUND_WAIT = 6000;
 
@@ -23,7 +28,6 @@ export default function Aviator() {
   const [cashMult, setCashMult] = useState(null);
   const [crashAt, setCrashAt] = useState(null);
   const [countdown, setCountdown] = useState(6);
-  const [history, setHistory] = useState([]);
   const [msg, setMsg] = useState("");
   const [planePos, setPlanePos] = useState({ x: 5, y: 5 });
   const betRef = useRef(null);
@@ -51,12 +55,6 @@ export default function Aviator() {
       if (snapshot.exists()) setBalance(getUserFunds(snapshot.data()).total);
     });
   }, [user]);
-
-  useEffect(() => {
-    return onSnapshot(query(collection(db, "aviatorHistory"), orderBy("createdAt", "desc"), limit(12)), (snapshot) => {
-      setHistory(snapshot.docs.map((item) => item.data()));
-    });
-  }, []);
 
   useEffect(() => {
     startWaiting();
@@ -102,13 +100,17 @@ export default function Aviator() {
       const elapsed = (Date.now() - startTime) / 1000;
       const nextMultiplier = parseFloat(Math.pow(Math.E, 0.06 * elapsed).toFixed(2));
       setMultiplier(nextMultiplier);
-      setPlanePos({ x: Math.min(5 + elapsed * 14, 82), y: Math.min(5 + elapsed * 9, 75) });
+      // Ease-out arc: plane climbs fast early, then flattens as multiplier grows.
+      const progress = Math.min(elapsed / 15, 1);
+      const xPos = 5 + 78 * (1 - Math.pow(1 - progress, 2));
+      const yPos = 5 + 70 * Math.sin((Math.PI / 2) * progress);
+      setPlanePos({ x: xPos, y: yPos });
 
       if (nextMultiplier >= crashPoint) {
         clearInterval(animRef.current);
         handleCrash(crashPoint);
       }
-    }, 80);
+    }, 50);
   };
 
   const handleCrash = async (crashPoint) => {
@@ -197,47 +199,81 @@ export default function Aviator() {
       <div className="max-w-lg mx-auto px-4 pb-8">
         <h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">AVIATOR</h1>
 
-        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3 scrollbar-hide">
-          {history.map((item, index) => (
-            <span key={index} className={`px-2.5 py-1 rounded-full text-xs font-bold flex-shrink-0 ${item.crashPoint >= 2 ? "bg-green-800 text-green-300" : "bg-red-900 text-red-300"}`}>
-              {item.crashPoint?.toFixed(2)}x
-            </span>
-          ))}
-        </div>
-
-        <div className="relative overflow-hidden rounded-2xl border border-slate-700 mb-3 bg-[radial-gradient(circle_at_center,#1f4c7a_0%,#13233d_48%,#090b12_100%)]" style={{ height: 260 }}>
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_left_bottom,rgba(255,255,255,0.1),transparent_30%)]" />
-          <div className="absolute inset-0 bg-[linear-gradient(115deg,transparent_0%,transparent_14%,rgba(255,255,255,0.05)_14%,transparent_16%,transparent_26%,rgba(255,255,255,0.05)_26%,transparent_28%,transparent_38%,rgba(255,255,255,0.05)_38%,transparent_40%)]" />
+        <div className="relative overflow-hidden rounded-2xl border border-slate-700 mb-3 bg-[radial-gradient(ellipse_at_top,#1a2f52_0%,#0f1a30_55%,#05070d_100%)]" style={{ height: 260 }}>
+          {/* sky clouds */}
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_30%,rgba(255,255,255,0.08),transparent_35%),radial-gradient(circle_at_70%_15%,rgba(255,255,255,0.05),transparent_30%)]" />
+          {/* stars at top */}
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_10%,#ffffff55_0.5px,transparent_1px),radial-gradient(circle_at_40%_22%,#ffffff33_0.5px,transparent_1px),radial-gradient(circle_at_80%_8%,#ffffff55_0.5px,transparent_1px),radial-gradient(circle_at_90%_28%,#ffffff33_0.5px,transparent_1px)]" />
+          {/* horizon glow */}
+          <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-amber-500/15 via-orange-400/5 to-transparent" />
+          {/* subtle grid */}
           {[25, 50, 75].map((point) => (
-            <div key={point} className="absolute w-full border-t border-blue-900/40" style={{ top: `${point}%` }} />
+            <div key={`h${point}`} className="absolute w-full border-t border-blue-900/30" style={{ top: `${point}%` }} />
           ))}
           {[25, 50, 75].map((point) => (
-            <div key={point} className="absolute h-full border-l border-blue-900/40" style={{ left: `${point}%` }} />
+            <div key={`v${point}`} className="absolute h-full border-l border-blue-900/30" style={{ left: `${point}%` }} />
           ))}
 
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
             {phase === "waiting" && (
               <div className="text-center">
-                <div className="text-gray-500 text-sm mb-1">Next round in</div>
-                <div className="text-5xl font-black text-yellow-400">{countdown}s</div>
+                <div className="text-gray-400 text-sm mb-1 tracking-widest">NEXT ROUND IN</div>
+                <div className="text-6xl font-black text-yellow-400 drop-shadow-[0_0_20px_rgba(250,204,21,0.5)]">{countdown}s</div>
               </div>
             )}
-            {phase === "flying" && <div className="text-6xl font-black" style={{ color: multColor }}>{multiplier.toFixed(2)}x</div>}
+            {phase === "flying" && (
+              <div className="text-7xl font-black tracking-tight drop-shadow-[0_0_25px_rgba(0,0,0,0.7)]" style={{ color: multColor }}>
+                {multiplier.toFixed(2)}x
+              </div>
+            )}
             {phase === "crashed" && (
               <div className="text-center">
-                <div className="text-4xl font-black text-red-500 animate-pulse">CRASHED!</div>
-                <div className="text-2xl font-bold text-red-400">{crashAt?.toFixed(2)}x</div>
+                <div className="text-5xl font-black text-red-500 animate-pulse drop-shadow-[0_0_25px_rgba(239,68,68,0.6)]">FLEW AWAY!</div>
+                <div className="text-3xl font-bold text-red-300 mt-1">{crashAt?.toFixed(2)}x</div>
               </div>
             )}
           </div>
 
           {phase === "flying" && (
             <>
+              {/* curved flight path + smoke trail */}
               <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-                <path d={`M 0 100 Q ${planePos.x / 2} ${100 - planePos.y / 2} ${planePos.x} ${100 - planePos.y}`} stroke="#ff4d7d" strokeWidth="0.6" fill="none" opacity="0.95" />
+                <defs>
+                  <linearGradient id="trailGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="rgba(239,68,68,0)" />
+                    <stop offset="40%" stopColor="rgba(248,113,113,0.4)" />
+                    <stop offset="100%" stopColor="rgba(254,202,202,0.9)" />
+                  </linearGradient>
+                  <linearGradient id="trailFill" x1="0%" y1="100%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="rgba(239,68,68,0)" />
+                    <stop offset="70%" stopColor="rgba(239,68,68,0.18)" />
+                    <stop offset="100%" stopColor="rgba(239,68,68,0.35)" />
+                  </linearGradient>
+                </defs>
+                <path
+                  d={`M 0 100 Q ${planePos.x * 0.45} ${100 - planePos.y * 0.25} ${planePos.x} ${100 - planePos.y} L ${planePos.x} 100 Z`}
+                  fill="url(#trailFill)"
+                />
+                <path
+                  d={`M 0 100 Q ${planePos.x * 0.45} ${100 - planePos.y * 0.25} ${planePos.x} ${100 - planePos.y}`}
+                  stroke="url(#trailGrad)"
+                  strokeWidth="0.9"
+                  fill="none"
+                  strokeLinecap="round"
+                />
               </svg>
-              <div className="absolute" style={{ left: `${planePos.x}%`, bottom: `${planePos.y}%`, transform: "translate(-50%, 50%) rotate(-12deg)", transition: "all 0.08s linear" }}>
-                <AviatorPlane className="h-14 w-28" />
+              {/* plane body — smooth transition so movement feels buttery */}
+              <div
+                className="absolute"
+                style={{
+                  left: `${planePos.x}%`,
+                  bottom: `${planePos.y}%`,
+                  transform: `translate(-75%, 50%) rotate(${Math.max(-22, -12 - (planePos.y / 10))}deg)`,
+                  transition: "left 0.12s linear, bottom 0.12s linear, transform 0.25s ease-out",
+                  willChange: "left, bottom, transform",
+                }}
+              >
+                <AviatorPlane className="h-14 w-28 md:h-16 md:w-32" />
               </div>
             </>
           )}
@@ -253,8 +289,13 @@ export default function Aviator() {
 
           <div className="grid grid-cols-4 gap-2 mb-3">
             {[50, 100, 200, 500].map((amount) => (
-              <button key={amount} onClick={() => setBetAmount(amount.toString())} disabled={phase !== "waiting" || hasBet} className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">
-                {formatCurrency(amount)}
+              <button
+                key={amount}
+                onClick={() => setBetAmount((prev) => String((parseFloat(prev) || 0) + amount))}
+                disabled={phase !== "waiting" || hasBet}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
+              >
+                +{formatCurrency(amount)}
               </button>
             ))}
           </div>

@@ -1,12 +1,13 @@
 ﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
-import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
+import { doc, onSnapshot, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { CoinToken } from "../components/GameVisuals";
 import { getCoinResult } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatCurrency } from "../utils/formatMoney";
+import { gameApi, isServerRngEnabled } from "../utils/gameApi";
 
 function CoinFace({ side, fallback, className = "" }) {
   return <CoinToken side={side} className={className} />;
@@ -22,7 +23,6 @@ export default function CoinFlip() {
   const [phase, setPhase] = useState("betting");
   const [result, setResult] = useState(null);
   const [msg, setMsg] = useState("");
-  const [history, setHistory] = useState([]);
   const [flipping, setFlipping] = useState(false);
   const [betLocked, setBetLocked] = useState(false);
   const balanceRef = useRef(0);
@@ -38,12 +38,6 @@ export default function CoinFlip() {
     });
   }, [user]);
 
-  useEffect(() => {
-    return onSnapshot(query(collection(db, "coinFlipHistory"), orderBy("createdAt", "desc"), limit(15)), (snapshot) => {
-      setHistory(snapshot.docs.map((item) => item.data()));
-    });
-  }, []);
-
   const flip = async () => {
     const amount = parseFloat(betAmount);
     if (!betSide) return setMsg("Choose Heads or Tails first!");
@@ -56,36 +50,46 @@ export default function CoinFlip() {
     setPhase("flipping");
     setFlipping(true);
     setMsg("");
-    await debitUserFunds(db, user.uid, amount);
+
+    // Pre-resolve the outcome so the animation shows the authoritative result.
+    let outcomePromise;
+    if (isServerRngEnabled()) {
+      outcomePromise = gameApi.coinFlip(betSide, amount).then((res) => ({
+        outcome: res.winner,
+        won: res.won,
+        winAmount: res.winAmount,
+        serverSettled: true,
+      }));
+    } else {
+      // Client fallback — debit + compute locally, credit on win.
+      outcomePromise = (async () => {
+        await debitUserFunds(db, user.uid, amount);
+        const outcome = getCoinResult(betSide);
+        const won = outcome === betSide;
+        const winAmount = won ? parseFloat((amount * 1.9).toFixed(2)) : 0;
+        if (won) await creditUserWinnings(db, user.uid, winAmount);
+        await addDoc(collection(db, "coinFlipHistory"), {
+          userId: user.uid, betSide, result: outcome,
+          betAmount: amount, winAmount, won,
+          createdAt: serverTimestamp(),
+        });
+        return { outcome, won, winAmount, serverSettled: false };
+      })();
+    }
 
     setTimeout(async () => {
       setFlipping(false);
-      const outcome = getCoinResult(betSide);
-      setResult(outcome);
-
-      const won = outcome === betSide;
-      const winAmount = won ? parseFloat((amount * 1.9).toFixed(2)) : 0;
-
       try {
-        if (won) {
-          setMsg(`${outcome.toUpperCase()}! You won ${formatCurrency(winAmount)}`);
-          await creditUserWinnings(db, user.uid, winAmount);
-        } else {
-          setMsg(`${outcome.toUpperCase()}! You lost ${formatCurrency(amount)}`);
-        }
-
-        await addDoc(collection(db, "coinFlipHistory"), {
-          userId: user.uid,
-          betSide,
-          result: outcome,
-          betAmount: amount,
-          winAmount,
-          won,
-          createdAt: serverTimestamp(),
-        });
+        const { outcome, won, winAmount } = await outcomePromise;
+        setResult(outcome);
+        setMsg(
+          won
+            ? `${outcome.toUpperCase()}! You won ${formatCurrency(winAmount)}`
+            : `${outcome.toUpperCase()}! You lost ${formatCurrency(amount)}`
+        );
       } catch (error) {
-        console.error("Failed to finish Coin Flip round:", error);
-        setMsg(`${outcome.toUpperCase()} round finished. Stats sync failed.`);
+        console.error("Coin Flip failed:", error);
+        setMsg(error.message || "Something went wrong. Try again.");
       } finally {
         setPhase("result");
         setTimeout(() => {
@@ -106,14 +110,6 @@ export default function CoinFlip() {
       <Navbar />
       <div className="max-w-sm mx-auto px-4 pb-8">
         <h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">COIN FLIP</h1>
-
-        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-4 scrollbar-hide">
-          {history.map((item, index) => (
-            <span key={index} className={`px-2.5 py-1 rounded-full text-xs font-bold flex-shrink-0 ${item.result === "heads" ? "bg-yellow-700 text-yellow-200" : "bg-gray-600 text-gray-200"}`}>
-              {item.result === "heads" ? "H" : "T"}
-            </span>
-          ))}
-        </div>
 
         <div className="flex justify-center mb-6">
           <div className={`w-32 h-32 rounded-full border-4 border-yellow-500 flex items-center justify-center text-6xl shadow-2xl font-black transition-all duration-300 ${flipping ? "animate-spin" : ""} ${result === "heads" ? "bg-yellow-600" : result === "tails" ? "bg-gray-700" : "bg-gray-800"}`}>
@@ -147,8 +143,13 @@ export default function CoinFlip() {
           </div>
           <div className="grid grid-cols-4 gap-2 mb-3">
             {[50, 100, 200, 500].map((amount) => (
-              <button key={amount} onClick={() => setBetAmount(amount.toString())} disabled={betLocked} className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">
-                {formatCurrency(amount)}
+              <button
+                key={amount}
+                onClick={() => setBetAmount((prev) => String((parseFloat(prev) || 0) + amount))}
+                disabled={betLocked}
+                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
+              >
+                +{formatCurrency(amount)}
               </button>
             ))}
           </div>

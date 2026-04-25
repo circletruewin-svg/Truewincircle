@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, where, orderBy, limit, Timestamp } from 'firebase/firestore';
 import Loader from './Loader';
 
 const ResultChart = ({ marketName, onClose }) => {
@@ -8,53 +8,46 @@ const ResultChart = ({ marketName, onClose }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
+
     const fetchResults = async () => {
       setLoading(true);
       try {
-        const resultsRef = collection(db, 'results');
-        const allResultsSnapshot = await getDocs(resultsRef);
-        let allResults = allResultsSnapshot.docs.map(doc => {
-            const data = doc.data();
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        const resultsQuery = query(
+          collection(db, 'results'),
+          where('marketName', '==', marketName),
+          where('date', '>=', Timestamp.fromDate(monthStart)),
+          orderBy('date', 'desc'),
+          limit(30)
+        );
+
+        const snapshot = await getDocs(resultsQuery);
+        const fetched = snapshot.docs
+          .map(d => {
+            const data = d.data();
             const parsedDate =
-              typeof data.date?.toDate === "function"
+              typeof data.date?.toDate === 'function'
                 ? data.date.toDate()
                 : data.date
                 ? new Date(data.date)
                 : null;
-            return {
-                id: doc.id,
-                ...data,
-                date: parsedDate,
-            };
-        });
+            return { id: d.id, ...data, date: parsedDate };
+          })
+          .filter(r => r.date && !Number.isNaN(r.date.getTime()));
 
-        // Client-side filtering
-        const now = new Date();
-        const currentMonth = now.getMonth();
-        const currentYear = now.getFullYear();
-
-        allResults = allResults.filter(result => {
-            if (!result.date || Number.isNaN(result.date.getTime())) return false;
-            const isSameMarket = String(result.marketName || "").trim().toUpperCase() === String(marketName || "").trim().toUpperCase();
-            const isCurrentMonth = result.date.getMonth() === currentMonth && result.date.getFullYear() === currentYear;
-            return isSameMarket && isCurrentMonth;
-        });
-
-        // Client-side sorting by date in descending order
-        allResults.sort((a, b) => b.date.getTime() - a.date.getTime());
-
-        // Client-side limiting
-        const fetchedResults = allResults.slice(0, 30);
-
-        setResults(fetchedResults);
+        if (!cancelled) setResults(fetched);
       } catch (error) {
-          console.error("Error fetching results: ", error);
+        console.error('Error fetching results: ', error);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     fetchResults();
+    return () => { cancelled = true; };
   }, [marketName]);
 
   return (
