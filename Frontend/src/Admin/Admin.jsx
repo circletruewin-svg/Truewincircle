@@ -71,8 +71,15 @@ const AdminDashboard = () => {
   const isAdmin = user?.role === 'admin';
 
   // --- SOUND NOTIFICATIONS ---
-  const { enabled: soundEnabled, setEnabled: setSoundEnabled, play: playNotification } =
-    useNotificationSound();
+  const {
+    enabled: soundEnabled, setEnabled: setSoundEnabled,
+    volume: soundVolume, setVolume: setSoundVolume,
+    choice: soundChoice, setChoice: setSoundChoice,
+    vibrate: soundVibrate, setVibrate: setSoundVibrate,
+    play: playNotification,
+    options: soundOptions,
+  } = useNotificationSound();
+  const [soundPanelOpen, setSoundPanelOpen] = useState(false);
   // Refs so the snapshot callbacks always read the latest values
   // without needing to be torn down and re-subscribed on each change.
   const truewinUserMapRef = useRef({});
@@ -446,20 +453,10 @@ const AdminDashboard = () => {
           }
         </h2>
       </div>
-      <div className="flex items-center space-x-2">
+      <div className="relative flex items-center space-x-2">
         <button
-          onClick={() => {
-            const next = !soundEnabled;
-            setSoundEnabled(next);
-            if (next) {
-              // Play once so admin confirms it works (and unlocks AudioContext on this gesture).
-              playNotification();
-              toast.success('Sound notifications enabled');
-            } else {
-              toast.info('Sound notifications muted');
-            }
-          }}
-          title={soundEnabled ? 'Mute notifications' : 'Enable notification sound'}
+          onClick={() => setSoundPanelOpen(o => !o)}
+          title="Notification settings"
           className={`p-2 rounded-lg border transition-colors ${
             soundEnabled
               ? 'bg-blue-50 border-blue-200 text-blue-600 hover:bg-blue-100'
@@ -468,6 +465,91 @@ const AdminDashboard = () => {
         >
           {soundEnabled ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
         </button>
+        {soundPanelOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setSoundPanelOpen(false)}
+            />
+            <div className="absolute right-0 top-12 z-50 w-80 bg-white rounded-xl shadow-2xl border p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="font-semibold text-gray-800">Notification Settings</h4>
+                <button
+                  onClick={() => setSoundPanelOpen(false)}
+                  className="p-1 text-gray-400 hover:text-gray-700"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <label className="flex items-center justify-between text-sm">
+                <span className="text-gray-700 font-medium">Sound on new approval</span>
+                <input
+                  type="checkbox"
+                  checked={soundEnabled}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    setSoundEnabled(next);
+                    if (next) playNotification();
+                  }}
+                  className="h-4 w-4 accent-blue-600"
+                />
+              </label>
+
+              <div className={soundEnabled ? '' : 'opacity-50 pointer-events-none'}>
+                <div className="flex items-center justify-between text-sm mb-1">
+                  <span className="text-gray-700 font-medium">Volume</span>
+                  <span className="text-gray-500 text-xs">{Math.round(soundVolume * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={soundVolume}
+                  onChange={(e) => setSoundVolume(e.target.value)}
+                  className="w-full accent-blue-600"
+                />
+              </div>
+
+              <div className={soundEnabled ? '' : 'opacity-50 pointer-events-none'}>
+                <label className="block text-sm text-gray-700 font-medium mb-1">Sound</label>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={soundChoice}
+                    onChange={(e) => setSoundChoice(e.target.value)}
+                    className="flex-1 p-2 border rounded-lg bg-gray-50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {soundOptions.map(o => (
+                      <option key={o.id} value={o.id}>{o.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => playNotification()}
+                    className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  >
+                    Test
+                  </button>
+                </div>
+              </div>
+
+              <label className="flex items-center justify-between text-sm pt-1 border-t">
+                <span className="text-gray-700 font-medium">
+                  Vibrate on mobile
+                  {typeof navigator !== 'undefined' && typeof navigator.vibrate !== 'function' && (
+                    <span className="block text-xs text-gray-400 font-normal">(not supported on this device)</span>
+                  )}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={soundVibrate}
+                  onChange={(e) => setSoundVibrate(e.target.checked)}
+                  className="h-4 w-4 accent-blue-600"
+                />
+              </label>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
