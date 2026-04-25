@@ -6,7 +6,7 @@ import { getAuth, onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, runTransaction, collection, query, where, orderBy, limit, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 import { toast } from "react-toastify";
-import { ArrowLeft, IndianRupee } from "lucide-react";
+import { ArrowLeft, CheckCircle, Clock, IndianRupee, XCircle } from "lucide-react";
 import SocialButtons from '../components/Soical';
 
 const Withdraw = () => {
@@ -261,6 +261,32 @@ const Withdraw = () => {
         </div>
       ) : (
         <main className="max-w-6xl mx-auto w-full pt-4">
+          {(() => {
+            const latest = withdrawals[0];
+            if (!latest) return null;
+            const map = {
+              pending:  { Icon: Clock,       wrap: 'border-yellow-400/30 bg-yellow-500/10 text-yellow-100', label: 'Pending admin approval' },
+              approved: { Icon: CheckCircle, wrap: 'border-green-400/30 bg-green-500/10 text-green-100',   label: 'Approved' },
+              rejected: { Icon: XCircle,     wrap: 'border-red-400/30 bg-red-500/10 text-red-100',         label: 'Rejected' },
+            };
+            const { Icon, wrap, label } = map[latest.status] || map.pending;
+            const date = latest.createdAt?.toDate
+              ? latest.createdAt.toDate()
+              : latest.createdAt ? new Date(latest.createdAt) : null;
+            return (
+              <div className={`mb-6 flex items-start gap-3 rounded-2xl border px-4 py-3 ${wrap}`}>
+                <Icon className="mt-0.5 h-5 w-5 flex-shrink-0" />
+                <div className="min-w-0 text-sm">
+                  <p className="font-semibold">
+                    Last withdrawal: ₹{Number(latest.amount || 0).toFixed(2)} — {label}
+                  </p>
+                  <p className="text-xs opacity-80">
+                    {date ? date.toLocaleString() : 'Just now'} · You can submit a new request below.
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
 
             {/* Withdrawal Form */}

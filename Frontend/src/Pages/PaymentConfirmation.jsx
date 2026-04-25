@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import {
@@ -13,108 +13,87 @@ import {
 } from 'lucide-react';
 import { getAuth } from "firebase/auth";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { addDoc, collection, doc, getDoc, getDocs, onSnapshot, query, where } from "firebase/firestore";
+import { addDoc, collection, doc, getDoc, limit, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "../firebase";
 import AccountPageShell from '../components/AccountPageShell';
+
+const toDate = (value) => {
+  if (!value) return null;
+  if (value?.toDate) return value.toDate();
+  if (value instanceof Date) return value;
+  if (typeof value === 'string') return new Date(value);
+  return null;
+};
 
 export default function PaymentConfirmation() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [paymentProof, setPaymentProof] = useState(null);
-  const [paymentStatus, setPaymentStatus] = useState('confirming');
-  const [topUpId, setTopUpId] = useState(null);
-  const [rejectionComment, setRejectionComment] = useState('');
-  const [amount, setAmount] = useState(0);
-  const [message, setMessage] = useState('');
+  const [submissionState, setSubmissionState] = useState('idle'); // idle | submitted | error
+  const [recentTopUps, setRecentTopUps] = useState([]);
 
   const navigate = useNavigate();
   const auth = getAuth();
   const user = auth.currentUser;
 
+  const amount = useMemo(() => {
+    const stored = parseFloat(localStorage.getItem('Amount') || 0);
+    return Number.isFinite(stored) && stored > 0 ? stored : 0;
+  }, []);
+  const message = useMemo(() => localStorage.getItem('PaymentMessage') || '', []);
+
+  // If user landed here directly without selecting an amount on /addcash,
+  // bounce them back so they don't end up on a dead-end screen.
   useEffect(() => {
     if (!user) {
       setError('Please log in to confirm payment.');
-      setTimeout(() => navigate('/'), 3000);
+      setTimeout(() => navigate('/'), 2500);
       return;
     }
+    if (amount <= 0) {
+      navigate('/addcash');
+    }
+  }, [user, amount, navigate]);
 
-    const findExistingRequest = async () => {
-      const q = query(collection(db, 'top-ups'), where('userId', '==', user.uid));
-
-      try {
-        const querySnapshot = await getDocs(q);
-        const pendingDocs = querySnapshot.docs
-          .map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
-          .filter((snapshot) => snapshot.status === 'pending');
-
-        if (pendingDocs.length > 0) {
-          pendingDocs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-          const latestPendingDoc = pendingDocs[0];
-          setTopUpId(latestPendingDoc.id);
-          setAmount(latestPendingDoc.amount);
-          setPaymentStatus('pending');
-          localStorage.setItem('currentPendingTopUpId', latestPendingDoc.id);
-          return;
-        }
-
-        const storedAmount = parseFloat(localStorage.getItem('Amount') || 0);
-        const storedMessage = localStorage.getItem('PaymentMessage') || '';
-        if (storedAmount > 0) {
-          setAmount(storedAmount);
-          setMessage(storedMessage);
-          setPaymentStatus('confirming');
-          localStorage.removeItem('currentPendingTopUpId');
-        } else {
-          navigate('/wallet');
-        }
-      } catch (err) {
-        console.error("Error finding pending top-up:", err);
-        setError("Could not check payment status. Please try again later.");
-        setTimeout(() => navigate('/wallet'), 3000);
-      }
-    };
-
-    findExistingRequest();
-  }, [user, navigate]);
-
+  // Live status of recent top-ups so the user can see what happened to
+  // earlier requests without leaving this screen.
   useEffect(() => {
-    if (!topUpId) return undefined;
+    if (!user) return undefined;
 
-    const unsubscribe = onSnapshot(doc(db, 'top-ups', topUpId), (snapshot) => {
-      const data = snapshot.data();
-      if (!data) return;
+    const q = query(
+      collection(db, 'top-ups'),
+      where('userId', '==', user.uid),
+      limit(20),
+    );
 
-      switch (data.status) {
-        case 'approved':
-          setPaymentStatus('approved');
-          toast.success("Payment approved! Your balance has been updated.");
-          localStorage.removeItem('currentPendingTopUpId');
-          localStorage.removeItem('Amount');
-          localStorage.removeItem('PaymentMessage');
-          setTimeout(() => navigate('/wallet'), 3000);
-          break;
-        case 'rejected':
-          setPaymentStatus('rejected');
-          setRejectionComment(data.adminComment || 'Your payment could not be verified.');
-          localStorage.removeItem('currentPendingTopUpId');
-          localStorage.removeItem('Amount');
-          localStorage.removeItem('PaymentMessage');
-          break;
-        default:
-          break;
-      }
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const now = Date.now();
+      const docs = snapshot.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .map(d => ({ ...d, _date: toDate(d.createdAt) }))
+        .sort((a, b) => (b._date?.getTime() || 0) - (a._date?.getTime() || 0))
+        .filter(d => {
+          if (d.status === 'pending') return true;
+          if (!d._date) return false;
+          return (now - d._date.getTime()) / (1000 * 60 * 60) < 24;
+        })
+        .slice(0, 4);
+      setRecentTopUps(docs);
     });
 
     return () => unsubscribe();
-  }, [topUpId, navigate]);
+  }, [user]);
 
   const handleConfirmPayment = async () => {
     if (!paymentProof) {
       setError('Please upload a payment screenshot.');
       return;
     }
+    if (amount <= 0) {
+      setError('Amount missing — please start again from Add Cash.');
+      return;
+    }
 
-    setPaymentStatus('pending');
     setUploading(true);
     setError('');
 
@@ -128,7 +107,7 @@ export default function PaymentConfirmation() {
       const userDocSnap = await getDoc(userDocRef);
       const name = userDocSnap.exists() ? userDocSnap.data().name : 'Unknown User';
 
-      const topUpRef = await addDoc(collection(db, 'top-ups'), {
+      await addDoc(collection(db, 'top-ups'), {
         userId: user.uid,
         name,
         amount,
@@ -138,121 +117,132 @@ export default function PaymentConfirmation() {
         createdAt: new Date().toISOString(),
       });
 
-      setTopUpId(topUpRef.id);
-      localStorage.setItem('currentPendingTopUpId', topUpRef.id);
+      // Done — clear the request-specific bits so the next deposit starts
+      // fresh, but DON'T touch any other pending request the user has.
+      localStorage.removeItem('Amount');
+      localStorage.removeItem('PaymentMessage');
+      setSubmissionState('submitted');
       toast.success("Payment request submitted successfully!");
-      navigate('/addcash');
+      setTimeout(() => navigate('/addcash'), 1200);
     } catch (err) {
       console.error('Error submitting top-up request:', err);
       setError('Failed to submit request. Please check your connection and try again.');
-      setPaymentStatus('confirming');
+      setSubmissionState('error');
     } finally {
       setUploading(false);
     }
   };
 
-  const renderContent = () => {
-    if (error) {
-      return (
-        <div className="flex items-center space-x-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-red-200">
-          <AlertCircle className="h-6 w-6 flex-shrink-0" />
-          <p>{error}</p>
-        </div>
-      );
-    }
-
-    if (paymentStatus === 'pending') {
-      return (
-        <div className="flex flex-col items-center space-y-6 text-center">
-          <Clock className="h-24 w-24 text-yellow-500" />
-          <h2 className="text-3xl font-bold text-white">Request Submitted</h2>
-          <p className="max-w-sm text-gray-300">Status: Pending Admin Approval</p>
-          <p className="max-w-md text-sm text-gray-400">
-            We have received your payment request and this page will update automatically after admin approval or rejection.
-          </p>
-          <div className="rounded-2xl border border-yellow-500/20 bg-yellow-500/10 p-4 text-yellow-200">
-            Go back home and continue playing while approval is in progress.
-          </div>
-        </div>
-      );
-    }
-
-    if (paymentStatus === 'approved') {
-      return (
-        <div className="flex flex-col items-center space-y-4 text-center">
-          <CheckCircle className="h-24 w-24 text-green-500" />
-          <h2 className="text-3xl font-bold text-green-400">Payment Approved!</h2>
-          <p className="text-gray-300">₹{amount} has been added to your wallet. Redirecting...</p>
-        </div>
-      );
-    }
-
-    if (paymentStatus === 'rejected') {
-      return (
-        <div className="flex flex-col items-center space-y-6 text-center">
-          <XCircle className="h-24 w-24 text-red-500" />
-          <h2 className="text-3xl font-bold text-red-400">Payment Rejected</h2>
-          <p className="max-w-md text-gray-300">Reason: {rejectionComment}</p>
-          <button
-            onClick={() => navigate('/support')}
-            className="w-full max-w-xs rounded-2xl bg-blue-600 py-3 font-bold text-white transition hover:bg-blue-500"
-          >
-            Contact Support
-          </button>
-        </div>
-      );
-    }
-
+  const StatusBadge = ({ status }) => {
+    const map = {
+      pending:  { Icon: Clock,       className: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200', label: 'Pending Approval' },
+      approved: { Icon: CheckCircle, className: 'border-green-500/30 bg-green-500/10 text-green-200',    label: 'Approved' },
+      rejected: { Icon: XCircle,     className: 'border-red-500/30 bg-red-500/10 text-red-200',          label: 'Rejected' },
+    };
+    const { Icon, className, label } = map[status] || map.pending;
     return (
-      <div className="w-full max-w-md space-y-6">
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 shadow-2xl">
-          <div className="mb-4 flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-r from-green-500 to-emerald-500">
-                <IndianRupee className="h-6 w-6 text-white" />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-white">Payment Amount</h3>
-                <p className="text-sm text-gray-400">Ready to process</p>
-              </div>
-            </div>
-            <p className="text-3xl font-bold text-white">₹{amount}</p>
-          </div>
+      <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </span>
+    );
+  };
 
-          <div className="flex items-center space-x-2 rounded-lg bg-green-500/10 p-3 text-green-300">
-            <ShieldCheck className="h-5 w-5" />
-            <span className="text-sm font-medium">Secure Transaction</span>
-          </div>
-        </div>
-
-        <div>
-          <label
-            htmlFor="file-upload"
-            className="flex w-full cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-white/20 bg-white/5 p-6 text-center transition-colors hover:bg-white/10"
+  const RecentRequests = () => {
+    if (recentTopUps.length === 0) return null;
+    return (
+      <div className="w-full max-w-md space-y-3">
+        <p className="px-1 text-sm font-semibold uppercase tracking-wider text-slate-300">
+          Your recent requests
+        </p>
+        {recentTopUps.map((item) => (
+          <div
+            key={item.id}
+            className="rounded-2xl border border-white/10 bg-white/5 p-4"
           >
-            <UploadCloud className="mb-3 h-10 w-10 text-purple-400" />
-            <span className="font-semibold text-white">{paymentProof ? 'File Selected' : 'Upload Screenshot'}</span>
-            <span className="mt-1 text-xs text-gray-400">{paymentProof ? paymentProof.name : 'PNG, JPG, GIF up to 10MB'}</span>
-          </label>
-          <input
-            id="file-upload"
-            type="file"
-            onChange={(event) => setPaymentProof(event.target.files[0])}
-            className="hidden"
-          />
-        </div>
-
-        <button
-          onClick={handleConfirmPayment}
-          className="flex w-full items-center justify-center space-x-3 rounded-2xl bg-gradient-to-r from-purple-600 to-blue-600 py-4 text-lg font-bold text-white shadow-2xl transition hover:from-purple-700 hover:to-blue-700"
-          disabled={uploading}
-        >
-          <WalletIcon className="h-6 w-6" />
-          <span>{uploading ? 'Submitting...' : 'Submit for Verification'}</span>
-        </button>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-semibold text-white">₹{Number(item.amount || 0).toFixed(2)} deposit</p>
+                <p className="truncate text-xs text-slate-400">
+                  {item._date ? item._date.toLocaleString() : 'Just now'}
+                </p>
+              </div>
+              <StatusBadge status={item.status} />
+            </div>
+            {item.status === 'rejected' && item.adminComment && (
+              <p className="mt-2 rounded-lg border border-red-500/20 bg-red-500/5 p-2 text-xs text-red-200">
+                Reason: {item.adminComment}
+              </p>
+            )}
+          </div>
+        ))}
       </div>
     );
   };
+
+  const renderForm = () => (
+    <div className="w-full max-w-md space-y-6">
+      <div className="rounded-2xl border border-white/10 bg-white/5 p-6 shadow-2xl">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-r from-green-500 to-emerald-500">
+              <IndianRupee className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-white">Payment Amount</h3>
+              <p className="text-sm text-gray-400">Ready to process</p>
+            </div>
+          </div>
+          <p className="text-3xl font-bold text-white">₹{amount}</p>
+        </div>
+
+        <div className="flex items-center space-x-2 rounded-lg bg-green-500/10 p-3 text-green-300">
+          <ShieldCheck className="h-5 w-5" />
+          <span className="text-sm font-medium">Secure Transaction</span>
+        </div>
+      </div>
+
+      <div>
+        <label
+          htmlFor="file-upload"
+          className="flex w-full cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-white/20 bg-white/5 p-6 text-center transition-colors hover:bg-white/10"
+        >
+          <UploadCloud className="mb-3 h-10 w-10 text-purple-400" />
+          <span className="font-semibold text-white">{paymentProof ? 'File Selected' : 'Upload Screenshot'}</span>
+          <span className="mt-1 text-xs text-gray-400">{paymentProof ? paymentProof.name : 'PNG, JPG, GIF up to 10MB'}</span>
+        </label>
+        <input
+          id="file-upload"
+          type="file"
+          accept="image/*"
+          onChange={(event) => setPaymentProof(event.target.files[0])}
+          className="hidden"
+        />
+      </div>
+
+      <button
+        onClick={handleConfirmPayment}
+        className="flex w-full items-center justify-center space-x-3 rounded-2xl bg-gradient-to-r from-purple-600 to-blue-600 py-4 text-lg font-bold text-white shadow-2xl transition hover:from-purple-700 hover:to-blue-700 disabled:opacity-60"
+        disabled={uploading || submissionState === 'submitted'}
+      >
+        <WalletIcon className="h-6 w-6" />
+        <span>
+          {submissionState === 'submitted'
+            ? 'Submitted! Redirecting…'
+            : uploading
+              ? 'Submitting...'
+              : 'Submit for Verification'}
+        </span>
+      </button>
+
+      {error && (
+        <div className="flex items-center space-x-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-red-200">
+          <AlertCircle className="h-6 w-6 flex-shrink-0" />
+          <p className="text-sm">{error}</p>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <AccountPageShell
@@ -260,8 +250,9 @@ export default function PaymentConfirmation() {
       subtitle="Screenshot upload karke payment verification request submit karein."
       backTo="/pay"
     >
-      <div className="flex min-h-[70vh] flex-col items-center justify-center p-6 text-white">
-        {renderContent()}
+      <div className="flex min-h-[70vh] flex-col items-center gap-8 p-6 text-white">
+        <RecentRequests />
+        {amount > 0 && renderForm()}
       </div>
     </AccountPageShell>
   );

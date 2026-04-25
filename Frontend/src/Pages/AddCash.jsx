@@ -1,10 +1,10 @@
 import { useNavigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { toast } from 'react-toastify';
 import { getAuth } from "firebase/auth";
 import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
 import { db } from "../firebase";
-import { ArrowDownCircle, Clock, Loader2 } from 'lucide-react';
+import { ArrowDownCircle, CheckCircle, Clock, Loader2, XCircle } from 'lucide-react';
 import AccountPageShell from '../components/AccountPageShell';
 
 export function AddCash() {
@@ -96,6 +96,34 @@ export function AddCash() {
 
   const quickAmounts = ['50', '500', '1000', '5000', '10000', '25000'];
 
+  const latestRequest = useMemo(() => topUps[0] || null, [topUps]);
+
+  const renderStatusBanner = () => {
+    if (!latestRequest) return null;
+    const map = {
+      pending:  { Icon: Clock,       wrap: 'border-yellow-400/30 bg-yellow-500/10 text-yellow-100', label: 'Pending admin approval' },
+      approved: { Icon: CheckCircle, wrap: 'border-green-400/30 bg-green-500/10 text-green-100',   label: 'Approved & credited' },
+      rejected: { Icon: XCircle,     wrap: 'border-red-400/30 bg-red-500/10 text-red-100',         label: 'Rejected' },
+    };
+    const { Icon, wrap, label } = map[latestRequest.status] || map.pending;
+    const date = latestRequest.createdAt?.toDate
+      ? latestRequest.createdAt.toDate()
+      : new Date(latestRequest.createdAt);
+    return (
+      <div className={`mb-6 flex items-start gap-3 rounded-2xl border px-4 py-3 ${wrap}`}>
+        <Icon className="mt-0.5 h-5 w-5 flex-shrink-0" />
+        <div className="min-w-0 text-sm">
+          <p className="font-semibold">
+            Last deposit request: ₹{Number(latestRequest.amount || 0).toFixed(2)} — {label}
+          </p>
+          <p className="text-xs opacity-80">
+            {date.toLocaleString()} · You can still submit a new request below.
+          </p>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <AccountPageShell
       title="Add Cash"
@@ -108,6 +136,8 @@ export function AddCash() {
           <p>Loading payment status...</p>
         </div>
       ) : (
+        <>
+        {renderStatusBanner()}
         <div className="grid gap-6 lg:grid-cols-[1.35fr_0.9fr]">
           <div className="rounded-[28px] border border-white/10 bg-gradient-to-br from-[#0a2d55] to-[#081f39] p-6 shadow-2xl">
             <div className="border-b border-white/10 pb-5">
@@ -218,6 +248,7 @@ export function AddCash() {
             </div>
           </div>
         </div>
+        </>
       )}
     </AccountPageShell>
   );
