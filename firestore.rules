@@ -42,10 +42,18 @@ service cloud.firestore {
       }
     }
 
-    // Aviator rounds published by backend
+    // Aviator rounds — public state ONLY. Backend writes the live
+    // round status here. The secret crash point lives in
+    // aviator_secrets and is not readable by clients.
     match /aviator_rounds/{roundId} {
       allow read: if request.auth != null;
       allow write: if isAdmin();
+    }
+
+    // Aviator secret state (crashPoint). Backend reads this with the
+    // Admin SDK (which bypasses rules); clients have NO access.
+    match /aviator_secrets/{docId} {
+      allow read, write: if false;
     }
 
     // ── Cricket / sports betting ─────────────────────────────
@@ -56,14 +64,63 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // User bets on sports matches. Owner may create their own, owner
-    // or admin may read. Updates (status/winAmount after settlement)
-    // are admin-only to prevent users from flipping their own bets
-    // to "won" client-side.
+    // User bets on sports matches.
+    //
+    // Hardened to prevent the obvious money-mint attack: if create only
+    // checked userId+status, a logged-in user could write a bet doc with
+    // any oddsAtBet / betAmount, no funds debited, and once the admin
+    // settled the match they'd be credited oddsAtBet * betAmount. The
+    // rule below now insists that:
+    //   - the match exists, is still upcoming and hasn't started;
+    //   - oddsAtBet matches whatever odds the admin set on the match
+    //     for the chosen betType + selection;
+    //   - betAmount is a sane number within the per-bet cap;
+    //   - the same write actually drops the user's balance+winningMoney
+    //     by exactly betAmount (so funds are real).
+    //
+    // Updates (status/winAmount after settlement) stay admin-only.
     match /sportsBets/{betId} {
-      allow create: if request.auth != null &&
-        request.resource.data.userId == request.auth.uid &&
-        request.resource.data.status == "pending";
+      function fundsDebitedByExactly(amount) {
+        let userBefore = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+        let userAfter  = getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+        let beforeTotal = (userBefore.balance is number ? userBefore.balance : 0)
+                        + (userBefore.winningMoney is number ? userBefore.winningMoney : 0);
+        let afterTotal  = (userAfter.balance is number ? userAfter.balance : 0)
+                        + (userAfter.winningMoney is number ? userAfter.winningMoney : 0);
+        return afterTotal == beforeTotal - amount;
+      }
+
+      function oddsLineUp(matchData) {
+        let bt = request.resource.data.betType;
+        let sel = request.resource.data.selection;
+        let odds = request.resource.data.oddsAtBet;
+        // For winner / toss, odds live at matchData.odds.<betType>.<selection>.
+        return (
+          (bt == "winner" && odds == matchData.odds.winner.get(sel, 0))
+          || (bt == "toss"   && odds == matchData.odds.toss.get(sel, 0))
+          // For total, selection is "over" or "under".
+          || (bt == "total"  && odds == matchData.odds.total.get(sel, 0))
+          // topBatsman is an array — verifying odds vs name in rules is
+          // awkward, so cap odds at 50x and trust the array structure.
+          || (bt == "topBatsman" && odds <= 50 && odds >= 1)
+        );
+      }
+
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == "pending"
+        && request.resource.data.betAmount is number
+        && request.resource.data.betAmount >= 10
+        && request.resource.data.betAmount <= 100000
+        && request.resource.data.oddsAtBet is number
+        && request.resource.data.oddsAtBet >= 1
+        && request.resource.data.oddsAtBet <= 1000
+        && exists(/databases/$(database)/documents/matches/$(request.resource.data.matchId))
+        && get(/databases/$(database)/documents/matches/$(request.resource.data.matchId)).data.status == "upcoming"
+        && get(/databases/$(database)/documents/matches/$(request.resource.data.matchId)).data.startTime > request.time
+        && oddsLineUp(get(/databases/$(database)/documents/matches/$(request.resource.data.matchId)).data)
+        && fundsDebitedByExactly(request.resource.data.betAmount);
+
       allow read: if request.auth != null &&
         (resource.data.userId == request.auth.uid || isAdmin());
       allow update, delete: if isAdmin();

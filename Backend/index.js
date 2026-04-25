@@ -214,11 +214,23 @@ async function startAviatorRound() {
   const roundId = Date.now();
   const crashPoint = rollAviatorCrash();
   const startsAt = admin.firestore.Timestamp.fromMillis(roundId + AVIATOR_REVEAL_DELAY_MS);
+
+  // Public doc — visible to logged-in clients. NEVER include the
+  // crash point here: rules cannot project away individual fields, so
+  // anything written here is readable by every authenticated user and
+  // would let them deterministically beat the round.
   await db.collection('aviator_rounds').doc('current').set({
     roundId,
-    crashPoint, // visible once round is revealed — see rules
     startsAt,
     state: 'scheduled',
+  });
+
+  // Secret doc — admin-only via Firestore rules. The Admin SDK on the
+  // backend bypasses rules so cashout below can still read it.
+  await db.collection('aviator_secrets').doc('current').set({
+    roundId,
+    crashPoint,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 }
 
@@ -234,11 +246,34 @@ app.post('/api/game/aviator/cashout', requireAuth, async (req, res) => {
     const mult = Number(multiplier);
     if (!roundId || !(amount > 0) || !(mult >= 1)) return res.status(400).json({ error: 'Invalid payload' });
 
-    const roundSnap = await db.collection('aviator_rounds').doc('current').get();
+    // Read public state to confirm the round is still current, then read
+    // the crash point from the admin-only secrets doc. Keeping these
+    // separate prevents clients from seeing crashPoint via Firestore.
+    const [roundSnap, secretSnap] = await Promise.all([
+      db.collection('aviator_rounds').doc('current').get(),
+      db.collection('aviator_secrets').doc('current').get(),
+    ]);
     if (!roundSnap.exists || roundSnap.data().roundId !== roundId) {
       return res.status(400).json({ error: 'Round expired' });
     }
-    const { crashPoint } = roundSnap.data();
+    if (!secretSnap.exists || secretSnap.data().roundId !== roundId) {
+      return res.status(400).json({ error: 'Round secret missing' });
+    }
+    const startsAtMs = roundSnap.data().startsAt?.toMillis?.() ?? 0;
+    const elapsedMs = Date.now() - startsAtMs;
+    if (elapsedMs < 0) {
+      return res.status(400).json({ error: 'Round has not started yet' });
+    }
+    // Defence in depth: even if crashPoint somehow leaks, cap the
+    // multiplier at one consistent with elapsed time. Aviator climbs
+    // ~1x → 1x + elapsed_seconds (i.e. 0.025 per second is a soft
+    // upper bound; we use a generous 0.04/s + 1 floor).
+    const maxAllowedMult = 1 + Math.max(0, elapsedMs / 1000) * 0.04 + 0.5;
+    if (mult > maxAllowedMult) {
+      return res.status(400).json({ error: 'Multiplier exceeds elapsed time' });
+    }
+
+    const { crashPoint } = secretSnap.data();
     const won = mult <= crashPoint;
     const winAmount = won ? +(amount * mult).toFixed(2) : 0;
 
