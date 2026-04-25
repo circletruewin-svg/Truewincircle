@@ -133,6 +133,14 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Home layout toggles (showCountdown / showCarousel etc.). Public
+    // read because every visitor's Home renders against it; admin-only
+    // write.
+    match /settings/layout {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // User-facing notification sound configuration. Anyone (logged in
     // or not) needs to read it because the player is loaded on every
     // page. Only admin can change it.
