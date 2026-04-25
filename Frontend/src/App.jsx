@@ -1,48 +1,55 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { getAuth, onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from './firebase';
 
-import SpinWheel from './Pages/SpinWheel';
-import FixNumber from './Pages/FixNumber';
-import WinGame from './Pages/WinGame';
-import PhoneSignUp from './Pages/PhoneSignUp';
 import Navbar from './components/Navbar';
-import Home from './Pages/Home';
 import useAuthStore from './store/authStore';
-import { AddCash } from './Pages/AddCash';
-import Pay from './Pages/Pay';
-import { MyWallet } from './Pages/Wallet';
-import PaymentConfirmation from './Pages/PaymentConfirmation';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
-import Withdraw from './Pages/Withdraw';
-import AdminDashboard from './Admin/Admin';
-
-import AdminRoute from './Admin/AdminRoute';
 import Spinner from './components/Loader';
-import Profile from './Pages/Profile';
-import Support from './Pages/Support';
-import History from './Pages/History';
-import CasinoHistory from './Pages/CasinoHistory';
-import PrivacyPolicy from './components/PrivacyPolicy';
-import BettingHistory from './components/BettingHistory';
-import PhoneSignIn from './Pages/PhoneSignIn';
-import GameSummary from './Admin/components/ProfitLoss';
-import Referrals from './Pages/Referrals';
-import Aviator from './Pages/Aviator';
-import TeenPatti from './Pages/TeenPatti';
-import DragonTiger from './Pages/DragonTiger';
-import AndarBahar from './Pages/AndarBahar';
-import ColorPrediction from './Pages/ColorPrediction';
-import CoinFlip from './Pages/CoinFlip';
-import DiceRoll from './Pages/DiceRoll';
 import { buildSessionUser } from './utils/sessionUser';
+
+const Home = lazy(() => import('./Pages/Home'));
+const SpinWheel = lazy(() => import('./Pages/SpinWheel'));
+const FixNumber = lazy(() => import('./Pages/FixNumber'));
+const WinGame = lazy(() => import('./Pages/WinGame'));
+const PhoneSignUp = lazy(() => import('./Pages/PhoneSignUp'));
+const PhoneSignIn = lazy(() => import('./Pages/PhoneSignIn'));
+const AddCash = lazy(() => import('./Pages/AddCash').then(m => ({ default: m.AddCash })));
+const Pay = lazy(() => import('./Pages/Pay'));
+const MyWallet = lazy(() => import('./Pages/Wallet').then(m => ({ default: m.MyWallet })));
+const PaymentConfirmation = lazy(() => import('./Pages/PaymentConfirmation'));
+const Withdraw = lazy(() => import('./Pages/Withdraw'));
+const AdminDashboard = lazy(() => import('./Admin/Admin'));
+const AdminRoute = lazy(() => import('./Admin/AdminRoute'));
+const Profile = lazy(() => import('./Pages/Profile'));
+const Support = lazy(() => import('./Pages/Support'));
+const History = lazy(() => import('./Pages/History'));
+const CasinoHistory = lazy(() => import('./Pages/CasinoHistory'));
+const PrivacyPolicy = lazy(() => import('./components/PrivacyPolicy'));
+const BettingHistory = lazy(() => import('./components/BettingHistory'));
+const GameSummary = lazy(() => import('./Admin/components/ProfitLoss'));
+const Referrals = lazy(() => import('./Pages/Referrals'));
+const Aviator = lazy(() => import('./Pages/Aviator'));
+const TeenPatti = lazy(() => import('./Pages/TeenPatti'));
+const DragonTiger = lazy(() => import('./Pages/DragonTiger'));
+const AndarBahar = lazy(() => import('./Pages/AndarBahar'));
+const ColorPrediction = lazy(() => import('./Pages/ColorPrediction'));
+const CoinFlip = lazy(() => import('./Pages/CoinFlip'));
+const DiceRoll = lazy(() => import('./Pages/DiceRoll'));
+const Notifications = lazy(() => import('./Pages/Notifications'));
+const SportsBetting = lazy(() => import('./Pages/SportsBetting'));
+
+const RouteFallback = () => (
+  <div className="min-h-screen bg-[#042346] text-white flex items-center justify-center">
+    <Spinner />
+  </div>
+);
 
 const AppContent = () => {
   const location = useLocation();
-  // The Navbar will not be shown on the /Admin route
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const showNavbar = location.pathname.toLowerCase() !== '/admin';
@@ -68,38 +75,40 @@ const AppContent = () => {
         pauseOnHover
         theme="dark"
       />
-    
-    
+
+      <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/" element={<Home />} />
-        <Route path="/spinwheel" element={<SpinWheel />} />
-        <Route path="/fixnumber" element={<FixNumber />} />
-        <Route path="/wingame" element={<WinGame />} />
-        <Route path="/login" element={<PhoneSignIn />} />
-        <Route path="/testphonesignup" element={<PhoneSignUp />} />
-        <Route path="/addcash" element={<AddCash />} />
-        <Route path="/profile" element={<Profile />} />
-        <Route path="/pay" element={<Pay />} />
-        <Route path="/withdraw" element={<Withdraw />} />
-        <Route path="/payconfirm" element={<PaymentConfirmation />} />
-        <Route path="/wallet" element={<MyWallet />} />
-        <Route path="/support" element={<Support />} />
-        <Route path="/history" element={<History />} />
-        <Route path="/casino-history" element={<CasinoHistory />} />
-        <Route path="/privacy" element={<PrivacyPolicy/>} />
-        <Route path="/p" element={<GameSummary />} />
-        <Route path="/refer" element={<Referrals />} />
-        <Route path="/bettinghistory" element={<BettingHistory />} />
-        <Route path="/aviator" element={<Aviator />} />
-        <Route path="/teenpatti" element={<TeenPatti />} />
-        <Route path="/dragontiger" element={<DragonTiger />} />
-        <Route path="/andarbahar" element={<AndarBahar />} />
-        <Route path="/colorprediction" element={<ColorPrediction />} />
-        <Route path="/coinflip" element={<CoinFlip />} />
-        <Route path="/diceroll" element={<DiceRoll />} />
-        <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
-      </Routes>
-    
+          <Route path="/spinwheel" element={<SpinWheel />} />
+          <Route path="/fixnumber" element={<FixNumber />} />
+          <Route path="/wingame" element={<WinGame />} />
+          <Route path="/login" element={<PhoneSignIn />} />
+          <Route path="/testphonesignup" element={<PhoneSignUp />} />
+          <Route path="/addcash" element={<AddCash />} />
+          <Route path="/profile" element={<Profile />} />
+          <Route path="/pay" element={<Pay />} />
+          <Route path="/withdraw" element={<Withdraw />} />
+          <Route path="/payconfirm" element={<PaymentConfirmation />} />
+          <Route path="/wallet" element={<MyWallet />} />
+          <Route path="/support" element={<Support />} />
+          <Route path="/history" element={<History />} />
+          <Route path="/casino-history" element={<CasinoHistory />} />
+          <Route path="/privacy" element={<PrivacyPolicy />} />
+          <Route path="/p" element={<GameSummary />} />
+          <Route path="/refer" element={<Referrals />} />
+          <Route path="/bettinghistory" element={<BettingHistory />} />
+          <Route path="/aviator" element={<Aviator />} />
+          <Route path="/teenpatti" element={<TeenPatti />} />
+          <Route path="/dragontiger" element={<DragonTiger />} />
+          <Route path="/andarbahar" element={<AndarBahar />} />
+          <Route path="/colorprediction" element={<ColorPrediction />} />
+          <Route path="/coinflip" element={<CoinFlip />} />
+          <Route path="/diceroll" element={<DiceRoll />} />
+          <Route path="/notifications" element={<Notifications />} />
+          <Route path="/sports" element={<SportsBetting />} />
+          <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
+        </Routes>
+      </Suspense>
     </>
   );
 }
@@ -122,7 +131,7 @@ const App = () => {
       } else {
         login(null);
       }
-      setLoadingAuth(false); // Auth state determined
+      setLoadingAuth(false);
     });
 
     return () => unsubscribe();

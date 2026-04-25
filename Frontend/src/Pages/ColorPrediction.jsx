@@ -1,12 +1,13 @@
 ﻿import { useState, useEffect, useRef } from "react";
 import { db } from "../firebase";
-import { doc, onSnapshot, addDoc, collection, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
+import { doc, onSnapshot, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { ColorOrb } from "../components/GameVisuals";
-import { getBiasedWinner } from "../utils/houseEdge";
+import { getColorWinner } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatCurrency } from "../utils/formatMoney";
+import { gameApi, isServerRngEnabled } from "../utils/gameApi";
 
 const COLORS = [
   { id: "red", label: "RED", mult: 2, bg: "bg-red-600", ring: "ring-red-400" },
@@ -30,7 +31,6 @@ export default function ColorPrediction() {
   const [timeLeft, setTimeLeft] = useState(ROUND_SEC);
   const [winnerColor, setWinnerColor] = useState(null);
   const [msg, setMsg] = useState("");
-  const [history, setHistory] = useState([]);
   const [spinning, setSpinning] = useState(false);
 
   const betColorRef = useRef(null);
@@ -53,12 +53,6 @@ export default function ColorPrediction() {
       if (snapshot.exists()) setBalance(getUserFunds(snapshot.data()).total);
     });
   }, [user]);
-
-  useEffect(() => {
-    return onSnapshot(query(collection(db, "colorHistory"), orderBy("createdAt", "desc"), limit(15)), (snapshot) => {
-      setHistory(snapshot.docs.map((item) => item.data()));
-    });
-  }, []);
 
   useEffect(() => {
     startRound();
@@ -92,47 +86,59 @@ export default function ColorPrediction() {
     setSpinning(true);
 
     const userBet = betColorRef.current;
-    const winner = userBet ? getBiasedWinner(userBet, ["red", "green", "violet"]) : ["red", "green", "violet"][Math.floor(Math.random() * 3)];
+    const amount = betAmtRef.current;
+
+    // If user placed a bet, resolve it authoritatively (server if enabled).
+    let resolved;
+    try {
+      if (hasBetRef.current && userBet) {
+        if (isServerRngEnabled()) {
+          const res = await gameApi.color(userBet, amount);
+          resolved = { winner: res.result, won: res.won, winAmount: res.winAmount };
+        } else {
+          const winner = getColorWinner(userBet);
+          const won = winner === userBet;
+          const colorData = COLORS.find((item) => item.id === winner);
+          const winAmount = won ? parseFloat((amount * colorData.mult).toFixed(2)) : 0;
+          if (won) await creditUserWinnings(db, user.uid, winAmount);
+          await addDoc(collection(db, "colorBets"), {
+            userId: user.uid, betColor: userBet, winnerColor: winner,
+            betAmount: amount, winAmount, won,
+            createdAt: serverTimestamp(),
+          });
+          resolved = { winner, won, winAmount };
+        }
+      } else {
+        // No bet placed — just reveal a decorative winner for history.
+        const colors = ["red", "green", "violet"];
+        resolved = { winner: colors[Math.floor(Math.random() * colors.length)], won: false, winAmount: 0 };
+      }
+    } catch (error) {
+      console.error("Color Prediction round failed:", error);
+      setMsg(error.message || "Round sync failed.");
+      resolved = { winner: "red", won: false, winAmount: 0 };
+    }
 
     setTimeout(async () => {
       setSpinning(false);
-      setWinnerColor(winner);
+      setWinnerColor(resolved.winner);
+
+      if (hasBetRef.current) {
+        setMsg(
+          resolved.won
+            ? `${resolved.winner.toUpperCase()} wins! +${formatCurrency(resolved.winAmount)}`
+            : `${resolved.winner.toUpperCase()} wins. Lost ${formatCurrency(amount)}`
+        );
+      }
 
       try {
-        if (hasBetRef.current && userBet) {
-          const won = winner === userBet;
-          const colorData = COLORS.find((item) => item.id === winner);
-          const amount = betAmtRef.current;
-          const winAmount = won ? parseFloat((amount * colorData.mult).toFixed(2)) : 0;
-
-          if (won) {
-            setMsg(`${winner.toUpperCase()} wins! +${formatCurrency(winAmount)}`);
-            await creditUserWinnings(db, user.uid, winAmount);
-          } else {
-            setMsg(`${winner.toUpperCase()} wins. Lost ${formatCurrency(amount)}`);
-          }
-
-          await addDoc(collection(db, "colorBets"), {
-            userId: user.uid,
-            betColor: userBet,
-            winnerColor: winner,
-            betAmount: amount,
-            winAmount,
-            won,
-            createdAt: serverTimestamp(),
-          });
-        }
-
         await addDoc(collection(db, "colorHistory"), {
-          winner,
+          winner: resolved.winner,
           createdAt: serverTimestamp(),
         });
-      } catch (error) {
-        console.error("Failed to finish Color Prediction round:", error);
-        setMsg(`${winner.toUpperCase()} round finished. Sync failed.`);
-      } finally {
-        setTimeout(() => startRound(), 3500);
-      }
+      } catch (_) { /* history is decorative */ }
+
+      setTimeout(() => startRound(), 3500);
     }, 2000);
   };
 
@@ -147,7 +153,11 @@ export default function ColorPrediction() {
     betColorRef.current = color;
     betAmtRef.current = amount;
     hasBetRef.current = true;
-    await debitUserFunds(db, user.uid, amount);
+    // When server RNG is enabled, the backend will debit at settle time
+    // using the authoritative round. Otherwise debit locally now.
+    if (!isServerRngEnabled()) {
+      await debitUserFunds(db, user.uid, amount);
+    }
     setMsg(`Bet ${formatCurrency(amount)} on ${color.toUpperCase()}!`);
   };
 
@@ -159,14 +169,6 @@ export default function ColorPrediction() {
       <Navbar />
       <div className="max-w-lg mx-auto px-4 pb-8">
         <h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">Color Prediction</h1>
-
-        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3 scrollbar-hide">
-          {history.map((item, index) => (
-            <div key={index} className={`w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold ${item.winner === "red" ? "bg-red-600" : item.winner === "green" ? "bg-green-600" : "bg-purple-600"}`}>
-              {item.winner?.[0].toUpperCase()}
-            </div>
-          ))}
-        </div>
 
         <div className="bg-gray-800 rounded-full h-2 mb-4 overflow-hidden">
           <div className={`h-2 rounded-full transition-all duration-1000 ${timerColor}`} style={{ width: `${timerPct}%` }} />
@@ -210,11 +212,11 @@ export default function ColorPrediction() {
             {[50, 100, 200, 500].map((amount) => (
               <button
                 key={amount}
-                onClick={() => setBetAmount(amount.toString())}
+                onClick={() => setBetAmount((prev) => String((parseFloat(prev) || 0) + amount))}
                 disabled={phase !== "betting" || hasBetRef.current}
                 className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
               >
-                {formatCurrency(amount)}
+                +{formatCurrency(amount)}
               </button>
             ))}
           </div>

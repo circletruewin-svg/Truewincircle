@@ -126,8 +126,8 @@ const HarufGrid = ({ marketName }) => {
         setMarketStatus({ isOpen: true, message: 'Market timings not set.' });
       }
     };
-    const intervalId = setInterval(checkMarketStatus, 1000);
     checkMarketStatus();
+    const intervalId = setInterval(checkMarketStatus, 15000);
     return () => clearInterval(intervalId);
   }, [marketTimings]);
 

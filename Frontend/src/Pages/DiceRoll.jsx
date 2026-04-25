@@ -7,8 +7,8 @@ import { DiceFace as DiceVisual } from "../components/GameVisuals";
 import { getDiceResult } from "../utils/houseEdge";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatCurrency } from "../utils/formatMoney";
+import { gameApi, isServerRngEnabled } from "../utils/gameApi";
 
-const DICE_LABELS = ["", "1", "2", "3", "4", "5", "6"];
 function DiceFace({ value, className = "" }) {
   return <DiceVisual value={value} className={className} />;
 }
@@ -22,7 +22,6 @@ export default function DiceRoll() {
   const [rolling, setRolling] = useState(false);
   const [displayDice, setDisplayDice] = useState(1);
   const [msg, setMsg] = useState("");
-  const [history, setHistory] = useState([]);
   const balanceRef = useRef(0);
 
   useEffect(() => {
@@ -46,7 +45,25 @@ export default function DiceRoll() {
 
     setRolling(true);
     setMsg("");
-    await debitUserFunds(db, user.uid, amount);
+
+    // Resolve the outcome authoritatively (server if enabled, else client).
+    const settle = isServerRngEnabled()
+      ? gameApi.dice(betNum, amount).then((res) => ({
+          outcome: res.result, won: res.won, winAmount: res.winAmount,
+        }))
+      : (async () => {
+          await debitUserFunds(db, user.uid, amount);
+          const outcome = getDiceResult(betNum);
+          const won = outcome === betNum;
+          const winAmount = won ? parseFloat((amount * 5.5).toFixed(2)) : 0;
+          if (won) await creditUserWinnings(db, user.uid, winAmount);
+          await addDoc(collection(db, "diceBets"), {
+            userId: user.uid, betNum, result: outcome,
+            betAmount: amount, winAmount, won,
+            createdAt: serverTimestamp(),
+          });
+          return { outcome, won, winAmount };
+        })();
 
     let flips = 0;
     const anim = setInterval(async () => {
@@ -54,32 +71,17 @@ export default function DiceRoll() {
       flips += 1;
       if (flips >= 12) {
         clearInterval(anim);
-        const outcome = getDiceResult(betNum);
-        setDisplayDice(outcome);
-        const won = outcome === betNum;
-        const winAmount = won ? parseFloat((amount * 5.5).toFixed(2)) : 0;
-
         try {
-          setMsg(won ? `Rolled ${outcome}! You won ${formatCurrency(winAmount)}!` : `Rolled ${outcome}. You lost ${formatCurrency(amount)}`);
-
-          if (won) {
-            await creditUserWinnings(db, user.uid, winAmount);
-          }
-
-          await addDoc(collection(db, "diceBets"), {
-            userId: user.uid,
-            betNum,
-            result: outcome,
-            betAmount: amount,
-            winAmount,
-            won,
-            createdAt: serverTimestamp(),
-          });
-
-          setHistory((prev) => [{ result: outcome }, ...prev].slice(0, 12));
+          const { outcome, won, winAmount } = await settle;
+          setDisplayDice(outcome);
+          setMsg(
+            won
+              ? `Rolled ${outcome}! You won ${formatCurrency(winAmount)}!`
+              : `Rolled ${outcome}. You lost ${formatCurrency(amount)}`
+          );
         } catch (error) {
-          console.error("Failed to finish Dice Roll round:", error);
-          setMsg(`Rolled ${outcome}. Sync failed.`);
+          console.error("Dice roll failed:", error);
+          setMsg(error.message || "Roll failed. Try again.");
         } finally {
           setRolling(false);
         }
@@ -92,14 +94,6 @@ export default function DiceRoll() {
       <Navbar />
       <div className="max-w-sm mx-auto px-4 pb-8">
         <h1 className="text-2xl font-black text-center text-yellow-400 py-4 tracking-widest">Dice Roll</h1>
-
-        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-4 scrollbar-hide">
-          {history.map((item, index) => (
-            <span key={index} className="w-8 h-8 bg-gray-800 rounded-lg flex items-center justify-center text-sm flex-shrink-0">
-              {DICE_LABELS[item.result]}
-            </span>
-          ))}
-        </div>
 
         <div className="flex justify-center mb-6">
           <div className={`w-32 h-32 bg-white text-slate-900 rounded-3xl flex items-center justify-center text-6xl shadow-2xl ${rolling ? "animate-bounce" : ""} transition-all`}>
@@ -142,11 +136,11 @@ export default function DiceRoll() {
             {[50, 100, 200, 500].map((amount) => (
               <button
                 key={amount}
-                onClick={() => setBetAmount(amount.toString())}
+                onClick={() => setBetAmount((prev) => String((parseFloat(prev) || 0) + amount))}
                 disabled={rolling}
                 className="bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold"
               >
-                {formatCurrency(amount)}
+                +{formatCurrency(amount)}
               </button>
             ))}
           </div>

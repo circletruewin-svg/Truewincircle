@@ -28,6 +28,9 @@ import useAuthStore from '../store/authStore';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import useNotificationSound from './hooks/useNotificationSound';
+import { createNotification } from '../utils/notifications';
+import { formatCurrency } from '../utils/formatMoney';
+import MatchManagement from './components/MatchManagement';
 
 // Component Imports
 import AllUsers from './components/AllUsers';
@@ -203,6 +206,7 @@ const AdminDashboard = () => {
 
   // --- ACTION HANDLERS ---
   const handlePaymentApproval = async (paymentId, action, userId, amount, reason = null) => {
+    let notifyReferrer = null; // track if a referral bonus needs a notification
     try {
       await runTransaction(db, async (transaction) => {
         const paymentRef = doc(db, 'top-ups', paymentId);
@@ -235,10 +239,40 @@ const AdminDashboard = () => {
                 referredUserName: userData.name,
                 createdAt: new Date(),
               });
+              notifyReferrer = { referrerId: userData.referredBy, referredName: userData.name };
             }
           }
         }
       });
+
+      // Notify the user — runs outside the transaction (notifications
+      // are subcollection writes that don't need to be atomic with the
+      // payment update).
+      if (action === 'approved') {
+        await createNotification(userId, {
+          type: 'deposit',
+          title: `Deposit of ${formatCurrency(amount)} approved`,
+          body: 'Your wallet balance has been credited.',
+          link: '/wallet',
+        });
+      } else if (action === 'rejected') {
+        await createNotification(userId, {
+          type: 'deposit',
+          title: `Deposit of ${formatCurrency(amount)} rejected`,
+          body: reason || 'Please contact support for details.',
+          link: '/addcash',
+        });
+      }
+
+      if (notifyReferrer) {
+        await createNotification(notifyReferrer.referrerId, {
+          type: 'referral',
+          title: `Referral bonus ${formatCurrency(50)} credited`,
+          body: `${notifyReferrer.referredName || 'Your referred user'} made their first deposit.`,
+          link: '/refer',
+        });
+      }
+
       toast.success(`Payment ${action} successfully!`);
     } catch (error) {
       toast.error(`Failed to ${action} payment. ${error.message}`);
@@ -259,6 +293,20 @@ const AdminDashboard = () => {
           }
         }
       });
+
+      await createNotification(userId, {
+        type: 'withdrawal',
+        title:
+          action === 'approved'
+            ? `Withdrawal of ${formatCurrency(amount)} approved`
+            : `Withdrawal of ${formatCurrency(amount)} rejected`,
+        body:
+          action === 'approved'
+            ? 'Funds will reach your account within 10–24 hours.'
+            : 'The amount has been returned to your winning balance.',
+        link: '/withdraw',
+      });
+
       toast.success(`Withdrawal ${action} successfully!`);
     } catch (error) {
       toast.error(`Failed to ${action} withdrawal.`);
@@ -275,6 +323,7 @@ const AdminDashboard = () => {
   };
 
   const handleWinnerAnnouncement = async (winnerId) => {
+    let notifyWinner = null;
     try {
       await runTransaction(db, async (transaction) => {
         const winnerRef = doc(db, 'winners', winnerId);
@@ -289,7 +338,18 @@ const AdminDashboard = () => {
         transaction.update(winnerRef, { status: 'announced' });
         const currentWinnings = userSnap.data().winningMoney || 0;
         transaction.update(userRef, { winningMoney: currentWinnings + prize });
+        notifyWinner = { userId, prize };
       });
+
+      if (notifyWinner) {
+        await createNotification(notifyWinner.userId, {
+          type: 'win',
+          title: `You won ${formatCurrency(notifyWinner.prize)}!`,
+          body: 'Your prize has been credited to your winning balance.',
+          link: '/wallet',
+        });
+      }
+
       toast.success('Winner announced and credited successfully!');
     } catch (error) {
       toast.error(error.message || 'Failed to announce winner.');
@@ -331,6 +391,7 @@ const AdminDashboard = () => {
           { id: 'payments',     label: 'Payment Approvals',   icon: CreditCard },
           { id: 'withdrawals',  label: 'Withdrawal Approval', icon: DollarSign },
           { id: 'marquee',      label: 'Screen Text',         icon: Edit       },
+          { id: 'matches',      label: '🏏 Cricket Matches',  icon: Trophy     },
           { id: 'harufUpdate',  label: 'Market Results',      icon: Edit       },
           { id: 'sliderUpdate', label: 'Carousel Slides',     icon: Edit       },
           { id: 'socialLinks',  label: 'Social Links',        icon: LinkIcon   },
@@ -452,6 +513,7 @@ const AdminDashboard = () => {
           />
         );
       case 'marquee':       return <MarqueeUpdate />;
+      case 'matches':       return <MatchManagement />;
       case 'harufUpdate':   return <Table />;
       case 'sliderUpdate':  return <SliderUpdate />;
       case 'socialLinks':   return <Links />;

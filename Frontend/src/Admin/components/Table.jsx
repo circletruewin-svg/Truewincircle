@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase';
-import { collection, query, where, orderBy, limit, getDocs, addDoc, serverTimestamp, doc, setDoc, getDoc, runTransaction } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, getDocs, addDoc, serverTimestamp, doc, setDoc, getDoc, runTransaction, Timestamp } from 'firebase/firestore';
 import { toast } from 'react-toastify';
 import { markets } from '../../marketData';
 import Loader from '../../components/Loader';
@@ -27,27 +27,21 @@ const Table = () => {
     setCurrentYesterdayResult('..');
     setHistory([]);
     try {
-      // Fetch ALL results because we are not using an index.
-      // WARNING: This is inefficient and can be slow and costly if you have many results.
-      const resultsRef = collection(db, "results");
-      const allResultsSnapshot = await getDocs(resultsRef);
-      const allResults = allResultsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-      // Filter results for the selected market
-      const marketResults = allResults.filter(result => result.marketName === market);
-
-      // Sort the market-specific results by date
-      marketResults.sort((a, b) => {
-        if (a.date && b.date) {
-          return b.date.toDate() - a.date.toDate(); // descending
-        }
-        return 0;
-      });
-
-
+      // Server-side query: only this market, only from the 1st of the current month, sorted desc.
+      // Requires a composite index on (marketName ASC, date DESC) in Firestore.
       const now = new Date();
-      const currentMonth = now.getMonth();
-      const currentYear = now.getFullYear();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+      const resultsQuery = query(
+        collection(db, 'results'),
+        where('marketName', '==', market),
+        where('date', '>=', Timestamp.fromDate(monthStart)),
+        orderBy('date', 'desc'),
+        limit(200)
+      );
+
+      const snapshot = await getDocs(resultsQuery);
+      const marketResults = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -59,29 +53,28 @@ const Table = () => {
       let foundToday = false;
       let foundYesterday = false;
 
-      const currentMonthResults = marketResults.filter(result => {
-        if (!result.date) return false;
+      for (const result of marketResults) {
+        if (!result.date?.toDate) continue;
         const resultDate = result.date.toDate();
-        
-        // Also find today/yesterday results while we are at it
         if (!foundToday && resultDate >= today && resultDate < tomorrow) {
-            setCurrentTodayResult(result.number);
-            foundToday = true;
+          setCurrentTodayResult(result.number);
+          foundToday = true;
         }
         if (!foundYesterday && resultDate >= yesterday && resultDate < today) {
-            setCurrentYesterdayResult(result.number);
-            foundYesterday = true;
+          setCurrentYesterdayResult(result.number);
+          foundYesterday = true;
         }
+        if (foundToday && foundYesterday) break;
+      }
 
-        return resultDate.getMonth() === currentMonth && resultDate.getFullYear() === currentYear;
-      });
-
-      // Set history, limited to the results of the current month
-      setHistory(currentMonthResults);
-
+      setHistory(marketResults);
     } catch (error) {
       console.error("Error fetching results:", error);
-      toast.error("Failed to fetch results.");
+      if (error.code === 'failed-precondition') {
+        toast.error('Composite index missing. Check console for Firestore index creation link.');
+      } else {
+        toast.error('Failed to fetch results.');
+      }
     } finally {
       setLoading(false);
     }

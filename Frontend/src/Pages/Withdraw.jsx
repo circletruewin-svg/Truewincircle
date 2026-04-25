@@ -117,7 +117,7 @@ const Withdraw = () => {
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user?.uid]);
 
   const validateUPI = (upi) => {
     const upiRegex = /^[\w.-]+@[\w.-]+$/;
@@ -393,13 +393,24 @@ const Withdraw = () => {
                     </div>
                   )}
 
-                  <button
-                    type="submit"
-                    disabled={submitLoading || (method === 'bank' && accountsMismatch)}
-                    className="w-full bg-yellow-500 text-black font-bold py-4 rounded-lg hover:bg-yellow-600 transition-all text-lg shadow-lg shadow-yellow-500/20 disabled:bg-gray-500 disabled:cursor-not-allowed"
-                  >
-                    {submitLoading ? 'Processing...' : 'Request Withdrawal'}
-                  </button>
+                  {(() => {
+                    const parsedAmount = parseFloat(amount);
+                    const amountInvalid =
+                      !amount ||
+                      isNaN(parsedAmount) ||
+                      parsedAmount < 200 ||
+                      parsedAmount > winningMoney;
+                    const bankInvalid = method === 'bank' && accountsMismatch;
+                    return (
+                      <button
+                        type="submit"
+                        disabled={submitLoading || amountInvalid || bankInvalid}
+                        className="w-full bg-yellow-500 text-black font-bold py-4 rounded-lg hover:bg-yellow-600 transition-all text-lg shadow-lg shadow-yellow-500/20 disabled:bg-gray-500 disabled:cursor-not-allowed"
+                      >
+                        {submitLoading ? 'Processing...' : 'Request Withdrawal'}
+                      </button>
+                    );
+                  })()}
                 </form>
               </div>
             </div>
