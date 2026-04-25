@@ -18,13 +18,11 @@ export function useUserSoundContext() {
   const ctx = useContext(UserSoundContext);
   if (ctx) return ctx;
   return {
-    enabled: false, setEnabled: () => {},
-    volume: 0.7, setVolume: () => {},
-    vibrate: false, setVibrate: () => {},
-    approvalChoice: 'success', setApprovalChoice: () => {}, approvalOptions: [],
-    rejectionChoice: 'sadtone', setRejectionChoice: () => {}, rejectionOptions: [],
-    clickChoice: 'tick', setClickChoice: () => {}, clickOptions: [],
-    customSounds: [], addCustomSound: async () => {}, removeCustomSound: () => {},
-    playApproval: () => {}, playRejection: () => {}, playClick: () => {},
+    muted: true, setMuted: () => {},
+    enabled: false,
+    config: null,
+    playApproval: () => {},
+    playRejection: () => {},
+    playClick: () => {},
   };
 }

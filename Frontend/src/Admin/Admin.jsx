@@ -31,6 +31,7 @@ import useNotificationSound from './hooks/useNotificationSound';
 import { createNotification } from '../utils/notifications';
 import { formatCurrency } from '../utils/formatMoney';
 import MatchManagement from './components/MatchManagement';
+import UserSoundsAdmin from './components/UserSoundsAdmin';
 
 // Component Imports
 import AllUsers from './components/AllUsers';
@@ -410,6 +411,7 @@ const AdminDashboard = () => {
           { id: 'transactions', label: 'Transactions',        icon: CreditCard },
           // ── NEW ──────────────────────────────────────────────────────
           { id: 'gamesStats',   label: '🎮 Games Stats',      icon: Star       },
+          { id: 'userSounds',   label: '🔔 User Sounds',      icon: Bell       },
           // ─────────────────────────────────────────────────────────────
         ].map(item => (
           <button
@@ -696,6 +698,7 @@ const AdminDashboard = () => {
 
       // ── NEW ────────────────────────────────────────────────────────
       case 'gamesStats':    return <GamesStats />;
+      case 'userSounds':    return <UserSoundsAdmin />;
       // ──────────────────────────────────────────────────────────────
 
       default:              return <DashboardView stats={stats} />;

@@ -133,6 +133,14 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // User-facing notification sound configuration. Anyone (logged in
+    // or not) needs to read it because the player is loaded on every
+    // page. Only admin can change it.
+    match /settings/userSoundConfig {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // Bets (legacy)
     match /bets/{betId} {
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
