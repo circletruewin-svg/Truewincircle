@@ -292,8 +292,33 @@ app.post('/api/game/aviator/cashout', requireAuth, async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
-// 1–12 Win game — auto result every 5 minutes (kept as-is)
+// 1–12 Win game — auto result every 5 minutes
 // ────────────────────────────────────────────────────────────
+// Result picker mirrors Frontend/src/Pages/WinGame.jsx:
+// with HOUSE_BIAS_PROBABILITY chance picks the least-bet number
+// (so house wins everything that round); otherwise fair 1/12 random.
+const WINGAME_HOUSE_BIAS_PROBABILITY = 0.30;
+const WINGAME_PAYOUT_MULTIPLIER = 10;
+
+async function pickWinGameResult(roundId) {
+  const betsSnap = await db.collection('wingame_bets').where('roundId', '==', roundId).get();
+  const volume = {};
+  for (let i = 1; i <= 12; i++) volume[i] = 0;
+  betsSnap.forEach((d) => {
+    const bet = d.data();
+    if (typeof bet.number === 'number' && typeof bet.amount === 'number' && bet.number >= 1 && bet.number <= 12) {
+      volume[bet.number] = (volume[bet.number] || 0) + bet.amount;
+    }
+  });
+
+  if (rand() < WINGAME_HOUSE_BIAS_PROBABILITY) {
+    const minVol = Math.min(...Object.values(volume));
+    const candidates = Object.entries(volume).filter(([, v]) => v === minVol).map(([n]) => Number(n));
+    return candidates[Math.floor(rand() * candidates.length)];
+  }
+  return Math.floor(rand() * 12) + 1;
+}
+
 setInterval(async () => {
   try {
     console.log('⏱ Running Win Game Result...');
@@ -306,7 +331,7 @@ setInterval(async () => {
     }
 
     const roundId = roundDoc.data().roundId;
-    const result = Math.floor(Math.random() * 12) + 1;
+    const result = await pickWinGameResult(roundId);
     console.log('🎯 Result:', result);
 
     await db.collection('results').add({
@@ -319,7 +344,7 @@ setInterval(async () => {
     for (const doc of betsSnapshot.docs) {
       const bet = doc.data();
       if (bet.number === result) {
-        const winAmount = bet.amount * 9;
+        const winAmount = bet.amount * WINGAME_PAYOUT_MULTIPLIER;
         await db.collection('users').doc(bet.userId).update({
           balance: admin.firestore.FieldValue.increment(winAmount),
           winningMoney: admin.firestore.FieldValue.increment(winAmount),
@@ -328,7 +353,6 @@ setInterval(async () => {
           userId: bet.userId, amount: winAmount, type: 'win',
           gameType: 'winGame', roundId, createdAt: new Date(),
         });
-        // Notify the winner
         await db.collection('users').doc(bet.userId)
           .collection('notifications').add({
             type: 'win',
