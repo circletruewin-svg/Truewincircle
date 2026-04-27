@@ -43,6 +43,7 @@ const CoinFlip = lazy(() => import('./Pages/CoinFlip'));
 const DiceRoll = lazy(() => import('./Pages/DiceRoll'));
 const Notifications = lazy(() => import('./Pages/Notifications'));
 const SportsBetting = lazy(() => import('./Pages/SportsBetting'));
+const Landing = lazy(() => import('./Pages/Landing'));
 
 const RouteFallback = () => (
   <div className="min-h-screen bg-[#042346] text-white flex items-center justify-center">
@@ -54,7 +55,10 @@ const AppContent = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const showNavbar = location.pathname.toLowerCase() !== '/admin';
+  const path = location.pathname.toLowerCase();
+  // Landing pages need to be distraction-free (Meta ads compliance + faster
+  // first paint), so the global navbar is hidden on /landing and /lp.
+  const showNavbar = path !== '/admin' && path !== '/landing' && path !== '/lp';
 
   useEffect(() => {
     if (user && user.role === 'admin') {
@@ -110,6 +114,8 @@ const AppContent = () => {
           <Route path="/diceroll" element={<DiceRoll />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/sports" element={<SportsBetting />} />
+          <Route path="/landing" element={<Landing />} />
+          <Route path="/lp" element={<Landing />} />
           <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
         </Routes>
       </Suspense>
