@@ -51,26 +51,29 @@ function biasedWinnerFromSides(userBet, sides) {
 }
 
 function rollAviatorCrash() {
+  // Tightened distribution — heavy early crash, hard cap at 15x.
+  // Mirrors Frontend/src/utils/houseEdge.js exactly. House edge
+  // approximations: 1.3x → ~36%, 1.5x → ~42%, 2.0x → ~52%, 3.0x → ~66%.
   const r = rand();
-  if (r < 0.30) return +(1.00 + rand() * 0.40).toFixed(2);
-  if (r < 0.60) return +(1.40 + rand() * 0.60).toFixed(2);
-  if (r < 0.80) return +(2.00 + rand() * 1.50).toFixed(2);
-  if (r < 0.92) return +(3.50 + rand() * 3.50).toFixed(2);
-  if (r < 0.98) return +(7.00 + rand() * 8.00).toFixed(2);
-  return +(15.00 + rand() * 25.00).toFixed(2);
+  if (r < 0.45) return +(1.00 + rand() * 0.20).toFixed(2);
+  if (r < 0.67) return +(1.20 + rand() * 0.40).toFixed(2);
+  if (r < 0.83) return +(1.60 + rand() * 0.70).toFixed(2);
+  if (r < 0.93) return +(2.30 + rand() * 1.20).toFixed(2);
+  if (r < 0.98) return +(3.50 + rand() * 2.50).toFixed(2);
+  return +(6.00 + rand() * 9.00).toFixed(2);
 }
 
 // Per-colour win rate so the house keeps an edge on every choice
 // (2x, 3x, 4.5x payouts each need a different cap to stay house-positive).
 function rollColor(userBet) {
-  const winRates = { red: 0.35, green: 0.26, violet: 0.14 };
-  if (rand() < (winRates[userBet] ?? 0.25)) return userBet;
+  const winRates = { red: 0.35, green: 0.22, violet: 0.14 };
+  if (rand() < (winRates[userBet] ?? 0.20)) return userBet;
   const losing = ['red', 'green', 'violet'].filter(c => c !== userBet);
   return losing[Math.floor(rand() * losing.length)];
 }
 
 function rollDice(userBet) {
-  if (rand() < 0.14) return userBet;
+  if (rand() < 0.12) return userBet;
   const others = [1, 2, 3, 4, 5, 6].filter(n => n !== userBet);
   return others[Math.floor(rand() * others.length)];
 }
