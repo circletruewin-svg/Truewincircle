@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, getDocs, query, doc, updateDoc, writeBatch, where } from 'firebase/firestore';
+import { collection, onSnapshot, query, doc, updateDoc, writeBatch, where } from 'firebase/firestore';
 import { db } from '../../firebase';
 import Loader from '../../components/Loader';
 import UserBettingHistory from './UserBettingHistory';
@@ -15,29 +15,30 @@ const AllUsers = () => {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
+  // Real-time subscription so balance / winningMoney / suspended state
+  // changes propagate to the admin's table without a page refresh — for
+  // example when a user places a bet on another tab their balance drops
+  // here instantly.
   useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        const usersQuery = query(
-          collection(db, 'users'),
-          where('appName', '==', 'truewin')
-        );
-        const querySnapshot = await getDocs(usersQuery);
-        let usersList = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
+    const usersQuery = query(
+      collection(db, 'users'),
+      where('appName', '==', 'truewin')
+    );
+    const unsubscribe = onSnapshot(
+      usersQuery,
+      (snapshot) => {
+        const usersList = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
         usersList.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         setUsers(usersList);
-      } catch (err) {
+        setLoading(false);
+      },
+      (err) => {
+        console.error('Error fetching users: ', err);
         setError('Failed to fetch users. Please check console for details.');
-        console.error("Error fetching users: ", err);
-      } finally {
         setLoading(false);
       }
-    };
-
-    fetchUsers();
+    );
+    return () => unsubscribe();
   }, []);
 
   const makeAdmin = async (userId) => {

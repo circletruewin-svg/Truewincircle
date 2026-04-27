@@ -3,14 +3,21 @@ import { useState, useEffect, useMemo } from 'react';
 import { toast } from 'react-toastify';
 import { getAuth } from "firebase/auth";
 import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
-import { db } from "../firebase";
+import { getStorage, ref, getDownloadURL } from 'firebase/storage';
+import { db, app } from "../firebase";
 import { ArrowDownCircle, CheckCircle, Clock, Loader2, XCircle } from 'lucide-react';
 import AccountPageShell from '../components/AccountPageShell';
+
+// QR cache key — Pay.jsx reads this so the QR shows immediately when
+// the user reaches the next step instead of waiting on a Storage round
+// trip. We invalidate after 12 hours so admin barcode updates propagate.
+const QR_CACHE_KEY = 'cachedQrUrl';
+const QR_CACHE_TS_KEY = 'cachedQrUrlAt';
+const QR_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
 export function AddCash() {
   const navigate = useNavigate();
   const [amount, setAmount] = useState('');
-  const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [topUps, setTopUps] = useState([]);
   const [user, setUser] = useState(null);
@@ -29,6 +36,36 @@ export function AddCash() {
 
     return () => unsubscribeAuth();
   }, [auth, navigate]);
+
+  // Pre-fetch QR code URL while the user is filling in the amount, so
+  // /pay can render the image immediately instead of showing a loading
+  // placeholder on arrival.
+  useEffect(() => {
+    let cancelled = false;
+    const prefetch = async () => {
+      try {
+        const cachedUrl = sessionStorage.getItem(QR_CACHE_KEY);
+        const cachedAt = Number(sessionStorage.getItem(QR_CACHE_TS_KEY) || 0);
+        if (cachedUrl && Date.now() - cachedAt < QR_CACHE_TTL_MS) {
+          // Warm the browser image cache so /pay renders instantly.
+          const img = new Image();
+          img.src = cachedUrl;
+          return;
+        }
+        const storage = getStorage(app);
+        const url = await getDownloadURL(ref(storage, 'barcodes/qr.jpg'));
+        if (cancelled) return;
+        sessionStorage.setItem(QR_CACHE_KEY, url);
+        sessionStorage.setItem(QR_CACHE_TS_KEY, String(Date.now()));
+        const img = new Image();
+        img.src = url;
+      } catch {
+        /* network or rules issue — Pay.jsx will fetch on its own */
+      }
+    };
+    prefetch();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -85,12 +122,10 @@ export function AddCash() {
       toast.error('Please enter an amount between ₹50 and ₹1,000,000');
       return;
     }
-    if (!message.trim()) {
-      toast.error('Please provide a message for the payment.');
-      return;
-    }
     window.localStorage.setItem('Amount', parsedAmount);
-    window.localStorage.setItem('PaymentMessage', message);
+    // Note message is no longer collected up-front — the screenshot
+    // submitted on /payconfirm is the proof the admin actually needs.
+    window.localStorage.removeItem('PaymentMessage');
     navigate('/pay');
   };
 
@@ -181,19 +216,6 @@ export function AddCash() {
                   ))}
                 </div>
               </div>
-            </div>
-
-            <div className="mt-6">
-              <label htmlFor="message-input" className="mb-2 block text-sm font-medium text-slate-300">
-                Payment Message
-              </label>
-              <textarea
-                id="message-input"
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                className="min-h-[120px] w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-yellow-400"
-                placeholder="e.g. UTR, payment note, ya extra detail"
-              />
             </div>
 
             <button

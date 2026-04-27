@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { User, Menu, X, Wallet, Bell, Volume2, VolumeX } from "lucide-react";
+import { User, Menu, X, Wallet, Bell } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import useAuthStore from "../store/authStore";
 import { getAuth, signOut } from "firebase/auth";
@@ -7,7 +7,6 @@ import { doc, onSnapshot, collection, query, where, limit } from "firebase/fires
 import { db } from "../firebase";
 import { formatAmount } from "../utils/formatMoney";
 import { buildSessionUser } from "../utils/sessionUser";
-import { useUserSoundContext } from "../contexts/UserSoundContext";
 
 export default function Navbar() {
   const [accountOpen, setAccountOpen] = useState(false);
@@ -18,7 +17,6 @@ export default function Navbar() {
   const logout = useAuthStore((state) => state.logout);
   const auth = getAuth();
   const location = useLocation();
-  const { muted, setMuted, playApproval } = useUserSoundContext();
 
   useEffect(() => {
     if (!user?.uid) return undefined;
@@ -95,19 +93,6 @@ export default function Navbar() {
               )}
             </Link>
 
-            <button
-              onClick={() => {
-                const next = !muted;
-                setMuted(next);
-                if (!next) playApproval(); // chirp once when unmuting so user knows it works
-              }}
-              title={muted ? 'Unmute sounds' : 'Mute sounds'}
-              aria-label={muted ? 'Unmute sounds' : 'Mute sounds'}
-              className="hover:text-yellow-500"
-            >
-              {muted ? <VolumeX size={22} /> : <Volume2 size={22} />}
-            </button>
-
             <div className="relative">
               <button onClick={() => setAccountOpen(!accountOpen)} className="flex items-center gap-1 hover:text-yellow-500">
                 Account <User size={24} />
@@ -150,16 +135,6 @@ export default function Navbar() {
                 </span>
               )}
             </Link>
-            <button
-              onClick={() => {
-                const next = !muted;
-                setMuted(next);
-                if (!next) playApproval();
-              }}
-              aria-label={muted ? 'Unmute sounds' : 'Mute sounds'}
-            >
-              {muted ? <VolumeX size={24} /> : <Volume2 size={24} />}
-            </button>
           </>
         )}
 

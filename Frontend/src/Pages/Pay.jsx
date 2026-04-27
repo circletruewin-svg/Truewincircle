@@ -5,26 +5,47 @@ import { ref, getDownloadURL, getStorage } from 'firebase/storage';
 import { Clock3 } from 'lucide-react';
 import AccountPageShell from '../components/AccountPageShell';
 
+const QR_CACHE_KEY = 'cachedQrUrl';
+const QR_CACHE_TS_KEY = 'cachedQrUrlAt';
+const QR_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+
 const Pay = () => {
   const storage = getStorage(app);
   const [timeLeft, setTimeLeft] = useState(300);
-  const [qrCodeUrl, setQrCodeUrl] = useState('');
+  // Render the cached QR immediately if AddCash already prefetched it;
+  // we still kick off a fresh fetch in the background to pick up admin
+  // updates, but the user sees the QR with zero perceived delay.
+  const [qrCodeUrl, setQrCodeUrl] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(QR_CACHE_KEY);
+      const cachedAt = Number(sessionStorage.getItem(QR_CACHE_TS_KEY) || 0);
+      if (cached && Date.now() - cachedAt < QR_CACHE_TTL_MS) return cached;
+    } catch { /* ignore */ }
+    return '';
+  });
   const navigate = useNavigate();
   const amount = window.localStorage.getItem('Amount');
   const isExpired = timeLeft === 0;
 
   useEffect(() => {
+    let cancelled = false;
     const fetchQrCode = async () => {
       try {
         const qrCodeRef = ref(storage, 'barcodes/qr.jpg');
         const url = await getDownloadURL(qrCodeRef);
+        if (cancelled) return;
         setQrCodeUrl(url);
+        try {
+          sessionStorage.setItem(QR_CACHE_KEY, url);
+          sessionStorage.setItem(QR_CACHE_TS_KEY, String(Date.now()));
+        } catch { /* ignore quota */ }
       } catch (error) {
         console.error("Error fetching QR code:", error);
       }
     };
 
     fetchQrCode();
+    return () => { cancelled = true; };
   }, [storage]);
 
   useEffect(() => {
