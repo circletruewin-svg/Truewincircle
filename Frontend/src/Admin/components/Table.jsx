@@ -273,10 +273,15 @@ const Table = () => {
       </div>
       
       <div className="bg-white rounded-lg shadow-sm p-6 mt-6">
-        <h3 className="text-lg font-semibold mb-4">Update Market Timings for {selectedMarket}</h3>
+        <h3 className="text-lg font-semibold">Update Market Timings for {selectedMarket}</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Enter times in <span className="font-semibold">India Standard Time (IST)</span>. The
+          market will open and close at exactly that IST moment for every user worldwide;
+          users in other timezones see the equivalent in their own local clock.
+        </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-                <label htmlFor="open-time" className="block text-sm font-medium text-gray-700">Open Time</label>
+                <label htmlFor="open-time" className="block text-sm font-medium text-gray-700">Open Time (IST)</label>
                 <input
                     type="time"
                     id="open-time"
@@ -286,7 +291,7 @@ const Table = () => {
                 />
             </div>
             <div>
-                <label htmlFor="close-time" className="block text-sm font-medium text-gray-700">Close Time</label>
+                <label htmlFor="close-time" className="block text-sm font-medium text-gray-700">Close Time (IST)</label>
                 <input
                     type="time"
                     id="close-time"

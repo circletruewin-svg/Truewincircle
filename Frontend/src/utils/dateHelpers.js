@@ -129,3 +129,49 @@ export function isWithinIstWindow(openTime, closeTime) {
   }
   return nowMin >= openMin && nowMin < closeMin;
 }
+
+const IST_DATE_FORMATTER =
+  typeof Intl !== "undefined" && typeof Intl.DateTimeFormat === "function"
+    ? new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      })
+    : null;
+
+// Take a time string like "08:40 PM" (assumed to be in IST, the way
+// the admin entered it) and render it in the viewer's local timezone.
+// e.g. for an admin in Dubai an IST close time of "08:40 PM" should
+// show on screen as "07:10 PM" — the same physical moment, expressed
+// in their local clock.
+export function formatIstTimeInLocal(timeString) {
+  const minutes = parseTimeStringToMinutes(timeString);
+  if (minutes === null) return timeString || "";
+
+  const istHour = Math.floor(minutes / 60);
+  const istMinute = minutes % 60;
+
+  // Build a UTC instant that corresponds to today's IST date at the
+  // given IST hour/minute. We anchor to "today in IST" which is fine
+  // for displaying recurring daily windows.
+  let istDateStr;
+  if (IST_DATE_FORMATTER) {
+    istDateStr = IST_DATE_FORMATTER.format(new Date()); // YYYY-MM-DD
+  } else {
+    const now = new Date();
+    const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+    const ist = new Date(utcMs + 5.5 * 60 * 60000);
+    istDateStr = `${ist.getFullYear()}-${String(ist.getMonth() + 1).padStart(2, "0")}-${String(ist.getDate()).padStart(2, "0")}`;
+  }
+
+  const iso = `${istDateStr}T${String(istHour).padStart(2, "0")}:${String(istMinute).padStart(2, "0")}:00+05:30`;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return timeString || "";
+
+  return date.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}

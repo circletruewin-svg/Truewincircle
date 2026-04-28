@@ -5,7 +5,7 @@ import ResultChart from "../ResultChart";
 import { db } from "../../firebase";
 import { collection, query, where, doc, onSnapshot } from "firebase/firestore";
 import { markets } from "../../marketData";
-import { isWithinIstWindow } from "../../utils/dateHelpers";
+import { isWithinIstWindow, formatIstTimeInLocal } from "../../utils/dateHelpers";
 
 // ✅ TIME FORMAT FIX
 const formatTime12h = (timeString) => {
@@ -184,8 +184,8 @@ const MarketCard = ({ marketName }) => {
 
           {/* TIME */}
           <div className="flex justify-between w-full text-sm mt-4 px-2">
-            <p><b>Open:</b> {formatTime12h(openTime)}</p>
-            <p><b>Close:</b> {formatTime12h(closeTime)}</p>
+            <p><b>Open:</b> {formatIstTimeInLocal(openTime)}</p>
+            <p><b>Close:</b> {formatIstTimeInLocal(closeTime)}</p>
           </div>
 
         </div>
