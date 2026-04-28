@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
-import { doc, setDoc, query, collection, where, getDocs } from "firebase/firestore";
+import { doc, setDoc, query, collection, where, getDocs, getDoc, deleteDoc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import { auth, db } from "../firebase";
@@ -114,22 +114,50 @@ const PhoneSignUp = () => {
         }
       }
 
+      // If an admin pre-staged this account from the admin panel, merge
+      // their pre-set name + welcome bonus into the new user doc and
+      // clear the pendingUsers entry.
+      let preName = '';
+      let preBalance = 0;
+      let preWinning = 0;
+      try {
+        const pendingRef = doc(db, "pendingUsers", user.phoneNumber);
+        const pendingSnap = await getDoc(pendingRef);
+        if (pendingSnap.exists()) {
+          const data = pendingSnap.data();
+          preName = String(data.name || '').trim();
+          preBalance = Number(data.balance) || 0;
+          preWinning = Number(data.winningMoney) || 0;
+        }
+      } catch (preErr) {
+        console.warn("Pending user lookup failed:", preErr);
+      }
+
       await setDoc(
         userDocRef,
         {
           phoneNumber: user.phoneNumber,
-          name,
+          name: name || preName || '',
           role: "user",
           referralCode: generatedReferralCode,
           referredBy: referrerId,
-          balance: 0,
-          winningMoney: 0,
+          balance: preBalance,
+          winningMoney: preWinning,
           appName: "truewin",
           createdAt: new Date(),
           referralBonusAwarded: false,
         },
         { merge: true }
       );
+
+      // Best-effort cleanup; rules allow the matching user to delete it.
+      if (preName || preBalance || preWinning) {
+        try { await deleteDoc(doc(db, "pendingUsers", user.phoneNumber)); }
+        catch (delErr) { console.warn("Failed to clear pending entry:", delErr); }
+        if (preBalance || preWinning) {
+          toast.success(`Welcome bonus applied: ₹${preBalance + preWinning}`);
+        }
+      }
 
       toast.success("Sign in successful!");
       navigate("/");

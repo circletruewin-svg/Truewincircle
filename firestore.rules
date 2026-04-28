@@ -42,6 +42,18 @@ service cloud.firestore {
       }
     }
 
+    // Pre-staged user accounts. Admin creates a /pendingUsers/{phone}
+    // doc from the admin panel (phone format: "+91XXXXXXXXXX"). When the
+    // matching phone signs in for the first time, the SignIn / SignUp
+    // pages copy the doc into users/{uid} and delete the pending entry.
+    // Read + delete are allowed for the admin OR the user whose verified
+    // phone token matches the doc id; create / update are admin-only.
+    match /pendingUsers/{phoneId} {
+      allow read, delete: if isAdmin() ||
+        (request.auth != null && request.auth.token.phone_number == phoneId);
+      allow create, update: if isAdmin();
+    }
+
     // Aviator rounds — public state ONLY. Backend writes the live
     // round status here. The secret crash point lives in
     // aviator_secrets and is not readable by clients.

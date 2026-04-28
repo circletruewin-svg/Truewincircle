@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot, query, doc, updateDoc, writeBatch, where } from 'firebase/firestore';
+import { collection, onSnapshot, query, doc, updateDoc, writeBatch, where, setDoc, serverTimestamp, getDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import Loader from '../../components/Loader';
 import UserBettingHistory from './UserBettingHistory';
@@ -14,6 +14,76 @@ const AllUsers = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+
+  // "Create user" modal state. Admin can pre-stage an account for a
+  // phone number that hasn't signed up yet. When the user later signs
+  // in with their phone OTP, the merge logic in PhoneSignUp.jsx /
+  // PhoneSignIn.jsx picks up the pendingUsers doc and applies the
+  // welcome bonus.
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createName, setCreateName] = useState('');
+  const [createPhone, setCreatePhone] = useState('');
+  const [createBalance, setCreateBalance] = useState('');
+  const [createWinning, setCreateWinning] = useState('');
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [createSuccess, setCreateSuccess] = useState('');
+
+  const resetCreateForm = () => {
+    setCreateName(''); setCreatePhone('');
+    setCreateBalance(''); setCreateWinning('');
+    setCreateError(''); setCreateSuccess('');
+  };
+
+  const handleCreateUser = async () => {
+    setCreateError(''); setCreateSuccess('');
+    const trimmedName = createName.trim();
+    const cleanPhone = createPhone.replace(/\D/g, '');
+    if (trimmedName.length < 2) { setCreateError('Enter a valid name'); return; }
+    if (cleanPhone.length !== 10) { setCreateError('Enter a 10-digit mobile number'); return; }
+    const balance = Number(createBalance) || 0;
+    const winning = Number(createWinning) || 0;
+    if (balance < 0 || winning < 0) { setCreateError('Bonus amounts cannot be negative'); return; }
+
+    const phoneId = '+91' + cleanPhone;
+    setCreateBusy(true);
+    try {
+      // If a real account already exists with this phone, don't shadow it.
+      const existing = users.find(u => u.phoneNumber === phoneId);
+      if (existing) {
+        setCreateError(`A user with this phone already exists (${existing.name || existing.id}).`);
+        setCreateBusy(false);
+        return;
+      }
+      // Don't overwrite if another admin already pre-staged this number.
+      const pendingRef = doc(db, 'pendingUsers', phoneId);
+      const pendingSnap = await getDoc(pendingRef);
+      if (pendingSnap.exists()) {
+        if (!window.confirm('A pending account already exists for this number. Overwrite it?')) {
+          setCreateBusy(false);
+          return;
+        }
+      }
+
+      await setDoc(pendingRef, {
+        name: trimmedName,
+        phoneNumber: phoneId,
+        balance,
+        winningMoney: winning,
+        appName: 'truewin',
+        createdAt: serverTimestamp(),
+        createdByAdmin: true,
+      });
+      setCreateSuccess(`Account staged for ${trimmedName} (${phoneId}). It activates the moment they log in with OTP.`);
+      // Keep modal open briefly so the admin sees the success line.
+      setTimeout(() => { setCreateOpen(false); resetCreateForm(); }, 1800);
+    } catch (err) {
+      console.error('Create user failed:', err);
+      setCreateError(err.message || 'Failed to create user');
+    } finally {
+      setCreateBusy(false);
+    }
+  };
 
   // Real-time subscription so balance / winningMoney / suspended state
   // changes propagate to the admin's table without a page refresh — for
@@ -185,7 +255,108 @@ const AllUsers = () => {
           onChange={(e) => setSearchTerm(e.target.value)}
           className="flex-1 max-w-md p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
         />
+        <button
+          onClick={() => { resetCreateForm(); setCreateOpen(true); }}
+          className="px-4 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+        >
+          + Create User
+        </button>
       </div>
+
+      {createOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-800">Create User Account</h3>
+              <button
+                onClick={() => { setCreateOpen(false); resetCreateForm(); }}
+                className="text-gray-400 hover:text-gray-700 text-2xl leading-none"
+              >×</button>
+            </div>
+
+            <p className="text-xs text-gray-500 mb-4 leading-relaxed">
+              Enter the user's details. The account will activate as soon as they sign in with their phone OTP — name and bonus are applied automatically. Existing accounts are not modified.
+            </p>
+
+            <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+            <input
+              type="text"
+              value={createName}
+              onChange={(e) => { setCreateName(e.target.value); setCreateError(''); }}
+              placeholder="e.g. Rahul Sharma"
+              className="w-full mb-3 p-2.5 border rounded-lg text-sm"
+            />
+
+            <label className="block text-sm font-medium text-gray-700 mb-1">Mobile number</label>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="px-3 py-2.5 bg-gray-100 border rounded-lg text-sm font-semibold text-gray-700">+91</span>
+              <input
+                type="tel"
+                inputMode="numeric"
+                value={createPhone}
+                onChange={(e) => {
+                  setCreatePhone(e.target.value.replace(/\D/g, '').slice(0, 10));
+                  setCreateError('');
+                }}
+                placeholder="10-digit number"
+                className="flex-1 p-2.5 border rounded-lg text-sm tracking-wide"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Welcome balance</label>
+                <input
+                  type="number"
+                  value={createBalance}
+                  onChange={(e) => setCreateBalance(e.target.value)}
+                  placeholder="0"
+                  min="0"
+                  className="w-full p-2.5 border rounded-lg text-sm"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">Used to play (deposit-style)</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Welcome winning</label>
+                <input
+                  type="number"
+                  value={createWinning}
+                  onChange={(e) => setCreateWinning(e.target.value)}
+                  placeholder="0"
+                  min="0"
+                  className="w-full p-2.5 border rounded-lg text-sm"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">Withdrawable winnings</p>
+              </div>
+            </div>
+
+            {createError && (
+              <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">
+                {createError}
+              </div>
+            )}
+            {createSuccess && (
+              <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2 mb-3">
+                {createSuccess}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setCreateOpen(false); resetCreateForm(); }}
+                className="flex-1 px-4 py-2.5 bg-gray-200 text-gray-800 font-semibold rounded-lg hover:bg-gray-300"
+              >Cancel</button>
+              <button
+                onClick={handleCreateUser}
+                disabled={createBusy}
+                className="flex-1 px-4 py-2.5 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                {createBusy ? 'Creating…' : 'Create Account'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectionCount > 0 && (
         <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3 flex flex-wrap items-center gap-2">

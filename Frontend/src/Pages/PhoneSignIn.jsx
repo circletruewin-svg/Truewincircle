@@ -3,7 +3,7 @@ import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import { auth, db } from "../firebase";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, deleteDoc } from "firebase/firestore";
 import useAuthStore from "../store/authStore";
 import PhoneInput from "react-phone-input-2";
 import "react-phone-input-2/lib/style.css";
@@ -97,9 +97,34 @@ const PhoneSignIn = () => {
         toast.success("Sign in successful!");
         navigate("/");
       } else {
-        toast.error("Please sign up first.");
-        await auth.signOut();
-        navigate("/testphonesignup");
+        // No user doc yet — check if an admin pre-staged this account.
+        // If yes, materialise the real user doc here so the login can
+        // proceed without bouncing them to /signup.
+        const pendingRef = doc(db, "pendingUsers", user.phoneNumber);
+        const pendingSnap = await getDoc(pendingRef);
+        if (pendingSnap.exists()) {
+          const data = pendingSnap.data();
+          const newUserData = {
+            phoneNumber: user.phoneNumber,
+            name: String(data.name || '').trim(),
+            role: "user",
+            balance: Number(data.balance) || 0,
+            winningMoney: Number(data.winningMoney) || 0,
+            appName: "truewin",
+            createdAt: new Date(),
+            referralBonusAwarded: false,
+          };
+          await setDoc(userRef, newUserData, { merge: true });
+          try { await deleteDoc(pendingRef); }
+          catch (delErr) { console.warn("Failed to clear pending entry:", delErr); }
+          login(buildSessionUser(user, newUserData));
+          toast.success(`Welcome ${newUserData.name || ''}! Your account is ready.`);
+          navigate("/");
+        } else {
+          toast.error("Please sign up first.");
+          await auth.signOut();
+          navigate("/testphonesignup");
+        }
       }
     } catch (err) {
       console.error("OTP verify error:", err);
