@@ -21,6 +21,7 @@ const HARUF_PAYOUT_MULTIPLIER = 90;
 const ROUND_DURATION_MINUTES = 1; // Each round lasts for 1 minute.
 
 import { markets } from "../marketData";
+import { isWithinIstWindow, parseTimeStringToMinutes } from "../utils/dateHelpers";
 
 
 const BetBox = ({ num, value, onChange }) => {
@@ -66,65 +67,25 @@ const HarufGrid = ({ marketName }) => {
     return unsubscribe;
   }, [marketName]);
 
+  // Market open/close window is always evaluated in IST so a player
+  // in Dubai/UAE/etc. sees the same cut-off as a player in India and
+  // can't sneak bets in past the IST close time.
   useEffect(() => {
-    const parseTime = (timeString) => {
-      if (!timeString) return null;
-      const now = new Date();
-      // Support HH:mm format (from <input type="time" />) or h:mm AM/PM
-      const parts24 = timeString.match(/^(\d{1,2}):(\d{2})$/);
-      const parts12 = timeString.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-
-      let hours, minutes;
-      if (parts24) {
-        hours = parseInt(parts24[1], 10);
-        minutes = parseInt(parts24[2], 10);
-      } else if (parts12) {
-        hours = parseInt(parts12[1], 10);
-        minutes = parseInt(parts12[2], 10);
-        const ampm = parts12[3].toUpperCase();
-        if (ampm === "PM" && hours < 12) hours += 12;
-        if (ampm === "AM" && hours === 12) hours = 0;
-      } else {
-        return null;
-      }
-      now.setHours(hours, minutes, 0, 0);
-      return now;
-    };
-
     const checkMarketStatus = () => {
       const { openTime, closeTime } = marketTimings;
-      if (openTime && closeTime) {
-        const now = new Date();
-        const openDate = parseTime(openTime);
-        const closeDate = parseTime(closeTime);
-
-        if (!openDate || !closeDate) {
-          setMarketStatus({ isOpen: false, message: "Invalid market timings." });
-          return;
-        }
-
-        let currentlyOpen = false;
-        // Handles overnight markets (e.g., opens 8 PM, closes 5 AM)
-        if (closeDate < openDate) {
-          if (now >= openDate || now < closeDate) {
-            currentlyOpen = true;
-          }
-        } else { // Handles markets within the same day
-          if (now >= openDate && now < closeDate) {
-            currentlyOpen = true;
-          }
-        }
-
-        let message;
-        if (currentlyOpen) {
-          message = `Market is open.`;
-        } else {
-          message = `Market is currently closed.`;
-        }
-        setMarketStatus({ isOpen: currentlyOpen, message });
-      } else {
-        setMarketStatus({ isOpen: true, message: 'Market timings not set.' });
+      if (!openTime || !closeTime) {
+        setMarketStatus({ isOpen: true, message: "Market timings not set." });
+        return;
       }
+      if (parseTimeStringToMinutes(openTime) === null || parseTimeStringToMinutes(closeTime) === null) {
+        setMarketStatus({ isOpen: false, message: "Invalid market timings." });
+        return;
+      }
+      const open = isWithinIstWindow(openTime, closeTime);
+      setMarketStatus({
+        isOpen: open,
+        message: open ? "Market is open." : "Market is currently closed.",
+      });
     };
     checkMarketStatus();
     const intervalId = setInterval(checkMarketStatus, 15000);

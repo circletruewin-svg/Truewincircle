@@ -5,6 +5,7 @@ import ResultChart from "../ResultChart";
 import { db } from "../../firebase";
 import { collection, query, where, doc, onSnapshot } from "firebase/firestore";
 import { markets } from "../../marketData";
+import { isWithinIstWindow } from "../../utils/dateHelpers";
 
 // ✅ TIME FORMAT FIX
 const formatTime12h = (timeString) => {
@@ -56,34 +57,17 @@ const MarketCard = ({ marketName }) => {
     return () => unsubscribe();
   }, [marketName]);
 
-  // 🔥 MARKET STATUS
-  const parseTime = (timeString) => {
-    if (!timeString || timeString === "..") return null;
-
-    const now = new Date();
-    const parts = timeString.match(/(\d+):(\d+)/);
-    if (!parts) return null;
-
-    const hours = parseInt(parts[1]);
-    const minutes = parseInt(parts[2]);
-
-    now.setHours(hours, minutes, 0, 0);
-    return now;
-  };
-
+  // 🔥 MARKET STATUS — always evaluated in IST (Asia/Kolkata) so a
+  // user in Dubai or any other zone sees the same window as a user
+  // in India. Without this, devices on a different zone could place
+  // bets after the IST cut-off (or be blocked before the open time).
   useEffect(() => {
     const check = () => {
-      const now = new Date();
-      const openDate = parseTime(openTime);
-      const closeDate = parseTime(closeTime);
-
-      if (!openDate || !closeDate) return setIsMarketOpen(false);
-
-      if (closeDate < openDate) {
-        setIsMarketOpen(now >= openDate || now < closeDate);
-      } else {
-        setIsMarketOpen(now >= openDate && now < closeDate);
+      if (!openTime || openTime === ".." || !closeTime || closeTime === "..") {
+        setIsMarketOpen(false);
+        return;
       }
+      setIsMarketOpen(isWithinIstWindow(openTime, closeTime));
     };
 
     check();
