@@ -98,24 +98,32 @@ const PhoneSignIn = () => {
         navigate("/");
       } else {
         // No user doc yet — check if an admin pre-staged this account.
-        // If yes, materialise the real user doc here so the login can
-        // proceed without bouncing them to /signup.
-        const pendingRef = doc(db, "pendingUsers", user.phoneNumber);
-        const pendingSnap = await getDoc(pendingRef);
-        if (pendingSnap.exists()) {
-          const data = pendingSnap.data();
+        // The lookup is wrapped in its own try/catch so a permissions
+        // glitch (e.g. rules not deployed yet) doesn't kill the whole
+        // OTP flow — we just fall through to the normal "please sign
+        // up" path.
+        let pendingData = null;
+        try {
+          const pendingRef = doc(db, "pendingUsers", user.phoneNumber);
+          const pendingSnap = await getDoc(pendingRef);
+          if (pendingSnap.exists()) pendingData = pendingSnap.data();
+        } catch (pendErr) {
+          console.warn("Pending user lookup failed (non-fatal):", pendErr);
+        }
+
+        if (pendingData) {
           const newUserData = {
             phoneNumber: user.phoneNumber,
-            name: String(data.name || '').trim(),
+            name: String(pendingData.name || '').trim(),
             role: "user",
-            balance: Number(data.balance) || 0,
-            winningMoney: Number(data.winningMoney) || 0,
+            balance: Number(pendingData.balance) || 0,
+            winningMoney: Number(pendingData.winningMoney) || 0,
             appName: "truewin",
             createdAt: new Date(),
             referralBonusAwarded: false,
           };
           await setDoc(userRef, newUserData, { merge: true });
-          try { await deleteDoc(pendingRef); }
+          try { await deleteDoc(doc(db, "pendingUsers", user.phoneNumber)); }
           catch (delErr) { console.warn("Failed to clear pending entry:", delErr); }
           login(buildSessionUser(user, newUserData));
           toast.success(`Welcome ${newUserData.name || ''}! Your account is ready.`);
