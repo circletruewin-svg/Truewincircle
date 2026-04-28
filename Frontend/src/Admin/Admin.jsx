@@ -224,7 +224,6 @@ const AdminDashboard = () => {
   const REFERRAL_COMMISSION_RATE = 0.10;
 
   const handlePaymentApproval = async (paymentId, action, userId, amount, reason = null) => {
-    let notifyReferrer = null;
     try {
       await runTransaction(db, async (transaction) => {
         const paymentRef = doc(db, 'top-ups', paymentId);
@@ -264,11 +263,6 @@ const AdminDashboard = () => {
               createdAt: new Date(),
               paidAt: null,
             });
-            notifyReferrer = {
-              referrerId: userData.referredBy,
-              commission: commissionAmount,
-              referredName: userData.name,
-            };
           }
         }
 
@@ -295,15 +289,6 @@ const AdminDashboard = () => {
           title: `Deposit of ${formatCurrency(amount)} rejected`,
           body: reason || 'Please contact support for details.',
           link: '/addcash',
-        });
-      }
-
-      if (notifyReferrer) {
-        await createNotification(notifyReferrer.referrerId, {
-          type: 'referral',
-          title: `Referral commission ${formatCurrency(notifyReferrer.commission)} pending`,
-          body: `${notifyReferrer.referredName || 'Your referred user'} made a deposit. The 10% commission will be paid out by the team.`,
-          link: '/refer',
         });
       }
 
