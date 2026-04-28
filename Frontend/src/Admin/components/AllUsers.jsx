@@ -178,7 +178,22 @@ const AllUsers = () => {
       usersQuery,
       (snapshot) => {
         const usersList = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-        usersList.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        // Sort: most recently active users first (lastActiveAt is
+        // bumped on every bet placement, deposit submission, or
+        // withdrawal). Users without any recorded activity fall back
+        // to alphabetical order at the bottom of the list.
+        const tsOf = (u) => {
+          const v = u.lastActiveAt;
+          if (!v) return 0;
+          if (typeof v?.toDate === 'function') return v.toDate().getTime();
+          const t = new Date(v).getTime();
+          return Number.isFinite(t) ? t : 0;
+        };
+        usersList.sort((a, b) => {
+          const diff = tsOf(b) - tsOf(a);
+          if (diff !== 0) return diff;
+          return (a.name || '').localeCompare(b.name || '');
+        });
         setUsers(usersList);
         setLoading(false);
       },
@@ -255,6 +270,55 @@ const AllUsers = () => {
   };
 
   const clearSelection = () => setSelectedIds(new Set());
+
+  // Bulk "Set Referrer" — links every selected user to a single
+  // referrer in one go. Useful when a referrer hands over a list
+  // of names like "ye sab mere log hain".
+  const [bulkReferrerOpen, setBulkReferrerOpen] = useState(false);
+  const [bulkReferrerSearch, setBulkReferrerSearch] = useState('');
+  const bulkReferrerCandidates = useMemo(() => {
+    if (!bulkReferrerOpen) return [];
+    const term = bulkReferrerSearch.trim().toLowerCase();
+    return users
+      .filter((u) => !selectedIds.has(u.id)) // can't set a selected user as their own referrer
+      .filter((u) => {
+        if (!term) return true;
+        return [u.name, u.phoneNumber, u.email]
+          .filter(Boolean)
+          .map((s) => String(s).toLowerCase())
+          .some((s) => s.includes(term));
+      })
+      .slice(0, 30);
+  }, [bulkReferrerOpen, bulkReferrerSearch, users, selectedIds]);
+
+  const runBulkSetReferrer = async (referrerId, referrerName) => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    if (!window.confirm(
+      `Set ${referrerName || 'this user'} as the referrer for ${ids.length} selected user${ids.length > 1 ? 's' : ''}? ` +
+      `Future deposits by them will accrue 10% commission to ${referrerName || 'this user'}.`
+    )) return;
+    setBulkBusy(true);
+    try {
+      for (let i = 0; i < ids.length; i += 400) {
+        const chunk = ids.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach((id) => batch.update(doc(db, 'users', id), {
+          referredBy: referrerId,
+          referrerSetByAdmin: true,
+        }));
+        await batch.commit();
+      }
+      setBulkReferrerOpen(false);
+      setBulkReferrerSearch('');
+      clearSelection();
+    } catch (err) {
+      console.error('Bulk set referrer failed:', err);
+      setError('Bulk set referrer failed. Check console.');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   const runBulkUpdate = async (label, updates) => {
     const ids = Array.from(selectedIds);
@@ -520,6 +584,13 @@ const AllUsers = () => {
             Remove admin
           </button>
           <button
+            onClick={() => { setBulkReferrerSearch(''); setBulkReferrerOpen(true); }}
+            disabled={bulkBusy}
+            className="bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 rounded"
+          >
+            Set Referrer
+          </button>
+          <button
             onClick={exportCsv}
             disabled={bulkBusy}
             className="bg-slate-700 hover:bg-slate-800 disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 rounded"
@@ -637,6 +708,68 @@ const AllUsers = () => {
           </tbody>
         </table>
       </div>
+
+      {bulkReferrerOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">Bulk Set Referrer</h3>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  Linking <span className="font-semibold">{selectedIds.size}</span> selected user{selectedIds.size !== 1 ? 's' : ''} to one referrer
+                </p>
+              </div>
+              <button
+                onClick={() => setBulkReferrerOpen(false)}
+                className="text-gray-400 hover:text-gray-700 text-2xl leading-none"
+              >×</button>
+            </div>
+
+            <p className="text-xs text-gray-500 mb-2">
+              Pick the user who should receive 10% commission on every approved deposit by every selected user.
+              Applies to <em>future</em> deposits only.
+            </p>
+
+            <input
+              type="text"
+              value={bulkReferrerSearch}
+              onChange={(e) => setBulkReferrerSearch(e.target.value)}
+              placeholder="Search by name or phone…"
+              className="w-full mb-3 p-2.5 border rounded-lg text-sm"
+              autoFocus
+            />
+
+            <div className="border rounded-lg max-h-64 overflow-y-auto">
+              {bulkReferrerCandidates.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-6">No matching users</p>
+              ) : bulkReferrerCandidates.map((u) => (
+                <button
+                  key={u.id}
+                  onClick={() => runBulkSetReferrer(u.id, u.name)}
+                  disabled={bulkBusy}
+                  className="w-full text-left p-3 border-b last:border-b-0 hover:bg-gray-50 disabled:opacity-50 flex items-center justify-between"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{u.name || 'Unnamed'}</p>
+                    <p className="text-xs text-gray-500 truncate">{u.phoneNumber || u.email || u.id.slice(0, 12)}</p>
+                  </div>
+                  <span className="text-xs text-purple-600 font-semibold whitespace-nowrap ml-2">
+                    Link →
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <div className="flex justify-end mt-4">
+              <button
+                onClick={() => setBulkReferrerOpen(false)}
+                disabled={bulkBusy}
+                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold rounded-lg text-sm"
+              >Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {referrerModal.open && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from "react-router-dom";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, runTransaction, collection, query, where, orderBy, limit, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, runTransaction, collection, query, where, orderBy, limit, onSnapshot, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 import { toast } from "react-toastify";
 import { ArrowLeft, CheckCircle, Clock, IndianRupee, XCircle } from "lucide-react";
@@ -207,7 +207,10 @@ const Withdraw = () => {
           throw new Error("Insufficient winning money for withdrawal.");
         }
 
-        transaction.update(userRef, { winningMoney: currentWinningMoney - withdrawalAmount });
+        transaction.update(userRef, {
+          winningMoney: currentWinningMoney - withdrawalAmount,
+          lastActiveAt: serverTimestamp(),
+        });
 
         const withdrawalsCollectionRef = collection(db, 'withdrawals');
         transaction.set(doc(withdrawalsCollectionRef), {

@@ -28,13 +28,21 @@ const WithdrawApproval = ({ withdrawals, userDetails, handleWithdrawalApproval }
 
   const filteredWithdrawals = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    if (!term) return withdrawals;
-    return withdrawals.filter(withdrawal => {
+    const matched = !term ? withdrawals : withdrawals.filter((withdrawal) => {
       const user = userDetails[withdrawal.userId] || {};
       const name = (withdrawal.name || user.name || '').toLowerCase();
       const phone = (user.phoneNumber || '').toLowerCase();
       return name.includes(term) || phone.includes(term);
     });
+    // Newest first.
+    const tsOf = (w) => {
+      const v = w.createdAt;
+      if (!v) return 0;
+      if (v?.toDate) return v.toDate().getTime();
+      const t = new Date(v).getTime();
+      return Number.isFinite(t) ? t : 0;
+    };
+    return [...matched].sort((a, b) => tsOf(b) - tsOf(a));
   }, [withdrawals, userDetails, searchTerm]);
 
   return (

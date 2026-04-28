@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { getAuth } from "firebase/auth";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { addDoc, collection, doc, getDoc, limit, onSnapshot, query, where } from "firebase/firestore";
+import { addDoc, collection, doc, getDoc, limit, onSnapshot, query, serverTimestamp, setDoc, where } from "firebase/firestore";
 import { db } from "../firebase";
 import AccountPageShell from '../components/AccountPageShell';
 
@@ -116,6 +116,12 @@ export default function PaymentConfirmation() {
         paymentProof: proofUrl,
         createdAt: new Date().toISOString(),
       });
+
+      // Bump lastActiveAt so the user shows up at the top of the
+      // admin's All Users list right after submitting.
+      try {
+        await setDoc(userDocRef, { lastActiveAt: serverTimestamp() }, { merge: true });
+      } catch { /* non-fatal */ }
 
       // Done — clear the request-specific bits so the next deposit starts
       // fresh, but DON'T touch any other pending request the user has.

@@ -1,6 +1,15 @@
-import { doc, runTransaction } from "firebase/firestore";
+import { doc, runTransaction, serverTimestamp } from "firebase/firestore";
 
 const roundMoney = (value) => Math.round((Number(value) || 0) * 100) / 100;
+
+// All client-side balance writes go through these helpers, so stamping
+// lastActiveAt here is the cheapest way to keep the admin's "All Users"
+// list sorted by who's actually playing right now — every bet placement
+// in any game bumps this field.
+const withActivity = (update) => ({
+  ...update,
+  lastActiveAt: serverTimestamp(),
+});
 
 export function getUserFunds(userData = {}) {
   const balance = roundMoney(userData.balance ?? userData.walletBalance ?? 0);
@@ -27,11 +36,11 @@ export function buildFundsDeductionUpdate(userData, amount) {
   remainingDebit = roundMoney(remainingDebit - fromBalance);
   const nextWinningMoney = roundMoney(winningMoney - remainingDebit);
 
-  return {
+  return withActivity({
     balance: nextBalance,
     winningMoney: nextWinningMoney,
     walletBalance: nextBalance,
-  };
+  });
 }
 
 export function getFundsDeductionResult(userData, amount) {
@@ -48,11 +57,11 @@ export function getFundsDeductionResult(userData, amount) {
   return {
     debitedFromBalance,
     debitedFromWinnings,
-    update: {
+    update: withActivity({
       balance: roundMoney(balance - debitedFromBalance),
       winningMoney: roundMoney(winningMoney - debitedFromWinnings),
       walletBalance: roundMoney(balance - debitedFromBalance),
-    },
+    }),
   };
 }
 
@@ -60,11 +69,11 @@ export function buildWinningsCreditUpdate(userData, amount) {
   const { balance, winningMoney } = getUserFunds(userData);
   const winnings = roundMoney(amount);
 
-  return {
+  return withActivity({
     balance,
     winningMoney: roundMoney(winningMoney + winnings),
     walletBalance: balance,
-  };
+  });
 }
 
 export async function debitUserFunds(db, userId, amount) {

@@ -99,13 +99,21 @@ const PaymentApproval = ({ payments, userDetails, handlePaymentApproval, handleD
 
   const filteredPayments = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    if (!term) return payments;
-    return payments.filter(payment => {
+    const matched = !term ? payments : payments.filter((payment) => {
       const user = userDetails[payment.userId] || {};
       const name = (payment.name || user.name || '').toLowerCase();
       const phone = (user.phoneNumber || '').toLowerCase();
       return name.includes(term) || phone.includes(term);
     });
+    // Newest first — admin almost always wants the latest deposit on top.
+    const tsOf = (p) => {
+      const v = p.createdAt;
+      if (!v) return 0;
+      if (v?.toDate) return v.toDate().getTime();
+      const t = new Date(v).getTime();
+      return Number.isFinite(t) ? t : 0;
+    };
+    return [...matched].sort((a, b) => tsOf(b) - tsOf(a));
   }, [payments, userDetails, searchTerm]);
 
   return (
