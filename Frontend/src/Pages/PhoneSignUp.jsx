@@ -115,11 +115,12 @@ const PhoneSignUp = () => {
       }
 
       // If an admin pre-staged this account from the admin panel, merge
-      // their pre-set name + welcome bonus into the new user doc and
-      // clear the pendingUsers entry.
+      // their pre-set name + welcome bonus + referrer into the new user
+      // doc and clear the pendingUsers entry.
       let preName = '';
       let preBalance = 0;
       let preWinning = 0;
+      let preReferrer = null;
       try {
         const pendingRef = doc(db, "pendingUsers", user.phoneNumber);
         const pendingSnap = await getDoc(pendingRef);
@@ -128,6 +129,7 @@ const PhoneSignUp = () => {
           preName = String(data.name || '').trim();
           preBalance = Number(data.balance) || 0;
           preWinning = Number(data.winningMoney) || 0;
+          preReferrer = data.referredBy || null;
         }
       } catch (preErr) {
         console.warn("Pending user lookup failed:", preErr);
@@ -140,7 +142,10 @@ const PhoneSignUp = () => {
           name: name || preName || '',
           role: "user",
           referralCode: generatedReferralCode,
-          referredBy: referrerId,
+          // User-entered referral code wins; falls back to whatever the
+          // admin pre-staged (so the "is naam wala user mera hai" flow
+          // works even if the user signs up without entering a code).
+          referredBy: referrerId || preReferrer,
           balance: preBalance,
           winningMoney: preWinning,
           appName: "truewin",

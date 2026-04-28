@@ -15,6 +15,82 @@ const AllUsers = () => {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
+  // "Set referrer" modal — lets admin assign or change a user's
+  // referredBy without the user having to enter the code at signup.
+  // Useful when a referrer says "is naam wala user mera hai" after
+  // the user is already registered.
+  const [referrerModal, setReferrerModal] = useState({ open: false, target: null });
+  const [referrerSearch, setReferrerSearch] = useState('');
+  const [referrerBusy, setReferrerBusy] = useState(false);
+
+  const referrerCandidates = useMemo(() => {
+    if (!referrerModal.open) return [];
+    const term = referrerSearch.trim().toLowerCase();
+    const targetId = referrerModal.target?.id;
+    return users
+      .filter((u) => u.id !== targetId) // can't set self as referrer
+      .filter((u) => {
+        if (!term) return true;
+        return [u.name, u.phoneNumber, u.email]
+          .filter(Boolean)
+          .map((s) => String(s).toLowerCase())
+          .some((s) => s.includes(term));
+      })
+      .slice(0, 30);
+  }, [referrerModal, referrerSearch, users]);
+
+  const openSetReferrer = (user) => {
+    setReferrerSearch('');
+    setReferrerModal({ open: true, target: user });
+  };
+
+  const setUserReferrer = async (referrerUid, referrerName) => {
+    if (!referrerModal.target || referrerBusy) return;
+    const target = referrerModal.target;
+    if (referrerUid === target.id) {
+      alert("A user can't be their own referrer.");
+      return;
+    }
+    if (!window.confirm(
+      `Set ${referrerName || referrerUid.slice(0, 8)} as ${target.name || 'this user'}'s referrer? ` +
+      `From now on, every approved deposit by ${target.name || 'this user'} will accrue 10% commission to ${referrerName || 'them'}.`
+    )) return;
+
+    setReferrerBusy(true);
+    try {
+      await updateDoc(doc(db, 'users', target.id), {
+        referredBy: referrerUid,
+        referrerSetByAdmin: true,
+        referrerSetAt: serverTimestamp(),
+      });
+      setReferrerModal({ open: false, target: null });
+    } catch (err) {
+      console.error('Set referrer failed:', err);
+      alert('Failed to set referrer: ' + (err.message || 'unknown error'));
+    } finally {
+      setReferrerBusy(false);
+    }
+  };
+
+  const clearUserReferrer = async () => {
+    if (!referrerModal.target || referrerBusy) return;
+    const target = referrerModal.target;
+    if (!window.confirm(
+      `Remove referrer from ${target.name || 'this user'}? Future deposits will no longer accrue any commission.`
+    )) return;
+
+    setReferrerBusy(true);
+    try {
+      await updateDoc(doc(db, 'users', target.id), { referredBy: null });
+      setReferrerModal({ open: false, target: null });
+    } catch (err) {
+      console.error('Clear referrer failed:', err);
+      alert('Failed: ' + (err.message || 'unknown'));
+    } finally {
+      setReferrerBusy(false);
+    }
+  };
+
   // "Create user" modal state. Admin can pre-stage an account for a
   // phone number that hasn't signed up yet. When the user later signs
   // in with their phone OTP, the merge logic in PhoneSignUp.jsx /
@@ -25,6 +101,8 @@ const AllUsers = () => {
   const [createPhone, setCreatePhone] = useState('');
   const [createBalance, setCreateBalance] = useState('');
   const [createWinning, setCreateWinning] = useState('');
+  const [createReferrerId, setCreateReferrerId] = useState('');
+  const [createReferrerLabel, setCreateReferrerLabel] = useState('');
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState('');
   const [createSuccess, setCreateSuccess] = useState('');
@@ -32,6 +110,7 @@ const AllUsers = () => {
   const resetCreateForm = () => {
     setCreateName(''); setCreatePhone('');
     setCreateBalance(''); setCreateWinning('');
+    setCreateReferrerId(''); setCreateReferrerLabel('');
     setCreateError(''); setCreateSuccess('');
   };
 
@@ -71,6 +150,7 @@ const AllUsers = () => {
         balance,
         winningMoney: winning,
         appName: 'truewin',
+        referredBy: createReferrerId || null,
         createdAt: serverTimestamp(),
         createdByAdmin: true,
       });
@@ -330,6 +410,54 @@ const AllUsers = () => {
               </div>
             </div>
 
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Refer under (optional)
+            </label>
+            {createReferrerId ? (
+              <div className="flex items-center justify-between mb-3 px-3 py-2 bg-purple-50 border border-purple-200 rounded-lg">
+                <div className="min-w-0">
+                  <p className="text-xs text-purple-700 font-semibold">Referrer</p>
+                  <p className="text-sm font-medium text-purple-900 truncate">{createReferrerLabel}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setCreateReferrerId(''); setCreateReferrerLabel(''); }}
+                  className="text-xs text-red-600 hover:text-red-800 font-semibold"
+                >Clear</button>
+              </div>
+            ) : (
+              <div className="mb-3">
+                <input
+                  type="text"
+                  list="create-referrer-options"
+                  placeholder="Search by name or phone (optional)"
+                  className="w-full p-2.5 border rounded-lg text-sm"
+                  onChange={(e) => {
+                    const value = e.target.value.trim().toLowerCase();
+                    if (!value) return;
+                    const match = users.find((u) => {
+                      return [u.name, u.phoneNumber, u.email]
+                        .filter(Boolean)
+                        .some((s) => String(s).toLowerCase() === value);
+                    });
+                    if (match) {
+                      setCreateReferrerId(match.id);
+                      setCreateReferrerLabel(`${match.name || 'Unnamed'}${match.phoneNumber ? ' · ' + match.phoneNumber : ''}`);
+                    }
+                  }}
+                />
+                <datalist id="create-referrer-options">
+                  {users.slice(0, 50).map((u) => (
+                    <option
+                      key={u.id}
+                      value={u.phoneNumber || u.name || u.id}
+                    >{u.name || 'Unnamed'}{u.phoneNumber ? ` (${u.phoneNumber})` : ''}</option>
+                  ))}
+                </datalist>
+                <p className="text-[10px] text-gray-500 mt-1">Type a name or phone — pick from the dropdown.</p>
+              </div>
+            )}
+
             {createError && (
               <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">
                 {createError}
@@ -494,6 +622,13 @@ const AllUsers = () => {
                       >
                         {isSuspended ? 'Unsuspend' : 'Suspend'}
                       </button>
+                      <button
+                        onClick={() => openSetReferrer(user)}
+                        className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-1 px-3 rounded text-xs"
+                        title={user.referredBy ? 'Change referrer' : 'Set a referrer manually'}
+                      >
+                        {user.referredBy ? 'Change Referrer' : 'Set Referrer'}
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -502,6 +637,90 @@ const AllUsers = () => {
           </tbody>
         </table>
       </div>
+
+      {referrerModal.open && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">
+                  {referrerModal.target?.referredBy ? 'Change Referrer' : 'Set Referrer'}
+                </h3>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  for <span className="font-semibold">{referrerModal.target?.name || 'user'}</span>
+                  {referrerModal.target?.phoneNumber && (
+                    <span className="text-gray-400"> ({referrerModal.target.phoneNumber})</span>
+                  )}
+                </p>
+              </div>
+              <button
+                onClick={() => setReferrerModal({ open: false, target: null })}
+                className="text-gray-400 hover:text-gray-700 text-2xl leading-none"
+              >×</button>
+            </div>
+
+            {referrerModal.target?.referredBy && (
+              <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-900">
+                Currently referred by:&nbsp;
+                <span className="font-semibold">
+                  {users.find((u) => u.id === referrerModal.target.referredBy)?.name
+                    || referrerModal.target.referredBy.slice(0, 10) + '…'}
+                </span>
+              </div>
+            )}
+
+            <p className="text-xs text-gray-500 mb-2">
+              Pick the user who should receive 10% commission on every approved deposit by{' '}
+              <span className="font-semibold">{referrerModal.target?.name || 'this user'}</span>.
+              The change applies to <em>future</em> deposits only.
+            </p>
+
+            <input
+              type="text"
+              value={referrerSearch}
+              onChange={(e) => setReferrerSearch(e.target.value)}
+              placeholder="Search by name or phone…"
+              className="w-full mb-3 p-2.5 border rounded-lg text-sm"
+              autoFocus
+            />
+
+            <div className="border rounded-lg max-h-64 overflow-y-auto">
+              {referrerCandidates.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-6">No matching users</p>
+              ) : referrerCandidates.map((u) => (
+                <button
+                  key={u.id}
+                  onClick={() => setUserReferrer(u.id, u.name)}
+                  disabled={referrerBusy}
+                  className="w-full text-left p-3 border-b last:border-b-0 hover:bg-gray-50 disabled:opacity-50 flex items-center justify-between"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{u.name || 'Unnamed'}</p>
+                    <p className="text-xs text-gray-500 truncate">{u.phoneNumber || u.email || u.id.slice(0, 12)}</p>
+                  </div>
+                  <span className="text-xs text-purple-600 font-semibold whitespace-nowrap ml-2">
+                    Set →
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-between gap-2 mt-4">
+              {referrerModal.target?.referredBy ? (
+                <button
+                  onClick={clearUserReferrer}
+                  disabled={referrerBusy}
+                  className="text-sm text-red-600 hover:text-red-800 font-semibold disabled:opacity-50"
+                >Remove referrer</button>
+              ) : <span />}
+              <button
+                onClick={() => setReferrerModal({ open: false, target: null })}
+                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold rounded-lg text-sm"
+              >Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectedUser && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">

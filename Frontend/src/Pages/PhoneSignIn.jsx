@@ -118,6 +118,7 @@ const PhoneSignIn = () => {
             role: "user",
             balance: Number(pendingData.balance) || 0,
             winningMoney: Number(pendingData.winningMoney) || 0,
+            referredBy: pendingData.referredBy || null,
             appName: "truewin",
             createdAt: new Date(),
             referralBonusAwarded: false,
