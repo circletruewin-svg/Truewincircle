@@ -6,7 +6,7 @@ import UserBettingHistory from './UserBettingHistory';
 import UserWinLoss from './UserWinLoss';
 import { formatCurrency } from '../../utils/formatMoney';
 
-const AllUsers = () => {
+const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -178,22 +178,10 @@ const AllUsers = () => {
       usersQuery,
       (snapshot) => {
         const usersList = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-        // Sort: most recently active users first (lastActiveAt is
-        // bumped on every bet placement, deposit submission, or
-        // withdrawal). Users without any recorded activity fall back
-        // to alphabetical order at the bottom of the list.
-        const tsOf = (u) => {
-          const v = u.lastActiveAt;
-          if (!v) return 0;
-          if (typeof v?.toDate === 'function') return v.toDate().getTime();
-          const t = new Date(v).getTime();
-          return Number.isFinite(t) ? t : 0;
-        };
-        usersList.sort((a, b) => {
-          const diff = tsOf(b) - tsOf(a);
-          if (diff !== 0) return diff;
-          return (a.name || '').localeCompare(b.name || '');
-        });
+        // Final sort happens in the filteredUsers useMemo below — it
+        // takes the raw list and combines lastActiveAt with the latest
+        // top-up / withdrawal timestamps so activity from before
+        // lastActiveAt was tracked still bubbles users up.
         setUsers(usersList);
         setLoading(false);
       },
@@ -206,16 +194,9 @@ const AllUsers = () => {
     return () => unsubscribe();
   }, []);
 
-  const makeAdmin = async (userId) => {
-    try {
-      await updateDoc(doc(db, 'users', userId), { role: 'admin' });
-      setUsers(users.map(user => user.id === userId ? { ...user, role: 'admin' } : user));
-    } catch (error) {
-      console.error("Error updating user role: ", error);
-      setError("Failed to update user role.");
-    }
-  };
-
+  // Make-admin is intentionally NOT in the panel — admin promotion is
+  // done through the Firebase Console only. Remove-admin stays so a
+  // logged-in admin can demote themselves / a teammate from the UI.
   const removeAdmin = async (userId) => {
     try {
       await updateDoc(doc(db, 'users', userId), { role: 'user' });
@@ -236,15 +217,50 @@ const AllUsers = () => {
     }
   };
 
+  // Build a per-user "latest activity" timestamp from the user doc's
+  // lastActiveAt PLUS their most recent top-up / withdrawal createdAt.
+  // This way users whose activity predates the lastActiveAt field
+  // (older accounts) still bubble up if they've ever made a deposit
+  // or withdrawal — the admin doesn't have to wait for a fresh bet
+  // before seeing them at the top.
+  const tsOf = (value) => {
+    if (!value) return 0;
+    if (typeof value?.toDate === 'function') return value.toDate().getTime();
+    const t = new Date(value).getTime();
+    return Number.isFinite(t) ? t : 0;
+  };
+  const latestActivityByUser = useMemo(() => {
+    const map = new Map();
+    const consider = (uid, ts) => {
+      if (!uid) return;
+      const prev = map.get(uid) || 0;
+      if (ts > prev) map.set(uid, ts);
+    };
+    for (const p of allPayments || []) consider(p.userId, tsOf(p.createdAt));
+    for (const w of allWithdrawals || []) consider(w.userId, tsOf(w.createdAt));
+    return map;
+  }, [allPayments, allWithdrawals]);
+
   const filteredUsers = useMemo(() => {
-    if (!searchTerm.trim()) return users;
-    const lowercasedFilter = searchTerm.toLowerCase();
-    return users.filter(user =>
+    const lowercasedFilter = searchTerm.trim().toLowerCase();
+    const matched = !lowercasedFilter ? users : users.filter((user) =>
       user.name?.toLowerCase().includes(lowercasedFilter) ||
       user.email?.toLowerCase().includes(lowercasedFilter) ||
       user.phoneNumber?.includes(lowercasedFilter)
     );
-  }, [searchTerm, users]);
+
+    const activityFor = (u) => {
+      const fromDoc = tsOf(u.lastActiveAt);
+      const fromTxns = latestActivityByUser.get(u.id) || 0;
+      return Math.max(fromDoc, fromTxns);
+    };
+
+    return [...matched].sort((a, b) => {
+      const diff = activityFor(b) - activityFor(a);
+      if (diff !== 0) return diff;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+  }, [searchTerm, users, latestActivityByUser]);
 
   const allVisibleSelected = filteredUsers.length > 0 &&
     filteredUsers.every(u => selectedIds.has(u.id));
@@ -570,13 +586,6 @@ const AllUsers = () => {
             Unsuspend
           </button>
           <button
-            onClick={() => runBulkUpdate('Make admin', { role: 'admin' })}
-            disabled={bulkBusy}
-            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 rounded"
-          >
-            Make admin
-          </button>
-          <button
             onClick={() => runBulkUpdate('Remove admin from', { role: 'user' })}
             disabled={bulkBusy}
             className="bg-gray-600 hover:bg-gray-700 disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 rounded"
@@ -668,19 +677,12 @@ const AllUsers = () => {
                   <td className="p-4 text-right font-semibold text-gray-800">{formatCurrency(totalBalance)}</td>
                   <td className="p-4 text-center">
                     <div className="flex flex-col sm:flex-row items-stretch gap-1 justify-center">
-                      {user.role === 'admin' ? (
+                      {user.role === 'admin' && (
                         <button
                           onClick={() => removeAdmin(user.id)}
                           className="bg-red-500 hover:bg-red-700 text-white font-bold py-1 px-3 rounded text-xs"
                         >
                           Remove Admin
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => makeAdmin(user.id)}
-                          className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded text-xs"
-                        >
-                          Make Admin
                         </button>
                       )}
                       <button

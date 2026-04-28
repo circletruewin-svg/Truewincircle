@@ -670,7 +670,7 @@ const AdminDashboard = () => {
 
     switch (activeTab) {
       case 'dashboard':   return <DashboardView stats={stats} />;
-      case 'allUsers':    return <AllUsers />;
+      case 'allUsers':    return <AllUsers allPayments={allPayments} allWithdrawals={allWithdrawals} />;
       case 'referrals':   return <ReferralComponent />;
       case 'barcodes':    return <BarCodeUpdate />;
       case 'payments':
