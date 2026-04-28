@@ -32,6 +32,7 @@ import { createNotification } from '../utils/notifications';
 import { formatCurrency } from '../utils/formatMoney';
 import MatchManagement from './components/MatchManagement';
 import UserSoundsAdmin from './components/UserSoundsAdmin';
+import Commissions from './components/Commissions';
 
 // Component Imports
 import AllUsers from './components/AllUsers';
@@ -216,15 +217,30 @@ const AdminDashboard = () => {
   };
 
   // --- ACTION HANDLERS ---
+  // Direct-referrer commission rate. Whenever an admin APPROVES a
+  // deposit, 10% of the deposit amount accrues to the depositor's
+  // direct referrer as a "pending" commission entry. Single-tier
+  // only — the referrer's referrer doesn't get anything.
+  const REFERRAL_COMMISSION_RATE = 0.10;
+
   const handlePaymentApproval = async (paymentId, action, userId, amount, reason = null) => {
-    let notifyReferrer = null; // track if a referral bonus needs a notification
+    let notifyReferrer = null;
     try {
       await runTransaction(db, async (transaction) => {
         const paymentRef = doc(db, 'top-ups', paymentId);
         const userRef = doc(db, 'users', userId);
-        let userSnap = await transaction.get(userRef);
+        const commissionRef = doc(db, 'commissions', paymentId);
+
+        // Firestore requires all reads to happen before any writes
+        // inside a transaction, so do them up front.
+        const userSnap = await transaction.get(userRef);
         if (!userSnap.exists()) throw new Error("User not found.");
         const userData = userSnap.data();
+        let existingCommission = null;
+        if (action === 'rejected') {
+          const commissionSnap = await transaction.get(commissionRef);
+          if (commissionSnap.exists()) existingCommission = commissionSnap.data();
+        }
 
         const paymentUpdateData = { status: action };
         if (action === 'rejected' && reason) paymentUpdateData.adminComment = reason;
@@ -234,25 +250,32 @@ const AdminDashboard = () => {
           const currentBalance = userData.balance || 0;
           transaction.update(userRef, { balance: currentBalance + amount });
 
-          if (amount >= 50 && userData.referredBy && userData.referralBonusAwarded === false) {
-            const referrerRef = doc(db, "users", userData.referredBy);
-            const referrerSnap = await transaction.get(referrerRef);
-            if (referrerSnap.exists()) {
-              const referrerBalance = referrerSnap.data().balance || 0;
-              transaction.update(referrerRef, { balance: referrerBalance + 50 });
-              transaction.update(userRef, { referralBonusAwarded: true });
-              const newTransactionRef = doc(collection(db, "transactions"));
-              transaction.set(newTransactionRef, {
-                userId: userData.referredBy,
-                type: "referral_bonus_received",
-                amount: 50,
-                referredUserId: userId,
-                referredUserName: userData.name,
-                createdAt: new Date(),
-              });
-              notifyReferrer = { referrerId: userData.referredBy, referredName: userData.name };
-            }
+          if (userData.referredBy) {
+            const commissionAmount = Math.round(amount * REFERRAL_COMMISSION_RATE * 100) / 100;
+            transaction.set(commissionRef, {
+              referrerId: userData.referredBy,
+              depositorId: userId,
+              depositorName: userData.name || null,
+              depositId: paymentId,
+              depositAmount: amount,
+              commissionAmount,
+              rate: REFERRAL_COMMISSION_RATE,
+              status: 'pending',
+              createdAt: new Date(),
+              paidAt: null,
+            });
+            notifyReferrer = {
+              referrerId: userData.referredBy,
+              commission: commissionAmount,
+              referredName: userData.name,
+            };
           }
+        }
+
+        // If the admin rejects a deposit that previously generated a
+        // commission, void it (unless it's already been paid out).
+        if (action === 'rejected' && existingCommission && existingCommission.status !== 'paid') {
+          transaction.update(commissionRef, { status: 'voided' });
         }
       });
 
@@ -278,8 +301,8 @@ const AdminDashboard = () => {
       if (notifyReferrer) {
         await createNotification(notifyReferrer.referrerId, {
           type: 'referral',
-          title: `Referral bonus ${formatCurrency(50)} credited`,
-          body: `${notifyReferrer.referredName || 'Your referred user'} made their first deposit.`,
+          title: `Referral commission ${formatCurrency(notifyReferrer.commission)} pending`,
+          body: `${notifyReferrer.referredName || 'Your referred user'} made a deposit. The 10% commission will be paid out by the team.`,
           link: '/refer',
         });
       }
@@ -409,6 +432,7 @@ const AdminDashboard = () => {
           { id: 'winGameBets',  label: 'Win Game Bets',       icon: Trophy     },
           { id: 'profitLoss',   label: 'Profit & Loss',       icon: TrendingUp },
           { id: 'transactions', label: 'Transactions',        icon: CreditCard },
+          { id: 'commissions',  label: '💰 Commissions',      icon: DollarSign },
           // ── NEW ──────────────────────────────────────────────────────
           { id: 'gamesStats',   label: '🎮 Games Stats',      icon: Star       },
           { id: 'userSounds',   label: '🔔 User Sounds',      icon: Bell       },
@@ -453,6 +477,7 @@ const AdminDashboard = () => {
             .replace('winGameBets', 'Win Game Bets')
             .replace('profitLoss',  'Profit & Loss')
             .replace('transactions','Transactions')
+            .replace('commissions', '💰 Commissions')
             .replace('referrals',   'Referrals')
             .replace('gamesStats',  '🎮 Games Stats')
           }
@@ -695,6 +720,7 @@ const AdminDashboard = () => {
       case 'winGameBets':   return <Bets />;
       case 'profitLoss':    return <ProfitLoss />;
       case 'transactions':  return <TransactionSummary payments={payments} withdrawals={withdrawals} userDetails={userDetails} />;
+      case 'commissions':   return <Commissions />;
 
       // ── NEW ────────────────────────────────────────────────────────
       case 'gamesStats':    return <GamesStats />;

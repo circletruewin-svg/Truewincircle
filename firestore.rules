@@ -42,6 +42,21 @@ service cloud.firestore {
       }
     }
 
+    // Referral commissions ledger. Admin (via handlePaymentApproval)
+    // creates an entry whenever an approved deposit triggers a 10%
+    // commission to the depositor's direct referrer. Admin marks
+    // entries as paid from the Commissions tab. Users can read their
+    // own commission entries (where they are the referrer) so the
+    // referral page can show how much they've earned, but they can
+    // never create / update / delete — that's admin only.
+    match /commissions/{commissionId} {
+      allow read: if request.auth != null && (
+        isAdmin() ||
+        resource.data.referrerId == request.auth.uid
+      );
+      allow create, update, delete: if isAdmin();
+    }
+
     // Pre-staged user accounts. Admin creates a /pendingUsers/{phone}
     // doc from the admin panel (phone format: "+91XXXXXXXXXX"). When the
     // matching phone signs in for the first time, the SignIn / SignUp
