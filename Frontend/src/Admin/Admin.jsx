@@ -107,9 +107,19 @@ const AdminDashboard = () => {
       setTotalUsers(snapshot.size);
     });
 
-    // Skip the initial snapshot (which reports every existing doc as "added")
-    // so we only ring on records that arrive after the dashboard is open.
-    let isFirstPaymentSnapshot = true;
+    // Only ring on requests whose createdAt is AFTER the dashboard
+    // started subscribing — never on existing pending requests that
+    // were created before the admin opened the panel. This prevents
+    // the "5 new approvals" toast on every refresh; admins see those
+    // existing requests in the list anyway.
+    const subscribedAt = Date.now();
+    const isAfterSubscribe = (createdAt) => {
+      const t = toDateValue(createdAt)?.getTime?.();
+      if (!Number.isFinite(t)) return false;
+      // 5-second buffer for clock skew between client and server.
+      return t > subscribedAt - 5000;
+    };
+
     const paymentsQuery = query(collection(db, 'top-ups'));
     const unsubscribePayments = onSnapshot(paymentsQuery, (snapshot) => {
       const fetchedPayments = snapshot.docs.map(d => ({
@@ -120,26 +130,20 @@ const AdminDashboard = () => {
       }));
       setAllPayments(fetchedPayments);
 
-      if (!isFirstPaymentSnapshot) {
-        // Don't filter by appName — admin should hear about every new
-        // pending deposit. The table view does its own filtering for
-        // display, but the sound is a safety net.
-        const newPending = snapshot.docChanges().filter(c => {
-          if (c.type !== 'added') return false;
-          const data = c.doc.data();
-          return data.status === 'pending';
-        });
-        if (newPending.length > 0) {
-          playNotificationRef.current?.();
-          toast.info(
-            `💰 ${newPending.length} new payment approval${newPending.length > 1 ? 's' : ''} received!`
-          );
-        }
+      const newPending = snapshot.docChanges().filter(c => {
+        if (c.type !== 'added') return false;
+        const data = c.doc.data();
+        if (data.status !== 'pending') return false;
+        return isAfterSubscribe(data.createdAt);
+      });
+      if (newPending.length > 0) {
+        playNotificationRef.current?.();
+        toast.info(
+          `💰 ${newPending.length} new payment approval${newPending.length > 1 ? 's' : ''} received!`
+        );
       }
-      isFirstPaymentSnapshot = false;
     });
 
-    let isFirstWithdrawalSnapshot = true;
     const withdrawalsQuery = query(collection(db, 'withdrawals'));
     const unsubscribeWithdrawals = onSnapshot(withdrawalsQuery, (snapshot) => {
       const fetchedWithdrawals = snapshot.docs.map(d => ({
@@ -150,20 +154,18 @@ const AdminDashboard = () => {
       }));
       setAllWithdrawals(fetchedWithdrawals);
 
-      if (!isFirstWithdrawalSnapshot) {
-        const newPending = snapshot.docChanges().filter(c => {
-          if (c.type !== 'added') return false;
-          const data = c.doc.data();
-          return data.status === 'pending';
-        });
-        if (newPending.length > 0) {
-          playNotificationRef.current?.();
-          toast.info(
-            `🏦 ${newPending.length} new withdrawal approval${newPending.length > 1 ? 's' : ''} received!`
-          );
-        }
+      const newPending = snapshot.docChanges().filter(c => {
+        if (c.type !== 'added') return false;
+        const data = c.doc.data();
+        if (data.status !== 'pending') return false;
+        return isAfterSubscribe(data.createdAt);
+      });
+      if (newPending.length > 0) {
+        playNotificationRef.current?.();
+        toast.info(
+          `🏦 ${newPending.length} new withdrawal approval${newPending.length > 1 ? 's' : ''} received!`
+        );
       }
-      isFirstWithdrawalSnapshot = false;
     });
 
     const winnersQuery = query(collection(db, 'winners'));

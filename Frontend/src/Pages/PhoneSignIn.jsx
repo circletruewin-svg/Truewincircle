@@ -93,6 +93,11 @@ const PhoneSignIn = () => {
       const userSnap = await getDoc(userRef);
 
       if (userSnap.exists()) {
+        if (userSnap.data().suspended) {
+          await auth.signOut();
+          toast.error("Your account has been suspended. Please contact support.");
+          return;
+        }
         login(buildSessionUser(user, userSnap.data()));
         toast.success("Sign in successful!");
         navigate("/");

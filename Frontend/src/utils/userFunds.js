@@ -23,6 +23,9 @@ export function getUserFunds(userData = {}) {
 }
 
 export function buildFundsDeductionUpdate(userData, amount) {
+  if (userData?.suspended) {
+    throw new Error("Account suspended — please contact support.");
+  }
   const { balance, winningMoney, total } = getUserFunds(userData);
   const debitAmount = roundMoney(amount);
 
@@ -44,6 +47,9 @@ export function buildFundsDeductionUpdate(userData, amount) {
 }
 
 export function getFundsDeductionResult(userData, amount) {
+  if (userData?.suspended) {
+    throw new Error("Account suspended — please contact support.");
+  }
   const { balance, winningMoney, total } = getUserFunds(userData);
   const debitAmount = roundMoney(amount);
 

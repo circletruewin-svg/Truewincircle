@@ -105,6 +105,9 @@ export default function PaymentConfirmation() {
 
       const userDocRef = doc(db, 'users', user.uid);
       const userDocSnap = await getDoc(userDocRef);
+      if (userDocSnap.exists() && userDocSnap.data().suspended) {
+        throw new Error("Your account is suspended. Please contact support before depositing.");
+      }
       const name = userDocSnap.exists() ? userDocSnap.data().name : 'Unknown User';
 
       await addDoc(collection(db, 'top-ups'), {
@@ -132,7 +135,11 @@ export default function PaymentConfirmation() {
       setTimeout(() => navigate('/addcash'), 1200);
     } catch (err) {
       console.error('Error submitting top-up request:', err);
-      setError('Failed to submit request. Please check your connection and try again.');
+      // Pass through the suspended-account message so the user can see it.
+      const friendly = err?.message?.includes('suspended')
+        ? err.message
+        : 'Failed to submit request. Please check your connection and try again.';
+      setError(friendly);
       setSubmissionState('error');
     } finally {
       setUploading(false);

@@ -200,6 +200,10 @@ const Withdraw = () => {
           throw new Error("User data not found in Firestore.");
         }
 
+        if (userSnap.data().suspended) {
+          throw new Error("Your account is suspended. Please contact support.");
+        }
+
         const currentWinningMoney = userSnap.data().winningMoney || 0;
         const userName = userSnap.data().name || 'Anonymous';
 
