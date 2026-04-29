@@ -25,6 +25,21 @@ const UserInfoModal = ({ user, onClose }) => (
 const WithdrawApproval = ({ withdrawals, userDetails, handleWithdrawalApproval }) => {
   const [userInfoModal, setUserInfoModal] = useState({ isOpen: false, user: null });
   const [searchTerm, setSearchTerm] = useState('');
+  const [processingIds, setProcessingIds] = useState({});
+
+  const handleAction = async (withdrawal, action) => {
+    if (processingIds[withdrawal.id]) return;
+    setProcessingIds((prev) => ({ ...prev, [withdrawal.id]: true }));
+    try {
+      await handleWithdrawalApproval(withdrawal.id, action, withdrawal.userId, withdrawal.amount);
+    } finally {
+      setProcessingIds((prev) => {
+        const next = { ...prev };
+        delete next[withdrawal.id];
+        return next;
+      });
+    }
+  };
 
   const filteredWithdrawals = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -121,15 +136,17 @@ const WithdrawApproval = ({ withdrawals, userDetails, handleWithdrawalApproval }
                   <td className="p-4">
                     {withdrawal.status === 'pending' && (
                       <div className="flex space-x-2">
-                        <button 
-                          onClick={() => handleWithdrawalApproval(withdrawal.id, 'approved', withdrawal.userId, withdrawal.amount)}
-                          className="p-2 bg-green-500 text-white rounded-lg hover:bg-green-600"
+                        <button
+                          onClick={() => handleAction(withdrawal, 'approved')}
+                          disabled={processingIds[withdrawal.id]}
+                          className="p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:bg-green-300 disabled:cursor-not-allowed"
                         >
                           <Check className="h-4 w-4" />
                         </button>
-                        <button 
-                          onClick={() => handleWithdrawalApproval(withdrawal.id, 'rejected', withdrawal.userId, withdrawal.amount)}
-                          className="p-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
+                        <button
+                          onClick={() => handleAction(withdrawal, 'rejected')}
+                          disabled={processingIds[withdrawal.id]}
+                          className="p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:bg-red-300 disabled:cursor-not-allowed"
                         >
                           <X className="h-4 w-4" />
                         </button>

@@ -227,13 +227,24 @@ const AdminDashboard = () => {
 
   const handlePaymentApproval = async (paymentId, action, userId, amount, reason = null) => {
     try {
-      await runTransaction(db, async (transaction) => {
+      const alreadyProcessed = await runTransaction(db, async (transaction) => {
         const paymentRef = doc(db, 'top-ups', paymentId);
         const userRef = doc(db, 'users', userId);
         const commissionRef = doc(db, 'commissions', paymentId);
 
         // Firestore requires all reads to happen before any writes
         // inside a transaction, so do them up front.
+        const paymentSnap = await transaction.get(paymentRef);
+        if (!paymentSnap.exists()) throw new Error("Payment not found.");
+        // Idempotency guard: if a previous click already approved or
+        // rejected this payment, don't double-process. Without this
+        // a Firestore transaction retry on a fast double-click would
+        // re-read the user doc with the already-credited balance and
+        // add the amount again — paying twice.
+        if (paymentSnap.data().status !== 'pending') {
+          return true; // already processed by an earlier click
+        }
+
         const userSnap = await transaction.get(userRef);
         if (!userSnap.exists()) throw new Error("User not found.");
         const userData = userSnap.data();
@@ -273,7 +284,13 @@ const AdminDashboard = () => {
         if (action === 'rejected' && existingCommission && existingCommission.status !== 'paid') {
           transaction.update(commissionRef, { status: 'voided' });
         }
+        return false; // first-time processing
       });
+
+      if (alreadyProcessed) {
+        toast.info(`This payment was already processed.`);
+        return;
+      }
 
       // Notify the user — runs outside the transaction (notifications
       // are subcollection writes that don't need to be atomic with the
@@ -302,18 +319,37 @@ const AdminDashboard = () => {
 
   const handleWithdrawalApproval = async (withdrawalId, action, userId, amount) => {
     try {
-      await runTransaction(db, async (transaction) => {
+      const alreadyProcessed = await runTransaction(db, async (transaction) => {
         const withdrawalRef = doc(db, 'withdrawals', withdrawalId);
-        transaction.update(withdrawalRef, { status: action });
-        if (action === 'rejected') {
-          const userRef = doc(db, 'users', userId);
-          const userSnap = await transaction.get(userRef);
-          if (userSnap.exists()) {
-            const currentWinningMoney = userSnap.data().winningMoney || 0;
-            transaction.update(userRef, { winningMoney: currentWinningMoney + amount });
-          }
+        const userRef = doc(db, 'users', userId);
+
+        // Reads first (Firestore transaction rule).
+        const withdrawalSnap = await transaction.get(withdrawalRef);
+        if (!withdrawalSnap.exists()) throw new Error("Withdrawal not found.");
+        // Idempotency guard — same as payment approval. Prevents
+        // double-clicking from refunding the winning money twice on
+        // rejections.
+        if (withdrawalSnap.data().status !== 'pending') {
+          return true;
         }
+        let userSnap = null;
+        if (action === 'rejected') {
+          userSnap = await transaction.get(userRef);
+        }
+
+        // Now writes.
+        transaction.update(withdrawalRef, { status: action });
+        if (action === 'rejected' && userSnap && userSnap.exists()) {
+          const currentWinningMoney = userSnap.data().winningMoney || 0;
+          transaction.update(userRef, { winningMoney: currentWinningMoney + amount });
+        }
+        return false;
       });
+
+      if (alreadyProcessed) {
+        toast.info(`This withdrawal was already processed.`);
+        return;
+      }
 
       await createNotification(userId, {
         type: 'withdrawal',
@@ -330,7 +366,7 @@ const AdminDashboard = () => {
 
       toast.success(`Withdrawal ${action} successfully!`);
     } catch (error) {
-      toast.error(`Failed to ${action} withdrawal.`);
+      toast.error(`Failed to ${action} withdrawal. ${error.message || ''}`);
     }
   };
 

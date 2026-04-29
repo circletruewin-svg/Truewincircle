@@ -79,21 +79,40 @@ const PaymentApproval = ({ payments, userDetails, handlePaymentApproval, handleD
   const [processingIds, setProcessingIds] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
 
-  const handleApproveClick = (payment) => {
+  const handleApproveClick = async (payment) => {
     if (processingIds[payment.id]) return;
     setProcessingIds(prev => ({ ...prev, [payment.id]: true }));
-    handlePaymentApproval(payment.id, 'approved', payment.userId, payment.amount);
+    try {
+      await handlePaymentApproval(payment.id, 'approved', payment.userId, payment.amount);
+    } finally {
+      // Reset so admin can retry on failure (success will remove the row from the list anyway).
+      setProcessingIds(prev => {
+        const next = { ...prev };
+        delete next[payment.id];
+        return next;
+      });
+    }
   };
 
   const handleRejectClick = (payment) => {
+    if (processingIds[payment.id]) return;
     setRejectionModal({ isOpen: true, payment });
   };
 
-  const confirmRejection = (reason) => {
+  const confirmRejection = async (reason) => {
     const { payment } = rejectionModal;
-    if (payment && reason) {
-      handlePaymentApproval(payment.id, 'rejected', payment.userId, payment.amount, reason);
-      setRejectionModal({ isOpen: false, payment: null });
+    if (!payment || !reason) return;
+    if (processingIds[payment.id]) return;
+    setProcessingIds(prev => ({ ...prev, [payment.id]: true }));
+    setRejectionModal({ isOpen: false, payment: null });
+    try {
+      await handlePaymentApproval(payment.id, 'rejected', payment.userId, payment.amount, reason);
+    } finally {
+      setProcessingIds(prev => {
+        const next = { ...prev };
+        delete next[payment.id];
+        return next;
+      });
     }
   };
 
@@ -202,9 +221,10 @@ const PaymentApproval = ({ payments, userDetails, handlePaymentApproval, handleD
                         >
                           <Check className="h-4 w-4" />
                         </button>
-                        <button 
+                        <button
                           onClick={() => handleRejectClick(payment)}
-                          className="p-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
+                          disabled={processingIds[payment.id]}
+                          className="p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:bg-red-300 disabled:cursor-not-allowed"
                         >
                           <X className="h-4 w-4" />
                         </button>
