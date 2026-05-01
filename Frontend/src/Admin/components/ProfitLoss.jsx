@@ -100,8 +100,8 @@ export default function ProfitLoss() {
   }, [startDate, endDate, gameFilter]);
 
   return (
-    <div className="w-full p-6 grid grid-cols-1 gap-6 text-white">
-      <div className="rounded-2xl p-6 bg-gray-900 border border-gray-700 shadow-lg">
+    <div className="w-full p-6 grid grid-cols-1 gap-6">
+      <div className="rounded-2xl p-6 bg-gray-900 border border-gray-700 shadow-lg text-white">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
           <h2 className="text-xl font-semibold flex items-center gap-2">
             <CircleDollarSign className="w-5 h-5" />

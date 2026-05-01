@@ -11,9 +11,9 @@ export default function ReferralComponent() {
   const totalEarnings = referredUsers.reduce((sum, u) => sum + u.earned, 0);
 
   return (
-    <div className="w-full p-6 max-w-3xl mx-auto text-white space-y-6">
+    <div className="w-full p-6 max-w-3xl mx-auto space-y-6">
       {/* Header */}
-      <div className="rounded-2xl p-6 bg-gray-900 border border-gray-700 shadow-lg">
+      <div className="rounded-2xl p-6 bg-gray-900 border border-gray-700 shadow-lg text-white">
         <h2 className="text-xl font-semibold flex items-center gap-2 mb-3">
           <UserPlus className="w-5 h-5" /> Referral Summary
         </h2>
@@ -22,7 +22,7 @@ export default function ReferralComponent() {
       </div>
 
       {/* Total Earnings */}
-      <div className="rounded-2xl p-5 bg-gray-900 border border-gray-700 shadow-lg flex items-center justify-between">
+      <div className="rounded-2xl p-5 bg-gray-900 border border-gray-700 shadow-lg flex items-center justify-between text-white">
         <div className="flex items-center gap-3">
           <Wallet className="w-8 h-8 text-green-400" />
           <div>
@@ -33,7 +33,7 @@ export default function ReferralComponent() {
       </div>
 
       {/* Referred Users List */}
-      <div className="rounded-2xl p-6 bg-gray-900 border border-gray-700 shadow-lg">
+      <div className="rounded-2xl p-6 bg-gray-900 border border-gray-700 shadow-lg text-white">
         <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
           <Users className="w-5 h-5" /> Referred Users
         </h3>
