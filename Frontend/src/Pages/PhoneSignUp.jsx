@@ -23,6 +23,20 @@ const PhoneSignUp = () => {
   const otpInputRef = useRef(null);
   const navigate = useNavigate();
 
+  // Hard-reset the reCAPTCHA DOM. grecaptcha keeps a registry keyed by
+  // the actual DOM node, so on resend we have to drop the node itself
+  // and replace it with a fresh one with the same id — clearing
+  // innerHTML alone wasn't enough.
+  const recreateRecaptchaContainer = () => {
+    const old = document.getElementById('recaptcha-container');
+    if (!old || !old.parentElement) return;
+    const parent = old.parentElement;
+    old.remove();
+    const fresh = document.createElement('div');
+    fresh.id = 'recaptcha-container';
+    parent.appendChild(fresh);
+  };
+
   const setupRecaptcha = () => {
     if (window.recaptchaVerifier) {
       return window.recaptchaVerifier;
@@ -91,8 +105,7 @@ const PhoneSignUp = () => {
       if (resend && window.recaptchaVerifier) {
         try { window.recaptchaVerifier.clear(); } catch { /* ignore */ }
         window.recaptchaVerifier = null;
-        const container = document.getElementById('recaptcha-container');
-        if (container) container.innerHTML = '';
+        recreateRecaptchaContainer();
       }
       const verifier = setupRecaptcha();
       // No verifier.render() — signInWithPhoneNumber renders lazily and
@@ -118,9 +131,9 @@ const PhoneSignUp = () => {
       if (String(err?.message || '').toLowerCase().includes('already been rendered')) {
         try { window.recaptchaVerifier?.clear(); } catch { /* ignore */ }
         window.recaptchaVerifier = null;
-        const container = document.getElementById('recaptcha-container');
-        if (container) container.innerHTML = '';
-        toast.error("Please tap Send / Resend again.");
+        recreateRecaptchaContainer();
+        // Auto-retry once now that the DOM is clean.
+        setTimeout(() => requestOtp({ resend: true }), 100);
         return;
       }
       if (err.code === "auth/invalid-app-credential") {

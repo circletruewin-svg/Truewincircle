@@ -23,6 +23,21 @@ const PhoneSignIn = () => {
   const navigate = useNavigate();
   const login = useAuthStore((state) => state.login);
 
+  // Hard-reset the reCAPTCHA DOM element. Just clearing the verifier or
+  // the innerHTML wasn't enough — Google's grecaptcha library keeps an
+  // internal registry keyed by the actual DOM node, so we have to drop
+  // the node itself and put a fresh one with the same id back in its
+  // place.
+  const recreateRecaptchaContainer = () => {
+    const old = document.getElementById('recaptcha-container');
+    if (!old || !old.parentElement) return;
+    const parent = old.parentElement;
+    old.remove();
+    const fresh = document.createElement('div');
+    fresh.id = 'recaptcha-container';
+    parent.appendChild(fresh);
+  };
+
   const setupRecaptcha = () => {
     if (window.recaptchaVerifier) {
       return window.recaptchaVerifier;
@@ -82,8 +97,7 @@ const PhoneSignIn = () => {
       if (resend && window.recaptchaVerifier) {
         try { window.recaptchaVerifier.clear(); } catch { /* ignore */ }
         window.recaptchaVerifier = null;
-        const container = document.getElementById('recaptcha-container');
-        if (container) container.innerHTML = '';
+        recreateRecaptchaContainer();
       }
       const verifier = setupRecaptcha();
       // Note: we DON'T await verifier.render() here. signInWithPhoneNumber
@@ -104,9 +118,9 @@ const PhoneSignIn = () => {
       if (String(err?.message || '').toLowerCase().includes('already been rendered')) {
         try { window.recaptchaVerifier?.clear(); } catch { /* ignore */ }
         window.recaptchaVerifier = null;
-        const container = document.getElementById('recaptcha-container');
-        if (container) container.innerHTML = '';
-        toast.error("Please tap Send / Resend again.");
+        recreateRecaptchaContainer();
+        // Auto-retry once now that the DOM is clean.
+        setTimeout(() => requestOtp({ resend: true }), 100);
         return;
       }
       if (err.code === "auth/invalid-app-credential") {
