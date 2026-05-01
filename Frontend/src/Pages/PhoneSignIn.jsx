@@ -75,14 +75,20 @@ const PhoneSignIn = () => {
     if (!phone) return toast.error("Enter phone number");
     setLoading(true);
     try {
-      // Reset the verifier on resend so the captcha doesn't get stuck
-      // — Firebase invalidates the token after one successful use.
+      // Resend needs a fresh verifier — Firebase invalidates each one
+      // after a single successful use. We also have to scrub the DOM
+      // container, otherwise reCAPTCHA throws
+      // "reCAPTCHA has already been rendered in this element".
       if (resend && window.recaptchaVerifier) {
         try { window.recaptchaVerifier.clear(); } catch { /* ignore */ }
         window.recaptchaVerifier = null;
+        const container = document.getElementById('recaptcha-container');
+        if (container) container.innerHTML = '';
       }
       const verifier = setupRecaptcha();
-      await verifier.render();
+      // Note: we DON'T await verifier.render() here. signInWithPhoneNumber
+      // renders it lazily; awaiting render() added a needless round trip
+      // that delayed the SMS send by ~500ms-1s.
 
       const formattedPhone = phone.startsWith("+") ? phone : `+${phone}`;
       const result = await signInWithPhoneNumber(auth, formattedPhone, verifier);
@@ -93,6 +99,16 @@ const PhoneSignIn = () => {
       toast.success(resend ? "OTP resent — check your SMS." : "OTP sent successfully!");
     } catch (err) {
       console.error("OTP send error:", err);
+      // If the DOM ever does get into a "already rendered" state, recover
+      // automatically on the next try by clearing the container.
+      if (String(err?.message || '').toLowerCase().includes('already been rendered')) {
+        try { window.recaptchaVerifier?.clear(); } catch { /* ignore */ }
+        window.recaptchaVerifier = null;
+        const container = document.getElementById('recaptcha-container');
+        if (container) container.innerHTML = '';
+        toast.error("Please tap Send / Resend again.");
+        return;
+      }
       if (err.code === "auth/invalid-app-credential") {
         toast.error("Please sign up first.");
         navigate("/testphonesignup");

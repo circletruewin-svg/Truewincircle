@@ -85,12 +85,18 @@ const PhoneSignUp = () => {
     }
     setLoading(true);
     try {
+      // Resend needs a fresh verifier AND a clean DOM container,
+      // otherwise reCAPTCHA throws "already been rendered in this
+      // element" because the previous widget is still attached.
       if (resend && window.recaptchaVerifier) {
         try { window.recaptchaVerifier.clear(); } catch { /* ignore */ }
         window.recaptchaVerifier = null;
+        const container = document.getElementById('recaptcha-container');
+        if (container) container.innerHTML = '';
       }
       const verifier = setupRecaptcha();
-      await verifier.render();
+      // No verifier.render() — signInWithPhoneNumber renders lazily and
+      // awaiting it added a ~500ms-1s round trip before the SMS send.
 
       // Only generate the referral code on the first send. Resend should
       // keep the same code so the user's onboarding stays consistent.
@@ -108,6 +114,15 @@ const PhoneSignUp = () => {
       toast.success(resend ? "OTP resent — check your SMS." : "OTP sent successfully!");
     } catch (err) {
       console.error("OTP send error:", err);
+      // Auto-recover from the "already rendered" state on the next tap.
+      if (String(err?.message || '').toLowerCase().includes('already been rendered')) {
+        try { window.recaptchaVerifier?.clear(); } catch { /* ignore */ }
+        window.recaptchaVerifier = null;
+        const container = document.getElementById('recaptcha-container');
+        if (container) container.innerHTML = '';
+        toast.error("Please tap Send / Resend again.");
+        return;
+      }
       if (err.code === "auth/invalid-app-credential") {
         toast.error("Invalid registration request. Please try again later.");
       } else if (err.code === "auth/captcha-check-failed") {
