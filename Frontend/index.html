@@ -15,19 +15,22 @@
     <!-- Splash screen styles render before the React bundle finishes
          downloading, so the user sees branding instantly instead of a
          blank white page on slow networks. The #app-splash element is
-         removed from the DOM as soon as React mounts the app. -->
+         removed from the DOM as soon as React mounts the app.
+         IMPORTANT: do NOT set color/background on body here — it leaks
+         into every Tailwind page (admin tabs, market cards, etc.) and
+         makes default text colour white-on-white. Splash element gets
+         its own colours scoped to itself instead. -->
     <style>
       html, body {
         margin: 0;
         padding: 0;
-        background: #042346;
-        color: white;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       }
       #app-splash {
         position: fixed;
         inset: 0;
         background: linear-gradient(135deg, #042346 0%, #06305f 50%, #08407d 100%);
+        color: white;
         display: flex;
         flex-direction: column;
         align-items: center;

@@ -183,7 +183,7 @@ const MarketCard = ({ marketName }) => {
           </div>
 
           {/* TIME */}
-          <div className="flex justify-between w-full text-sm mt-4 px-2">
+          <div className="flex justify-between w-full text-sm mt-4 px-2 text-gray-800">
             <p><b>Open:</b> {formatIstTimeInLocal(openTime)}</p>
             <p><b>Close:</b> {formatIstTimeInLocal(closeTime)}</p>
           </div>
