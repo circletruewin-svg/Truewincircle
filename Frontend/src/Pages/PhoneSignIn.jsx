@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { toast } from "react-toastify";
 import { auth, db } from "../firebase";
 import { doc, getDoc, setDoc, deleteDoc } from "firebase/firestore";
@@ -10,12 +10,16 @@ import "react-phone-input-2/lib/style.css";
 import { Loader2 } from "lucide-react";
 import { buildSessionUser } from "../utils/sessionUser";
 
+const RESEND_COOLDOWN_SECONDS = 30;
+
 const PhoneSignIn = () => {
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [step, setStep] = useState(1);
   const [confirmationResult, setConfirmationResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const otpInputRef = useRef(null);
   const navigate = useNavigate();
   const login = useAuthStore((state) => state.login);
 
@@ -50,23 +54,43 @@ const PhoneSignIn = () => {
     };
   }, []);
 
-  const sendOtp = async () => {
+  // Countdown for the "Resend OTP" button. While this is non-zero,
+  // the user must wait — otherwise they'd hammer the SMS endpoint.
+  useEffect(() => {
+    if (resendCooldown <= 0) return undefined;
+    const id = setInterval(() => setResendCooldown((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(id);
+  }, [resendCooldown]);
+
+  // When we move to the OTP step, focus the input so the user doesn't
+  // have to tap it manually after the SMS arrives.
+  useEffect(() => {
+    if (step === 2) {
+      const t = setTimeout(() => otpInputRef.current?.focus(), 50);
+      return () => clearTimeout(t);
+    }
+  }, [step]);
+
+  const requestOtp = async ({ resend = false } = {}) => {
     if (!phone) return toast.error("Enter phone number");
     setLoading(true);
-
     try {
+      // Reset the verifier on resend so the captcha doesn't get stuck
+      // — Firebase invalidates the token after one successful use.
+      if (resend && window.recaptchaVerifier) {
+        try { window.recaptchaVerifier.clear(); } catch { /* ignore */ }
+        window.recaptchaVerifier = null;
+      }
       const verifier = setupRecaptcha();
       await verifier.render();
 
       const formattedPhone = phone.startsWith("+") ? phone : `+${phone}`;
-      const result = await signInWithPhoneNumber(
-        auth,
-        formattedPhone,
-        verifier
-      );
+      const result = await signInWithPhoneNumber(auth, formattedPhone, verifier);
       setConfirmationResult(result);
       setStep(2);
-      toast.success("OTP Sent Successfully!");
+      setOtp("");
+      setResendCooldown(RESEND_COOLDOWN_SECONDS);
+      toast.success(resend ? "OTP resent — check your SMS." : "OTP sent successfully!");
     } catch (err) {
       console.error("OTP send error:", err);
       if (err.code === "auth/invalid-app-credential") {
@@ -83,6 +107,9 @@ const PhoneSignIn = () => {
       setLoading(false);
     }
   };
+
+  const sendOtp = () => requestOtp({ resend: false });
+  const resendOtp = () => requestOtp({ resend: true });
 
   const verifyOtp = async () => {
     if (!otp) return toast.error("Enter OTP");
@@ -136,7 +163,7 @@ const PhoneSignIn = () => {
           toast.success(`Welcome ${newUserData.name || ''}! Your account is ready.`);
           navigate("/");
         } else {
-          toast.error("Please sign up first.");
+          toast.info("Aapka account nahi hai. Pehle signup karein.");
           await auth.signOut();
           navigate("/testphonesignup");
         }
@@ -215,6 +242,7 @@ const PhoneSignIn = () => {
         ) : (
           <div className="space-y-4">
             <input
+              ref={otpInputRef}
               type="text"
               inputMode="numeric"
               maxLength={6}
@@ -243,9 +271,37 @@ const PhoneSignIn = () => {
                 OTP verify ho raha hai aur account load ho raha hai…
               </p>
             )}
+
+            <div className="text-center text-sm text-gray-300 pt-2 border-t border-white/10">
+              {resendCooldown > 0 ? (
+                <span>Didn't get the OTP? Resend in <span className="text-yellow-400 font-semibold">{resendCooldown}s</span></span>
+              ) : (
+                <button
+                  onClick={resendOtp}
+                  disabled={loading}
+                  className="text-yellow-400 font-semibold hover:text-yellow-300 disabled:opacity-50"
+                >
+                  Resend OTP
+                </button>
+              )}
+            </div>
+            <button
+              onClick={() => { setStep(1); setOtp(""); setResendCooldown(0); }}
+              disabled={loading}
+              className="w-full text-xs text-gray-400 hover:text-white"
+            >
+              ← Change phone number
+            </button>
           </div>
         )}
         <div id="recaptcha-container"></div>
+
+        <p className="text-center text-xs text-gray-400 mt-6 pt-4 border-t border-white/10">
+          Don't have an account?{" "}
+          <Link to="/testphonesignup" className="text-yellow-400 font-semibold hover:text-yellow-300">
+            Sign up
+          </Link>
+        </p>
       </div>
     </div>
   );
