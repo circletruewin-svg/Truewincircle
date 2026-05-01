@@ -6,6 +6,7 @@ import { toast } from "react-toastify";
 import { auth, db } from "../firebase";
 import PhoneInput from "react-phone-input-2";
 import "react-phone-input-2/lib/style.css";
+import { Loader2 } from "lucide-react";
 
 const PhoneSignUp = () => {
   const [phone, setPhone] = useState("");
@@ -234,26 +235,54 @@ const PhoneSignUp = () => {
             <button
               onClick={sendOtp}
               disabled={loading}
-              className="w-full bg-yellow-500 text-black font-bold px-5 py-3 rounded-full hover:bg-yellow-600 transition-colors duration-300 disabled:bg-gray-400"
+              className="w-full bg-yellow-500 text-black font-bold px-5 py-3 rounded-full hover:bg-yellow-600 transition-colors duration-300 disabled:bg-yellow-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
-              {loading ? "Sending..." : "Send OTP"}
+              {loading ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Sending OTP…</span>
+                </>
+              ) : (
+                "Send OTP"
+              )}
             </button>
+            {loading && (
+              <p className="text-center text-xs text-gray-300 animate-pulse">
+                SMS aane me 10–30 second lag sakte hain. Please wait…
+              </p>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
             <input
               type="text"
+              inputMode="numeric"
+              maxLength={6}
               placeholder="Enter OTP"
               value={otp}
-              onChange={(e) => setOtp(e.target.value)}
-              className="w-full px-4 py-3 bg-[#042346] border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500"
+              onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              disabled={loading}
+              className="w-full px-4 py-3 bg-[#042346] border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 disabled:opacity-60 tracking-widest text-center text-lg"
             />
             <button
               onClick={verifyOtp}
-              className="w-full bg-yellow-500 text-black font-bold px-5 py-3 rounded-full hover:bg-yellow-600 transition-colors duration-300"
+              disabled={loading || otp.length < 4}
+              className="w-full bg-yellow-500 text-black font-bold px-5 py-3 rounded-full hover:bg-yellow-600 transition-colors duration-300 disabled:bg-yellow-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
-              Verify OTP
+              {loading ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Verifying…</span>
+                </>
+              ) : (
+                "Verify OTP"
+              )}
             </button>
+            {loading && (
+              <p className="text-center text-xs text-gray-300 animate-pulse">
+                Account ban raha hai aur welcome bonus apply ho raha hai…
+              </p>
+            )}
           </div>
         )}
         <div id="recaptcha-container"></div>
