@@ -119,8 +119,7 @@ const PhoneSignIn = () => {
         try { window.recaptchaVerifier?.clear(); } catch { /* ignore */ }
         window.recaptchaVerifier = null;
         recreateRecaptchaContainer();
-        // Auto-retry once now that the DOM is clean.
-        setTimeout(() => requestOtp({ resend: true }), 100);
+        toast.error("Recaptcha refreshed. Please tap Send / Resend again.");
         return;
       }
       if (err.code === "auth/invalid-app-credential") {
@@ -129,7 +128,15 @@ const PhoneSignIn = () => {
       } else if (err.code === "auth/captcha-check-failed") {
         toast.error("Firebase phone login blocked: truewincircle.in aur www.truewincircle.in ko Firebase Auth Authorized Domains me add karna hoga.");
       } else if (err.code === "auth/too-many-requests") {
-        toast.error("Too many attempts. Please try again after some time.");
+        // Firebase rate-limits the device/IP for ~30-60 minutes when too
+        // many OTPs are requested in a short window. We can't bypass it
+        // — the only option is to wait, switch network, or try a
+        // different number. Lock the resend button hard so the user
+        // doesn't keep tapping and making it worse.
+        setResendCooldown(15 * 60); // 15-minute lockout in the UI
+        toast.error("Bahut baar OTP try ho gayi. 15-30 min ruko, ya doosra mobile network try karo. Sirf is device pe block hai.", {
+          autoClose: 8000,
+        });
       } else {
         toast.error(err.message || "An error occurred while sending OTP.");
       }
