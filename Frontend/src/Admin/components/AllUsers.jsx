@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot, query, doc, updateDoc, writeBatch, where, setDoc, serverTimestamp, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, doc, updateDoc, writeBatch, where, setDoc, serverTimestamp, getDoc, deleteDoc, runTransaction, addDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import Loader from '../../components/Loader';
 import UserBettingHistory from './UserBettingHistory';
 import UserWinLoss from './UserWinLoss';
 import { formatCurrency } from '../../utils/formatMoney';
+import useAuthStore from '../../store/authStore';
 
 const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
   const [users, setUsers] = useState([]);
@@ -22,6 +23,111 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
   const [referrerModal, setReferrerModal] = useState({ open: false, target: null });
   const [referrerSearch, setReferrerSearch] = useState('');
   const [referrerBusy, setReferrerBusy] = useState(false);
+
+  // "Adjust wallet" modal — two-step so balance changes can't happen
+  // by an accidental click. Step 1 = enter amount + reason, step 2 =
+  // review + type the user's name to confirm before any write happens.
+  const [adjustModal, setAdjustModal] = useState({ open: false, target: null });
+  const [adjustField, setAdjustField] = useState('balance'); // 'balance' | 'winningMoney'
+  const [adjustDirection, setAdjustDirection] = useState('credit'); // 'credit' | 'debit'
+  const [adjustAmount, setAdjustAmount] = useState('');
+  const [adjustReason, setAdjustReason] = useState('');
+  const [adjustStep, setAdjustStep] = useState(1);
+  const [adjustConfirmName, setAdjustConfirmName] = useState('');
+  const [adjustBusy, setAdjustBusy] = useState(false);
+  const [adjustError, setAdjustError] = useState('');
+  const adminUser = useAuthStore((s) => s.user);
+
+  const openAdjustModal = (user) => {
+    setAdjustModal({ open: true, target: user });
+    setAdjustField('balance');
+    setAdjustDirection('credit');
+    setAdjustAmount('');
+    setAdjustReason('');
+    setAdjustConfirmName('');
+    setAdjustStep(1);
+    setAdjustError('');
+  };
+
+  const closeAdjustModal = () => {
+    if (adjustBusy) return;
+    setAdjustModal({ open: false, target: null });
+    setAdjustError('');
+  };
+
+  const submitAdjust = async () => {
+    if (adjustBusy) return;
+    setAdjustError('');
+    const target = adjustModal.target;
+    if (!target) return;
+
+    const amount = Math.round(Number(adjustAmount) * 100) / 100;
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setAdjustError('Enter a positive amount');
+      return;
+    }
+    if (!adjustReason.trim() || adjustReason.trim().length < 4) {
+      setAdjustError('Reason is required (min 4 characters)');
+      return;
+    }
+    // The admin must type the user's name verbatim to confirm — extra
+    // safety net so a wrong row click doesn't credit/debit the wrong
+    // person.
+    const expected = (target.name || '').trim();
+    if (expected && adjustConfirmName.trim() !== expected) {
+      setAdjustError(`Type the user's name exactly to confirm: "${expected}"`);
+      return;
+    }
+
+    setAdjustBusy(true);
+    try {
+      await runTransaction(db, async (tx) => {
+        const userRef = doc(db, 'users', target.id);
+        const snap = await tx.get(userRef);
+        if (!snap.exists()) throw new Error('User not found');
+        const data = snap.data();
+        const current = Number(
+          adjustField === 'balance'
+            ? (data.balance ?? data.walletBalance ?? 0)
+            : (data.winningMoney ?? 0)
+        ) || 0;
+        const delta = adjustDirection === 'credit' ? amount : -amount;
+        const next = Math.round((current + delta) * 100) / 100;
+        if (next < 0) {
+          throw new Error(`Cannot debit more than the current ${adjustField}: ${formatCurrency(current)}`);
+        }
+        const update = { [adjustField]: next, lastActiveAt: serverTimestamp() };
+        // Keep the legacy walletBalance field in sync if we're touching balance.
+        if (adjustField === 'balance') update.walletBalance = next;
+        tx.update(userRef, update);
+      });
+
+      // Append an audit row so this never looks like an unexplained
+      // jump in the user's balance.
+      try {
+        await addDoc(collection(db, 'transactions'), {
+          userId: target.id,
+          userName: target.name || null,
+          type: adjustDirection === 'credit' ? 'admin_credit' : 'admin_debit',
+          field: adjustField,
+          amount: adjustDirection === 'credit' ? amount : -amount,
+          reason: adjustReason.trim(),
+          adjustedByAdminId: adminUser?.uid || null,
+          adjustedByAdminName: adminUser?.name || null,
+          createdAt: new Date(),
+        });
+      } catch (auditErr) {
+        console.warn('Audit log write failed:', auditErr);
+      }
+
+      closeAdjustModal();
+    } catch (err) {
+      console.error('Adjust wallet failed:', err);
+      setAdjustError(err.message || 'Failed to adjust wallet');
+    } finally {
+      setAdjustBusy(false);
+    }
+  };
 
   const referrerCandidates = useMemo(() => {
     if (!referrerModal.open) return [];
@@ -641,7 +747,14 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
           </thead>
           <tbody>
             {filteredUsers.map(user => {
-              const totalBalance = (user.balance || 0) + (user.winningMoney || 0);
+              // Read both `balance` and the legacy `walletBalance` field
+              // — Firebase docs created by older code paths sometimes
+              // only have walletBalance, which would make the admin's
+              // total read 0 even though the user's wallet shows 20.
+              const balanceField = Number(user.balance ?? user.walletBalance ?? 0);
+              const winningField = Number(user.winningMoney ?? 0);
+              const totalBalance = (Number.isFinite(balanceField) ? balanceField : 0)
+                                 + (Number.isFinite(winningField) ? winningField : 0);
               const isSelected = selectedIds.has(user.id);
               const isSuspended = !!user.suspended;
               return (
@@ -701,6 +814,13 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
                         title={user.referredBy ? 'Change referrer' : 'Set a referrer manually'}
                       >
                         {user.referredBy ? 'Change Referrer' : 'Set Referrer'}
+                      </button>
+                      <button
+                        onClick={() => openAdjustModal(user)}
+                        className="bg-orange-600 hover:bg-orange-700 text-white font-bold py-1 px-3 rounded text-xs"
+                        title="Manually credit or debit this user's wallet (audited)"
+                      >
+                        Adjust Wallet
                       </button>
                     </div>
                   </td>
@@ -853,6 +973,204 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
                 className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold rounded-lg text-sm"
               >Cancel</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {adjustModal.open && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">
+                  {adjustStep === 1 ? 'Adjust Wallet' : 'Confirm wallet change'}
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {adjustModal.target?.name || 'User'}
+                  {adjustModal.target?.phoneNumber ? ` · ${adjustModal.target.phoneNumber}` : ''}
+                </p>
+              </div>
+              <button
+                onClick={closeAdjustModal}
+                disabled={adjustBusy}
+                className="text-gray-400 hover:text-gray-700 text-2xl leading-none"
+              >×</button>
+            </div>
+
+            {adjustStep === 1 && (
+              <>
+                <div className="mb-3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Field</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAdjustField('balance')}
+                      className={`px-3 py-2 rounded-lg text-sm font-semibold border ${
+                        adjustField === 'balance' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'
+                      }`}
+                    >Wallet balance</button>
+                    <button
+                      type="button"
+                      onClick={() => setAdjustField('winningMoney')}
+                      className={`px-3 py-2 rounded-lg text-sm font-semibold border ${
+                        adjustField === 'winningMoney' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'
+                      }`}
+                    >Winning money</button>
+                  </div>
+                </div>
+
+                <div className="mb-3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Action</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAdjustDirection('credit')}
+                      className={`px-3 py-2 rounded-lg text-sm font-semibold border ${
+                        adjustDirection === 'credit' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-700 border-gray-300'
+                      }`}
+                    >+ Credit (add)</button>
+                    <button
+                      type="button"
+                      onClick={() => setAdjustDirection('debit')}
+                      className={`px-3 py-2 rounded-lg text-sm font-semibold border ${
+                        adjustDirection === 'debit' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-700 border-gray-300'
+                      }`}
+                    >− Debit (subtract)</button>
+                  </div>
+                </div>
+
+                <div className="mb-3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Amount (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={adjustAmount}
+                    onChange={(e) => { setAdjustAmount(e.target.value); setAdjustError(''); }}
+                    placeholder="e.g. 100"
+                    className="w-full p-2.5 border rounded-lg text-sm"
+                  />
+                </div>
+
+                <div className="mb-3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Reason (required)</label>
+                  <input
+                    type="text"
+                    value={adjustReason}
+                    onChange={(e) => { setAdjustReason(e.target.value); setAdjustError(''); }}
+                    placeholder="e.g. Manual deposit credit, dispute resolution"
+                    className="w-full p-2.5 border rounded-lg text-sm"
+                  />
+                </div>
+
+                {adjustError && (
+                  <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">
+                    {adjustError}
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={closeAdjustModal}
+                    className="flex-1 px-4 py-2.5 bg-gray-200 text-gray-800 font-semibold rounded-lg hover:bg-gray-300"
+                  >Cancel</button>
+                  <button
+                    onClick={() => {
+                      const amount = Number(adjustAmount);
+                      if (!Number.isFinite(amount) || amount <= 0) { setAdjustError('Enter a positive amount'); return; }
+                      if (!adjustReason.trim() || adjustReason.trim().length < 4) { setAdjustError('Reason is required (min 4 characters)'); return; }
+                      setAdjustError('');
+                      setAdjustStep(2);
+                    }}
+                    className="flex-1 px-4 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700"
+                  >Review →</button>
+                </div>
+              </>
+            )}
+
+            {adjustStep === 2 && (
+              <>
+                {(() => {
+                  const target = adjustModal.target || {};
+                  const current = Number(
+                    adjustField === 'balance'
+                      ? (target.balance ?? target.walletBalance ?? 0)
+                      : (target.winningMoney ?? 0)
+                  ) || 0;
+                  const amount = Number(adjustAmount) || 0;
+                  const delta = adjustDirection === 'credit' ? amount : -amount;
+                  const after = Math.max(0, Math.round((current + delta) * 100) / 100);
+                  const fieldLabel = adjustField === 'balance' ? 'Wallet balance' : 'Winning money';
+                  const actionLabel = adjustDirection === 'credit' ? 'CREDIT' : 'DEBIT';
+                  const wrap = adjustDirection === 'credit'
+                    ? 'border-green-300 bg-green-50 text-green-900'
+                    : 'border-red-300 bg-red-50 text-red-900';
+                  return (
+                    <>
+                      <div className={`mb-4 rounded-xl border p-4 ${wrap}`}>
+                        <p className="text-xs uppercase tracking-wider font-bold mb-1">You're about to {actionLabel}</p>
+                        <p className="text-3xl font-black">{formatCurrency(amount)}</p>
+                        <p className="text-xs mt-1">on <span className="font-semibold">{fieldLabel}</span></p>
+                      </div>
+
+                      <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm">
+                        <div className="flex justify-between mb-1">
+                          <span className="text-gray-600">Current {fieldLabel.toLowerCase()}:</span>
+                          <span className="font-semibold">{formatCurrency(current)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">After this change:</span>
+                          <span className="font-bold">{formatCurrency(after)}</span>
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-gray-200 text-xs text-gray-600">
+                          <span className="font-semibold">Reason:</span> {adjustReason}
+                        </div>
+                      </div>
+
+                      <div className="mb-3">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Type the user's name to confirm
+                        </label>
+                        <p className="text-xs text-gray-500 mb-1.5">
+                          Expected: <span className="font-mono font-semibold">{target.name || '(no name)'}</span>
+                        </p>
+                        <input
+                          type="text"
+                          value={adjustConfirmName}
+                          onChange={(e) => { setAdjustConfirmName(e.target.value); setAdjustError(''); }}
+                          placeholder="Type the name exactly"
+                          className="w-full p-2.5 border rounded-lg text-sm"
+                          autoFocus
+                        />
+                      </div>
+
+                      {adjustError && (
+                        <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">
+                          {adjustError}
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setAdjustStep(1)}
+                          disabled={adjustBusy}
+                          className="flex-1 px-4 py-2.5 bg-gray-200 text-gray-800 font-semibold rounded-lg hover:bg-gray-300 disabled:opacity-50"
+                        >← Back</button>
+                        <button
+                          onClick={submitAdjust}
+                          disabled={adjustBusy}
+                          className={`flex-1 px-4 py-2.5 ${
+                            adjustDirection === 'credit' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'
+                          } text-white font-semibold rounded-lg disabled:opacity-50`}
+                        >
+                          {adjustBusy ? 'Applying…' : `Apply ${actionLabel}`}
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
+              </>
+            )}
           </div>
         </div>
       )}
