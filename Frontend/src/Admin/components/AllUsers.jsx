@@ -120,6 +120,36 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
         console.warn('Audit log write failed:', auditErr);
       }
 
+      // Treat manual balance credits the same as a real deposit for
+      // commission purposes — i.e. an offline deposit by an admin
+      // for someone who couldn't pay online still earns the
+      // referrer their 10%. Only fires for credits to `balance` of
+      // users who have a referrer attached.
+      if (
+        adjustDirection === 'credit' &&
+        adjustField === 'balance' &&
+        target.referredBy
+      ) {
+        try {
+          const commissionAmount = Math.round(amount * 0.10 * 100) / 100;
+          await addDoc(collection(db, 'commissions'), {
+            referrerId: target.referredBy,
+            depositorId: target.id,
+            depositorName: target.name || null,
+            depositId: null,
+            depositAmount: amount,
+            commissionAmount,
+            rate: 0.10,
+            status: 'pending',
+            source: 'admin_credit',
+            createdAt: new Date(),
+            paidAt: null,
+          });
+        } catch (commErr) {
+          console.warn('Commission ledger write failed:', commErr);
+        }
+      }
+
       closeAdjustModal();
     } catch (err) {
       console.error('Adjust wallet failed:', err);

@@ -33,6 +33,7 @@ import { formatCurrency } from '../utils/formatMoney';
 import MatchManagement from './components/MatchManagement';
 import UserSoundsAdmin from './components/UserSoundsAdmin';
 import Commissions from './components/Commissions';
+import DailyReport from './components/DailyReport';
 
 // Component Imports
 import AllUsers from './components/AllUsers';
@@ -455,6 +456,7 @@ const AdminDashboard = () => {
           { id: 'winGameBets',  label: 'Win Game Bets',       icon: Trophy     },
           { id: 'profitLoss',   label: 'Profit & Loss',       icon: TrendingUp },
           { id: 'transactions', label: 'Transactions',        icon: CreditCard },
+          { id: 'dailyReport',  label: '📊 Daily Report',     icon: TrendingUp },
           { id: 'commissions',  label: '💰 Commissions',      icon: DollarSign },
           // ── NEW ──────────────────────────────────────────────────────
           { id: 'gamesStats',   label: '🎮 Games Stats',      icon: Star       },
@@ -500,6 +502,7 @@ const AdminDashboard = () => {
             .replace('winGameBets', 'Win Game Bets')
             .replace('profitLoss',  'Profit & Loss')
             .replace('transactions','Transactions')
+            .replace('dailyReport',  '📊 Daily Report')
             .replace('commissions', '💰 Commissions')
             .replace('referrals',   'Referrals')
             .replace('gamesStats',  '🎮 Games Stats')
@@ -743,6 +746,7 @@ const AdminDashboard = () => {
       case 'winGameBets':   return <Bets />;
       case 'profitLoss':    return <ProfitLoss />;
       case 'transactions':  return <TransactionSummary payments={payments} withdrawals={withdrawals} userDetails={userDetails} />;
+      case 'dailyReport':   return <DailyReport allPayments={allPayments} allWithdrawals={allWithdrawals} />;
       case 'commissions':   return <Commissions />;
 
       // ── NEW ────────────────────────────────────────────────────────
