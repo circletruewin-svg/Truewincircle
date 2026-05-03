@@ -38,6 +38,174 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
   const [adjustError, setAdjustError] = useState('');
   const adminUser = useAuthStore((s) => s.user);
 
+  // "Place bet on behalf" — for offline players whose admin records
+  // their bets manually. Supports Haruf (Gali / Disawar / etc.) and
+  // Cricket sports bets.
+  const [placeBetModal, setPlaceBetModal] = useState({ open: false, target: null });
+  const [pbType, setPbType] = useState('haruf'); // 'haruf' | 'sports'
+  const [pbMarket, setPbMarket] = useState('GALI');
+  const [pbNumber, setPbNumber] = useState('');
+  const [pbAmount, setPbAmount] = useState('');
+  const [pbMatchId, setPbMatchId] = useState('');
+  const [pbBetType, setPbBetType] = useState('winner'); // winner|toss|total|topBatsman
+  const [pbSelection, setPbSelection] = useState('');
+  const [pbBusy, setPbBusy] = useState(false);
+  const [pbError, setPbError] = useState('');
+  const [pbMatches, setPbMatches] = useState([]);
+
+  // Load upcoming cricket matches lazily when the bet modal opens.
+  useEffect(() => {
+    if (!placeBetModal.open) return undefined;
+    const q = query(
+      collection(db, 'matches'),
+      where('status', '==', 'upcoming'),
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setPbMatches(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    }, () => setPbMatches([]));
+    return () => unsub();
+  }, [placeBetModal.open]);
+
+  const openPlaceBet = (user) => {
+    setPlaceBetModal({ open: true, target: user });
+    setPbType('haruf');
+    setPbMarket('GALI');
+    setPbNumber(''); setPbAmount('');
+    setPbMatchId(''); setPbBetType('winner'); setPbSelection('');
+    setPbError('');
+  };
+  const closePlaceBet = () => {
+    if (pbBusy) return;
+    setPlaceBetModal({ open: false, target: null });
+    setPbError('');
+  };
+
+  const submitPlaceBet = async () => {
+    if (pbBusy) return;
+    setPbError('');
+    const target = placeBetModal.target;
+    if (!target) return;
+
+    const amount = Math.round(Number(pbAmount) * 100) / 100;
+    if (!Number.isFinite(amount) || amount < 10) {
+      setPbError('Minimum bet ₹10');
+      return;
+    }
+
+    setPbBusy(true);
+    try {
+      if (pbType === 'haruf') {
+        const num = parseInt(pbNumber, 10);
+        if (!Number.isFinite(num) || num < 0 || num > 100) {
+          throw new Error('Number must be between 0 and 100');
+        }
+        await runTransaction(db, async (tx) => {
+          const userRef = doc(db, 'users', target.id);
+          const snap = await tx.get(userRef);
+          if (!snap.exists()) throw new Error('User not found');
+          const data = snap.data();
+          const balance = Number(data.balance ?? data.walletBalance ?? 0) || 0;
+          const winning = Number(data.winningMoney) || 0;
+          if (balance + winning < amount) throw new Error('Insufficient balance to place this bet');
+          // Same debit logic as Haruf.jsx — burn balance first, then winnings.
+          let remaining = amount;
+          const fromBalance = Math.min(balance, remaining);
+          remaining -= fromBalance;
+          const fromWinnings = Math.min(winning, remaining);
+          remaining -= fromWinnings;
+          const newBalance = Math.round((balance - fromBalance) * 100) / 100;
+          const newWinning = Math.round((winning - fromWinnings) * 100) / 100;
+          tx.update(userRef, {
+            balance: newBalance,
+            walletBalance: newBalance,
+            winningMoney: newWinning,
+            lastActiveAt: serverTimestamp(),
+          });
+          const betRef = doc(collection(db, 'harufBets'));
+          tx.set(betRef, {
+            userId: target.id,
+            marketName: pbMarket,
+            betType: 'Haruf',
+            selectedNumber: num,
+            betAmount: amount,
+            timestamp: serverTimestamp(),
+            status: 'pending',
+            placedByAdmin: true,
+            adminId: adminUser?.uid || null,
+          });
+        });
+      } else {
+        // Sports bet on behalf of offline user.
+        if (!pbMatchId) throw new Error('Pick a match');
+        const match = pbMatches.find((m) => m.id === pbMatchId);
+        if (!match) throw new Error('Match not found');
+        const odds = (() => {
+          if (pbBetType === 'winner' || pbBetType === 'toss') {
+            return Number(match.odds?.[pbBetType]?.[pbSelection]) || 0;
+          }
+          if (pbBetType === 'total') {
+            return Number(match.odds?.total?.[pbSelection]) || 0;
+          }
+          if (pbBetType === 'topBatsman') {
+            const found = (match.odds?.topBatsman || []).find((x) => x.name === pbSelection);
+            return Number(found?.odds) || 0;
+          }
+          return 0;
+        })();
+        if (!odds || odds < 1) throw new Error('Pick a valid selection');
+
+        await runTransaction(db, async (tx) => {
+          const userRef = doc(db, 'users', target.id);
+          const snap = await tx.get(userRef);
+          if (!snap.exists()) throw new Error('User not found');
+          const data = snap.data();
+          const balance = Number(data.balance ?? data.walletBalance ?? 0) || 0;
+          const winning = Number(data.winningMoney) || 0;
+          if (balance + winning < amount) throw new Error('Insufficient balance to place this bet');
+          let remaining = amount;
+          const fromBalance = Math.min(balance, remaining);
+          remaining -= fromBalance;
+          const fromWinnings = Math.min(winning, remaining);
+          remaining -= fromWinnings;
+          const newBalance = Math.round((balance - fromBalance) * 100) / 100;
+          const newWinning = Math.round((winning - fromWinnings) * 100) / 100;
+          tx.update(userRef, {
+            balance: newBalance,
+            walletBalance: newBalance,
+            winningMoney: newWinning,
+            lastActiveAt: serverTimestamp(),
+          });
+          const betRef = doc(collection(db, 'sportsBets'));
+          tx.set(betRef, {
+            userId: target.id,
+            matchId: pbMatchId,
+            teamASnapshot: match.teamA?.short || match.teamA?.name,
+            teamBSnapshot: match.teamB?.short || match.teamB?.name,
+            betType: pbBetType,
+            selection: pbSelection,
+            selectionLabel: `${pbBetType}: ${pbSelection}`,
+            oddsAtBet: odds,
+            betAmount: amount,
+            line: pbBetType === 'total' ? (match.odds?.total?.line ?? null) : null,
+            debitedFromBalance: fromBalance,
+            debitedFromWinnings: fromWinnings,
+            status: 'pending',
+            createdAt: serverTimestamp(),
+            placedByAdmin: true,
+            adminId: adminUser?.uid || null,
+          });
+        });
+      }
+
+      closePlaceBet();
+    } catch (err) {
+      console.error('Place bet failed:', err);
+      setPbError(err.message || 'Failed to place bet');
+    } finally {
+      setPbBusy(false);
+    }
+  };
+
   const openAdjustModal = (user) => {
     setAdjustModal({ open: true, target: user });
     setAdjustField('balance');
@@ -239,6 +407,7 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
   const [createWinning, setCreateWinning] = useState('');
   const [createReferrerId, setCreateReferrerId] = useState('');
   const [createReferrerLabel, setCreateReferrerLabel] = useState('');
+  const [createOffline, setCreateOffline] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState('');
   const [createSuccess, setCreateSuccess] = useState('');
@@ -247,6 +416,7 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
     setCreateName(''); setCreatePhone('');
     setCreateBalance(''); setCreateWinning('');
     setCreateReferrerId(''); setCreateReferrerLabel('');
+    setCreateOffline(false);
     setCreateError(''); setCreateSuccess('');
   };
 
@@ -255,22 +425,81 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
     const trimmedName = createName.trim();
     const cleanPhone = createPhone.replace(/\D/g, '');
     if (trimmedName.length < 2) { setCreateError('Enter a valid name'); return; }
-    if (cleanPhone.length !== 10) { setCreateError('Enter a 10-digit mobile number'); return; }
+    // Phone is optional in offline mode (player has no number on file),
+    // mandatory for the normal pre-staged flow because the user signs
+    // in with that phone via OTP.
+    if (!createOffline && cleanPhone.length !== 10) {
+      setCreateError('Enter a 10-digit mobile number (or tick "Offline / Demo account")');
+      return;
+    }
+    if (createOffline && cleanPhone && cleanPhone.length !== 10) {
+      setCreateError('Phone is optional but if entered, must be 10 digits');
+      return;
+    }
     const balance = Number(createBalance) || 0;
     const winning = Number(createWinning) || 0;
     if (balance < 0 || winning < 0) { setCreateError('Bonus amounts cannot be negative'); return; }
 
-    const phoneId = '+91' + cleanPhone;
     setCreateBusy(true);
     try {
-      // If a real account already exists with this phone, don't shadow it.
+      // ── OFFLINE / DEMO ACCOUNT ──────────────────────────────────
+      // Player can't / won't sign in with OTP. Admin records bets and
+      // payouts on their behalf. We mint a Firestore user doc directly
+      // with a synthetic id, no Firebase Auth account.
+      if (createOffline) {
+        const offlineUid = `offline-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        const userRef = doc(db, 'users', offlineUid);
+        await setDoc(userRef, {
+          name: trimmedName,
+          phoneNumber: cleanPhone ? '+91' + cleanPhone : null,
+          balance,
+          winningMoney: winning,
+          appName: 'truewin',
+          role: 'user',
+          referredBy: createReferrerId || null,
+          referrerSetByAdmin: !!createReferrerId,
+          isOffline: true,
+          createdByAdmin: true,
+          createdAt: serverTimestamp(),
+          lastActiveAt: serverTimestamp(),
+        });
+        // Welcome-bonus credits earn the referrer their 10% commission
+        // just like a real cash deposit would.
+        if (balance > 0 && createReferrerId) {
+          try {
+            const commissionAmount = Math.round(balance * 0.10 * 100) / 100;
+            await addDoc(collection(db, 'commissions'), {
+              referrerId: createReferrerId,
+              depositorId: offlineUid,
+              depositorName: trimmedName,
+              depositId: null,
+              depositAmount: balance,
+              commissionAmount,
+              rate: 0.10,
+              status: 'pending',
+              source: 'offline_account_open',
+              createdAt: new Date(),
+              paidAt: null,
+            });
+          } catch (commErr) {
+            console.warn('Commission ledger write failed:', commErr);
+          }
+        }
+        setCreateSuccess(`Offline account "${trimmedName}" created. Place bets via the "Place Bet" button on their row.`);
+        setTimeout(() => { setCreateOpen(false); resetCreateForm(); }, 1800);
+        return;
+      }
+
+      // ── ONLINE / PRE-STAGED ACCOUNT ────────────────────────────
+      // The player will sign in with OTP later — we just write to
+      // pendingUsers/{phone} and the SignIn page picks it up.
+      const phoneId = '+91' + cleanPhone;
       const existing = users.find(u => u.phoneNumber === phoneId);
       if (existing) {
         setCreateError(`A user with this phone already exists (${existing.name || existing.id}).`);
         setCreateBusy(false);
         return;
       }
-      // Don't overwrite if another admin already pre-staged this number.
       const pendingRef = doc(db, 'pendingUsers', phoneId);
       const pendingSnap = await getDoc(pendingRef);
       if (pendingSnap.exists()) {
@@ -291,7 +520,6 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
         createdByAdmin: true,
       });
       setCreateSuccess(`Account staged for ${trimmedName} (${phoneId}). It activates the moment they log in with OTP.`);
-      // Keep modal open briefly so the admin sees the success line.
       setTimeout(() => { setCreateOpen(false); resetCreateForm(); }, 1800);
     } catch (err) {
       console.error('Create user failed:', err);
@@ -626,6 +854,22 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
               </div>
             </div>
 
+            <label className="flex items-start gap-2 mb-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg cursor-pointer">
+              <input
+                type="checkbox"
+                checked={createOffline}
+                onChange={(e) => setCreateOffline(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-amber-600"
+              />
+              <div className="text-xs">
+                <p className="font-semibold text-amber-900">Offline / Demo account</p>
+                <p className="text-amber-800 mt-0.5">
+                  Player kabhi OTP login nahi karega. Admin unke behalf pe bets lagayega
+                  aur cash leke wallet adjust karega. Phone optional ho jata hai.
+                </p>
+              </div>
+            </label>
+
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Refer under (optional)
             </label>
@@ -810,11 +1054,18 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
                   <td className="p-4 text-gray-600"><UserWinLoss userIdentity={user} /></td>
                   <td className="p-4 text-gray-600">{user.role || 'user'}</td>
                   <td className="p-4">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                      isSuspended ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                    }`}>
-                      {isSuspended ? 'Suspended' : 'Active'}
-                    </span>
+                    <div className="flex flex-col items-start gap-1">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                        isSuspended ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                      }`}>
+                        {isSuspended ? 'Suspended' : 'Active'}
+                      </span>
+                      {user.isOffline && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-100 text-amber-800 border border-amber-300">
+                          Offline
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="p-4 text-left text-gray-600">{formatJoinDate(user.createdAt)}</td>
                   <td className="p-4 text-right font-semibold text-gray-800">{formatCurrency(totalBalance)}</td>
@@ -851,6 +1102,13 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
                         title="Manually credit or debit this user's wallet (audited)"
                       >
                         Adjust Wallet
+                      </button>
+                      <button
+                        onClick={() => openPlaceBet(user)}
+                        className="bg-pink-600 hover:bg-pink-700 text-white font-bold py-1 px-3 rounded text-xs"
+                        title="Place a bet on behalf of this user (Haruf / Cricket)"
+                      >
+                        Place Bet
                       </button>
                     </div>
                   </td>
@@ -1002,6 +1260,169 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
                 onClick={() => setReferrerModal({ open: false, target: null })}
                 className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold rounded-lg text-sm"
               >Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {placeBetModal.open && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">Place Bet on Behalf</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  for <span className="font-semibold">{placeBetModal.target?.name}</span>
+                  {placeBetModal.target?.isOffline && (
+                    <span className="ml-1 text-amber-700">(offline account)</span>
+                  )}
+                </p>
+              </div>
+              <button onClick={closePlaceBet} disabled={pbBusy} className="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              <button
+                type="button"
+                onClick={() => setPbType('haruf')}
+                className={`px-3 py-2 rounded-lg text-sm font-semibold border ${
+                  pbType === 'haruf' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'
+                }`}
+              >Haruf (Gali / Disawar)</button>
+              <button
+                type="button"
+                onClick={() => setPbType('sports')}
+                className={`px-3 py-2 rounded-lg text-sm font-semibold border ${
+                  pbType === 'sports' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'
+                }`}
+              >Cricket</button>
+            </div>
+
+            {pbType === 'haruf' ? (
+              <>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Market</label>
+                <select
+                  value={pbMarket}
+                  onChange={(e) => setPbMarket(e.target.value)}
+                  className="w-full mb-3 p-2.5 border rounded-lg text-sm"
+                >
+                  {['GALI', 'DELHI BAZAAR', 'SHREE GANESH', 'FARIDABAD', 'MATKA MANDI', 'GHAZIABAD', 'DISAWAR'].map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+
+                <label className="block text-sm font-medium text-gray-700 mb-1">Number (0–100)</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={pbNumber}
+                  onChange={(e) => { setPbNumber(e.target.value); setPbError(''); }}
+                  placeholder="e.g. 4"
+                  className="w-full mb-3 p-2.5 border rounded-lg text-sm"
+                />
+              </>
+            ) : (
+              <>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Match</label>
+                <select
+                  value={pbMatchId}
+                  onChange={(e) => { setPbMatchId(e.target.value); setPbSelection(''); setPbError(''); }}
+                  className="w-full mb-3 p-2.5 border rounded-lg text-sm"
+                >
+                  <option value="">— Pick an upcoming match —</option>
+                  {pbMatches.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {(m.teamA?.short || m.teamA?.name) || '?'} vs {(m.teamB?.short || m.teamB?.name) || '?'}
+                    </option>
+                  ))}
+                </select>
+
+                {pbMatchId && (() => {
+                  const match = pbMatches.find((m) => m.id === pbMatchId);
+                  if (!match) return null;
+                  return (
+                    <>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Bet type</label>
+                      <select
+                        value={pbBetType}
+                        onChange={(e) => { setPbBetType(e.target.value); setPbSelection(''); }}
+                        className="w-full mb-3 p-2.5 border rounded-lg text-sm"
+                      >
+                        <option value="winner">Match Winner</option>
+                        <option value="toss">Toss Winner</option>
+                        <option value="total">Total Runs (Over/Under {match.odds?.total?.line ?? '—'})</option>
+                        <option value="topBatsman">Top Batsman</option>
+                      </select>
+
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Selection</label>
+                      <select
+                        value={pbSelection}
+                        onChange={(e) => setPbSelection(e.target.value)}
+                        className="w-full mb-3 p-2.5 border rounded-lg text-sm"
+                      >
+                        <option value="">— Pick —</option>
+                        {pbBetType === 'winner' && [
+                          <option key="A" value="A">{match.teamA?.name} (A) @ {match.odds?.winner?.A}x</option>,
+                          <option key="B" value="B">{match.teamB?.name} (B) @ {match.odds?.winner?.B}x</option>,
+                        ]}
+                        {pbBetType === 'toss' && [
+                          <option key="A" value="A">{match.teamA?.name} (A) @ {match.odds?.toss?.A}x</option>,
+                          <option key="B" value="B">{match.teamB?.name} (B) @ {match.odds?.toss?.B}x</option>,
+                        ]}
+                        {pbBetType === 'total' && [
+                          <option key="over" value="over">Over {match.odds?.total?.line} @ {match.odds?.total?.over}x</option>,
+                          <option key="under" value="under">Under {match.odds?.total?.line} @ {match.odds?.total?.under}x</option>,
+                        ]}
+                        {pbBetType === 'topBatsman' && (match.odds?.topBatsman || []).map((b) => (
+                          <option key={b.name} value={b.name}>{b.name} @ {b.odds}x</option>
+                        ))}
+                      </select>
+                    </>
+                  );
+                })()}
+              </>
+            )}
+
+            <label className="block text-sm font-medium text-gray-700 mb-1">Bet amount (₹)</label>
+            <input
+              type="number"
+              min="10"
+              value={pbAmount}
+              onChange={(e) => { setPbAmount(e.target.value); setPbError(''); }}
+              placeholder="e.g. 50"
+              className="w-full mb-3 p-2.5 border rounded-lg text-sm"
+            />
+
+            <div className="bg-gray-50 border rounded-lg px-3 py-2 mb-3 text-xs text-gray-600">
+              Current balance:{' '}
+              <span className="font-semibold text-gray-800">
+                {formatCurrency(
+                  (Number(placeBetModal.target?.balance ?? placeBetModal.target?.walletBalance ?? 0)) +
+                  (Number(placeBetModal.target?.winningMoney ?? 0))
+                )}
+              </span>
+            </div>
+
+            {pbError && (
+              <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">
+                {pbError}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={closePlaceBet}
+                disabled={pbBusy}
+                className="flex-1 px-4 py-2.5 bg-gray-200 text-gray-800 font-semibold rounded-lg hover:bg-gray-300 disabled:opacity-50"
+              >Cancel</button>
+              <button
+                onClick={submitPlaceBet}
+                disabled={pbBusy}
+                className="flex-1 px-4 py-2.5 bg-pink-600 text-white font-semibold rounded-lg hover:bg-pink-700 disabled:opacity-50"
+              >
+                {pbBusy ? 'Placing…' : 'Place Bet'}
+              </button>
             </div>
           </div>
         </div>
