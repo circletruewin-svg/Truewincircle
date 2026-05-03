@@ -207,10 +207,23 @@ const PhoneSignIn = () => {
       }
     } catch (err) {
       console.error("OTP verify error:", err);
+      // Friendly Hinglish messages — the raw "Firebase: Error (auth/...)"
+      // string was scaring users off the page.
       if (err.code === "auth/invalid-verification-code") {
-        toast.error("Invalid OTP. Please check and try again.");
+        toast.error("Galat OTP. Phir se check karke daalein, ya naya OTP mangao.");
+        setOtp("");
+      } else if (err.code === "auth/code-expired" || err.code === "auth/session-expired") {
+        toast.error("OTP expire ho gaya. 'Resend OTP' dabake naya code mangao.");
+        setOtp("");
+        setResendCooldown(0); // unlock the resend button immediately
+      } else if (err.code === "auth/missing-verification-code") {
+        toast.error("OTP enter karein.");
+      } else if (err.code === "auth/too-many-requests") {
+        toast.error("Bahut baar try ho gaya. Thodi der baad try karein.");
+      } else if (err.code === "auth/network-request-failed") {
+        toast.error("Internet check karein aur dobara try karein.");
       } else {
-        toast.error(err.message || "An error occurred while verifying OTP.");
+        toast.error("OTP verify nahi ho paya. Naya OTP mangake try karein.");
       }
     } finally {
       setLoading(false);
