@@ -7,9 +7,31 @@ import Loader from '../../components/Loader';
 
 const marketNames = markets.map(m => m.name);
 
+// IST today as YYYY-MM-DD — the result form defaults to this and the
+// settlement code uses it to scope which day's pending bets to settle.
+const ymdInIst = (date) => {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return fmt.format(date);
+};
+
+// [start, end] timestamps representing 00:00:00 → 23:59:59.999 IST of
+// the given YYYY-MM-DD string.
+const istDayRange = (ymd) => {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const startMs = Date.UTC(y, m - 1, d, 0, 0, 0) - 5.5 * 60 * 60 * 1000;
+  const endMs = startMs + 24 * 60 * 60 * 1000 - 1;
+  return [new Date(startMs), new Date(endMs)];
+};
+
 const Table = () => {
   const [selectedMarket, setSelectedMarket] = useState(marketNames[0]);
   const [newResult, setNewResult] = useState('');
+  const [resultDate, setResultDate] = useState(() => ymdInIst(new Date()));
   const [currentYesterdayResult, setCurrentYesterdayResult] = useState('..');
   const [currentTodayResult, setCurrentTodayResult] = useState('..');
   const [loading, setLoading] = useState(false);
@@ -117,16 +139,29 @@ const Table = () => {
       toast.error("Please enter a valid number between 0 and 99.");
       return;
     }
+    if (!resultDate) {
+      toast.error("Please pick the result's date.");
+      return;
+    }
 
     setSubmitting(true);
     try {
+      // Save the result with the chosen IST date so it shows up on the
+      // right calendar row, even when admin is back-filling a previous
+      // day's number.
+      const [sessionStart, sessionEnd] = istDayRange(resultDate);
+      const paddedNumber = parseInt(newResult).toString().padStart(2, '0');
+
       await addDoc(collection(db, "results"), {
         marketName: selectedMarket,
-        number: parseInt(newResult).toString().padStart(2, '0'), // Ensure two digits
-        date: serverTimestamp(),
+        number: paddedNumber,
+        date: Timestamp.fromDate(sessionStart),
       });
-      toast.success(`Result for ${selectedMarket} updated successfully!`);
-      await processMarketWinners(selectedMarket, parseInt(newResult).toString().padStart(2, '0'));
+      toast.success(`Result for ${selectedMarket} (${resultDate}) updated successfully!`);
+      // Pass the IST day window — settlement only touches bets placed
+      // on that calendar day so back-filling May 3 doesn't accidentally
+      // settle today's bets that haven't been resulted yet.
+      await processMarketWinners(selectedMarket, paddedNumber, sessionStart, sessionEnd);
       setNewResult('');
       fetchResultsAndHistory(selectedMarket); // Refresh results and history
     } catch (error) {
@@ -151,22 +186,35 @@ const Table = () => {
     }
   };
 
-  const processMarketWinners = async (marketName, winningNumber) => {
+  const processMarketWinners = async (marketName, winningNumber, sessionStart, sessionEnd) => {
     const PAYOUT_MULTIPLIER = 90;
     const betsRef = collection(db, "harufBets");
     const betsQuery = query(betsRef, where("marketName", "==", marketName), where("status", "==", "pending"), where("betType", "==", "Haruf"));
-    
+
     const pendingBetsSnapshot = await getDocs(betsQuery);
 
-    if (pendingBetsSnapshot.empty) {
-        console.log(`No pending Haruf bets found for market ${marketName}.`);
+    // Pre-filter to bets placed within the chosen IST day. We do this
+    // client-side because Firestore doesn't allow range filters on
+    // timestamp combined with the existing equality filters without a
+    // dedicated composite index.
+    const inSessionDocs = sessionStart && sessionEnd
+      ? pendingBetsSnapshot.docs.filter(d => {
+          const ts = d.data().timestamp;
+          const placed = ts?.toDate?.();
+          if (!placed) return false;
+          return placed >= sessionStart && placed <= sessionEnd;
+        })
+      : pendingBetsSnapshot.docs;
+
+    if (inSessionDocs.length === 0) {
+        console.log(`No pending Haruf bets found for market ${marketName} in the chosen session.`);
         return;
     }
 
     try {
         await runTransaction(db, async (transaction) => {
             // --- READ PHASE ---
-            const betDocRefs = pendingBetsSnapshot.docs.map(d => d.ref);
+            const betDocRefs = inSessionDocs.map(d => d.ref);
             const betDocs = await Promise.all(betDocRefs.map(ref => transaction.get(ref)));
 
             const userWinnings = {};
@@ -249,26 +297,45 @@ const Table = () => {
           </div>
         )}
 
-        <div className="mb-4">
-          <label htmlFor="newResult" className="block text-sm font-medium text-gray-700">New Result (0-99)</label>
-          <input
-            type="number"
-            id="newResult"
-            value={newResult}
-            onChange={(e) => setNewResult(e.target.value)}
-            min="0"
-            max="99"
-            className="mt-1 block w-full pl-3 pr-3 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-            placeholder="Enter new result (0-99)"
-          />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
+          <div>
+            <label htmlFor="resultDate" className="block text-sm font-medium text-gray-700">Result for date (IST)</label>
+            <input
+              type="date"
+              id="resultDate"
+              value={resultDate}
+              onChange={(e) => setResultDate(e.target.value)}
+              max={ymdInIst(new Date())}
+              className="mt-1 block w-full pl-3 pr-3 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+            />
+            <p className="text-[11px] text-gray-500 mt-1">
+              Default aaj. Past date pick karke bhi result bhar sakte ho — sirf
+              us din ki pending bets settle hongi.
+            </p>
+          </div>
+          <div>
+            <label htmlFor="newResult" className="block text-sm font-medium text-gray-700">Result number (0–99)</label>
+            <input
+              type="number"
+              id="newResult"
+              value={newResult}
+              onChange={(e) => setNewResult(e.target.value)}
+              min="0"
+              max="99"
+              className="mt-1 block w-full pl-3 pr-3 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+              placeholder="e.g. 74"
+            />
+          </div>
         </div>
 
         <button
           onClick={handleUpdateResult}
           disabled={submitting || loading}
-          className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed mt-3"
         >
-          {submitting ? 'Updating Result...' : 'Update Result'}
+          {submitting
+            ? 'Updating Result...'
+            : `Update Result for ${selectedMarket} on ${resultDate || '…'}`}
         </button>
       </div>
       
