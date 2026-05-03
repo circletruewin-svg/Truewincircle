@@ -2,10 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   collection, onSnapshot, query, doc, getDoc,
   updateDoc, serverTimestamp, orderBy,
+  runTransaction, addDoc,
 } from 'firebase/firestore';
-import { Check, RotateCcw, Search } from 'lucide-react';
+import { Check, RotateCcw, Search, X, Calendar } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { db } from '../../firebase';
+import useAuthStore from '../../store/authStore';
 import { formatCurrency } from '../../utils/formatMoney';
 import { toDateValue } from '../../utils/dateHelpers';
 
@@ -19,15 +21,29 @@ const STATUS_FILTERS = [
   { id: 'all',     label: 'All' },
 ];
 
+// Commission credits land here on Mark Paid. winningMoney is
+// withdrawable, balance is deposit-only — earned referral commission
+// is closer in spirit to winnings.
+const COMMISSION_CREDIT_FIELD = 'winningMoney';
+
+const ymd = (d) => {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  return fmt.format(d);
+};
+
 export default function Commissions() {
   const [commissions, setCommissions] = useState([]);
-  const [userMap, setUserMap] = useState({});       // uid → { name, phoneNumber }
+  const [userMap, setUserMap] = useState({});
   const [statusFilter, setStatusFilter] = useState('pending');
   const [search, setSearch] = useState('');
+  const [dateFilter, setDateFilter] = useState(''); // '' = all dates, else 'YYYY-MM-DD'
   const [loading, setLoading] = useState(true);
   const [busyIds, setBusyIds] = useState(() => new Set());
+  const adminUser = useAuthStore((s) => s.user);
 
-  // Live subscribe to commissions ledger.
   useEffect(() => {
     const q = query(collection(db, 'commissions'), orderBy('createdAt', 'desc'));
     const unsub = onSnapshot(
@@ -44,7 +60,6 @@ export default function Commissions() {
     return () => unsub();
   }, []);
 
-  // Lazy-fetch user names/phones for referrer + depositor.
   useEffect(() => {
     const idsToFetch = new Set();
     commissions.forEach((c) => {
@@ -74,10 +89,18 @@ export default function Commissions() {
     return () => { cancelled = true; };
   }, [commissions, userMap]);
 
+  const matchesDate = (createdAt) => {
+    if (!dateFilter) return true;
+    const d = toDateValue(createdAt);
+    if (!d) return false;
+    return ymd(d) === dateFilter;
+  };
+
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return commissions.filter((c) => {
       if (statusFilter !== 'all' && (c.status || 'pending') !== statusFilter) return false;
+      if (!matchesDate(c.createdAt)) return false;
       if (!term) return true;
       const ref = userMap[c.referrerId] || {};
       const dep = userMap[c.depositorId] || {};
@@ -87,18 +110,23 @@ export default function Commissions() {
       ].filter(Boolean).map((s) => String(s).toLowerCase()).join(' ');
       return haystack.includes(term);
     });
-  }, [commissions, userMap, statusFilter, search]);
+  }, [commissions, userMap, statusFilter, search, dateFilter]);
 
   const stats = useMemo(() => {
     let pendingTotal = 0;
     let paidTotal = 0;
+    let voidedTotal = 0;
+    // Stats reflect the current filter (date) so admin sees totals for
+    // whatever date they picked.
     commissions.forEach((c) => {
+      if (!matchesDate(c.createdAt)) return;
       const amount = Number(c.commissionAmount) || 0;
       if (c.status === 'paid') paidTotal += amount;
-      else if (!c.status || c.status === 'pending') pendingTotal += amount;
+      else if (c.status === 'voided') voidedTotal += amount;
+      else pendingTotal += amount;
     });
-    return { pendingTotal, paidTotal, total: pendingTotal + paidTotal };
-  }, [commissions]);
+    return { pendingTotal, paidTotal, voidedTotal, total: pendingTotal + paidTotal };
+  }, [commissions, dateFilter]);
 
   const setBusy = (id, busy) => {
     setBusyIds((prev) => {
@@ -108,19 +136,68 @@ export default function Commissions() {
     });
   };
 
+  // Mark Paid → credit referrer's winningMoney AND set status='paid'
+  // atomically inside a transaction. Idempotent: if a previous click
+  // already paid this commission, the transaction is a no-op.
   const markPaid = async (commission) => {
     if (busyIds.has(commission.id)) return;
+    const refUser = userMap[commission.referrerId];
+    const refLabel = refUser?.name || commission.referrerId.slice(0, 8);
+    const amount = Number(commission.commissionAmount) || 0;
     if (!window.confirm(
-      `Mark ₹${Number(commission.commissionAmount).toFixed(2)} commission as PAID? ` +
-      `(this only updates the ledger — you should pay the user manually first)`
+      `Mark ${formatCurrency(amount)} as PAID and credit it to ${refLabel}'s winning money?\n\n` +
+      `Yeh withdrawable hoga — referrer apne wallet se withdraw kar sakta hai.`
     )) return;
+
     setBusy(commission.id, true);
     try {
-      await updateDoc(doc(db, 'commissions', commission.id), {
-        status: 'paid',
-        paidAt: serverTimestamp(),
+      let alreadyPaid = false;
+      await runTransaction(db, async (tx) => {
+        const commissionRef = doc(db, 'commissions', commission.id);
+        const userRef = doc(db, 'users', commission.referrerId);
+        const cSnap = await tx.get(commissionRef);
+        if (!cSnap.exists()) throw new Error('Commission not found');
+        const cur = cSnap.data();
+        if (cur.status === 'paid') {
+          alreadyPaid = true;
+          return;
+        }
+        const uSnap = await tx.get(userRef);
+        if (!uSnap.exists()) throw new Error('Referrer user not found');
+        const userData = uSnap.data();
+        const currentAmount = Number(userData[COMMISSION_CREDIT_FIELD] || 0);
+        const next = Math.round((currentAmount + amount) * 100) / 100;
+        tx.update(commissionRef, {
+          status: 'paid',
+          paidAt: serverTimestamp(),
+          paidByAdminId: adminUser?.uid || null,
+          paidByAdminName: adminUser?.name || null,
+        });
+        tx.update(userRef, {
+          [COMMISSION_CREDIT_FIELD]: next,
+          lastActiveAt: serverTimestamp(),
+        });
       });
-      toast.success('Marked as paid');
+
+      if (alreadyPaid) {
+        toast.info('Already marked as paid.');
+      } else {
+        // Audit log so the credit shows up in the referrer's transaction history.
+        try {
+          await addDoc(collection(db, 'transactions'), {
+            userId: commission.referrerId,
+            userName: refUser?.name || null,
+            type: 'referral_commission_paid',
+            field: COMMISSION_CREDIT_FIELD,
+            amount,
+            commissionId: commission.id,
+            depositorId: commission.depositorId,
+            depositorName: commission.depositorName || null,
+            createdAt: new Date(),
+          });
+        } catch { /* non-fatal */ }
+        toast.success(`Credited ${formatCurrency(amount)} to ${refLabel}.`);
+      }
     } catch (err) {
       console.error(err);
       toast.error('Failed: ' + (err.message || 'unknown'));
@@ -129,16 +206,89 @@ export default function Commissions() {
     }
   };
 
-  const markPending = async (commission) => {
+  // Reject / Void — sets status='voided', no wallet impact.
+  const rejectCommission = async (commission) => {
     if (busyIds.has(commission.id)) return;
-    if (!window.confirm('Move this commission back to PENDING?')) return;
+    const status = commission.status || 'pending';
+    if (status === 'paid') {
+      toast.error('Already paid commission can\'t be rejected. Use Undo to debit and reset.');
+      return;
+    }
+    if (!window.confirm(
+      `Reject this commission of ${formatCurrency(commission.commissionAmount)}? ` +
+      `Status will be marked VOIDED. No wallet credit will happen.`
+    )) return;
     setBusy(commission.id, true);
     try {
       await updateDoc(doc(db, 'commissions', commission.id), {
-        status: 'pending',
-        paidAt: null,
+        status: 'voided',
+        rejectedAt: serverTimestamp(),
+        rejectedByAdminId: adminUser?.uid || null,
+        rejectedByAdminName: adminUser?.name || null,
       });
-      toast.success('Moved back to pending');
+      toast.success('Marked as voided.');
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed: ' + (err.message || 'unknown'));
+    } finally {
+      setBusy(commission.id, false);
+    }
+  };
+
+  // Undo — moves a Paid or Voided entry back to Pending. If it was
+  // Paid, debit the wallet credit back so the books stay balanced.
+  const undoCommission = async (commission) => {
+    if (busyIds.has(commission.id)) return;
+    const status = commission.status || 'pending';
+    if (status === 'pending') return;
+    const wasPaid = status === 'paid';
+    const amount = Number(commission.commissionAmount) || 0;
+    if (!window.confirm(
+      wasPaid
+        ? `Undo this PAID commission?\n\n${formatCurrency(amount)} will be DEBITED back from the referrer's winning money, and status will return to Pending.`
+        : 'Move this commission back to Pending?'
+    )) return;
+
+    setBusy(commission.id, true);
+    try {
+      await runTransaction(db, async (tx) => {
+        const commissionRef = doc(db, 'commissions', commission.id);
+        const userRef = doc(db, 'users', commission.referrerId);
+        const cSnap = await tx.get(commissionRef);
+        if (!cSnap.exists()) throw new Error('Commission not found');
+        const cur = cSnap.data();
+        if (cur.status !== 'paid' && cur.status !== 'voided') return;
+
+        if (cur.status === 'paid') {
+          const uSnap = await tx.get(userRef);
+          if (!uSnap.exists()) throw new Error('Referrer user not found');
+          const currentAmount = Number(uSnap.data()[COMMISSION_CREDIT_FIELD] || 0);
+          const next = Math.max(0, Math.round((currentAmount - amount) * 100) / 100);
+          tx.update(userRef, {
+            [COMMISSION_CREDIT_FIELD]: next,
+            lastActiveAt: serverTimestamp(),
+          });
+        }
+
+        tx.update(commissionRef, {
+          status: 'pending',
+          paidAt: null,
+        });
+      });
+
+      if (wasPaid) {
+        try {
+          await addDoc(collection(db, 'transactions'), {
+            userId: commission.referrerId,
+            type: 'referral_commission_reversed',
+            field: COMMISSION_CREDIT_FIELD,
+            amount: -amount,
+            commissionId: commission.id,
+            createdAt: new Date(),
+          });
+        } catch { /* non-fatal */ }
+      }
+      toast.success('Moved back to pending.');
     } catch (err) {
       console.error(err);
       toast.error('Failed: ' + (err.message || 'unknown'));
@@ -174,8 +324,9 @@ export default function Commissions() {
         <div className="p-6 border-b">
           <h3 className="text-lg font-semibold">Referral Commissions</h3>
           <p className="text-sm text-gray-500 mt-1">
-            Each approved deposit pays the depositor's direct referrer 10% as a commission.
-            Mark each entry as paid once you've actually paid the user.
+            Each approved deposit gives the depositor's direct referrer 10% as a commission.
+            Mark Paid → credit's referrer's winning money (withdrawable). Reject → void without
+            crediting. Undo → reverse the credit (or restore voided to pending).
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
@@ -206,6 +357,25 @@ export default function Commissions() {
                   }`}
                 >{f.label}</button>
               ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <input
+                  type="date"
+                  value={dateFilter}
+                  onChange={(e) => setDateFilter(e.target.value)}
+                  max={ymd(new Date())}
+                  className="pl-8 pr-2 py-1.5 border rounded-lg text-xs"
+                  title="Filter by date"
+                />
+              </div>
+              {dateFilter && (
+                <button
+                  onClick={() => setDateFilter('')}
+                  className="text-xs text-gray-600 hover:text-gray-900 underline"
+                >Clear date</button>
+              )}
             </div>
             <div className="relative sm:ml-auto sm:w-72">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -238,7 +408,7 @@ export default function Commissions() {
                 <tr><td colSpan={7} className="p-6 text-center text-gray-500">Loading…</td></tr>
               ) : filtered.length === 0 ? (
                 <tr><td colSpan={7} className="p-6 text-center text-gray-500">
-                  {search ? 'No commissions match your search.' : 'No commissions in this view.'}
+                  {search || dateFilter ? 'No commissions match your filters.' : 'No commissions in this view.'}
                 </td></tr>
               ) : filtered.map((c) => {
                 const date = toDateValue(c.createdAt);
@@ -264,28 +434,36 @@ export default function Commissions() {
                     </td>
                     <td className="p-4">{statusBadge(status)}</td>
                     <td className="p-4">
-                      {status === 'pending' && (
-                        <button
-                          onClick={() => markPaid(c)}
-                          disabled={busy}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50"
-                        >
-                          <Check className="h-3.5 w-3.5" /> Mark Paid
-                        </button>
-                      )}
-                      {status === 'paid' && (
-                        <button
-                          onClick={() => markPending(c)}
-                          disabled={busy}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-300 disabled:opacity-50"
-                          title="Undo — move back to pending"
-                        >
-                          <RotateCcw className="h-3.5 w-3.5" /> Undo
-                        </button>
-                      )}
-                      {status === 'voided' && (
-                        <span className="text-xs text-gray-500 italic">No action</span>
-                      )}
+                      <div className="flex flex-wrap gap-1">
+                        {status === 'pending' && (
+                          <>
+                            <button
+                              onClick={() => markPaid(c)}
+                              disabled={busy}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50"
+                            >
+                              <Check className="h-3.5 w-3.5" /> Mark Paid
+                            </button>
+                            <button
+                              onClick={() => rejectCommission(c)}
+                              disabled={busy}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-lg hover:bg-red-700 disabled:opacity-50"
+                            >
+                              <X className="h-3.5 w-3.5" /> Reject
+                            </button>
+                          </>
+                        )}
+                        {(status === 'paid' || status === 'voided') && (
+                          <button
+                            onClick={() => undoCommission(c)}
+                            disabled={busy}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-300 disabled:opacity-50"
+                            title={status === 'paid' ? 'Reverse the wallet credit and move back to pending' : 'Restore to pending'}
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" /> Undo
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
