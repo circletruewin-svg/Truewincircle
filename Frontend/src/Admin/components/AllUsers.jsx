@@ -46,6 +46,21 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
   const [pbMarket, setPbMarket] = useState('GALI');
   const [pbNumber, setPbNumber] = useState('');
   const [pbAmount, setPbAmount] = useState('');
+  // Haruf supports placing bets on multiple numbers in one go (one
+  // {number, amount} per row, all settled in a single transaction).
+  // For sports we still take a single match + selection + amount via
+  // pbAmount above.
+  const [pbHarufRows, setPbHarufRows] = useState([{ id: 1, number: '', amount: '' }]);
+  const addHarufRow = () =>
+    setPbHarufRows((rows) => [...rows, { id: Date.now() + Math.random(), number: '', amount: '' }]);
+  const removeHarufRow = (id) =>
+    setPbHarufRows((rows) => (rows.length > 1 ? rows.filter((r) => r.id !== id) : rows));
+  const updateHarufRow = (id, field, value) =>
+    setPbHarufRows((rows) => rows.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
+  const harufRowsTotal = useMemo(
+    () => pbHarufRows.reduce((sum, r) => sum + (Number(r.amount) || 0), 0),
+    [pbHarufRows]
+  );
   const [pbMatchId, setPbMatchId] = useState('');
   const [pbBetType, setPbBetType] = useState('winner'); // winner|toss|total|topBatsman
   const [pbSelection, setPbSelection] = useState('');
@@ -71,6 +86,7 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
     setPbType('haruf');
     setPbMarket('GALI');
     setPbNumber(''); setPbAmount('');
+    setPbHarufRows([{ id: Date.now(), number: '', amount: '' }]);
     setPbMatchId(''); setPbBetType('winner'); setPbSelection('');
     setPbError('');
   };
@@ -86,19 +102,33 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
     const target = placeBetModal.target;
     if (!target) return;
 
-    const amount = Math.round(Number(pbAmount) * 100) / 100;
-    if (!Number.isFinite(amount) || amount < 10) {
-      setPbError('Minimum bet ₹10');
-      return;
-    }
-
     setPbBusy(true);
     try {
       if (pbType === 'haruf') {
-        const num = parseInt(pbNumber, 10);
-        if (!Number.isFinite(num) || num < 0 || num > 100) {
-          throw new Error('Number must be between 0 and 100');
+        // Multi-row Haruf: each row = one number + one amount. We
+        // settle them all inside a single Firestore transaction so the
+        // user's balance never gets debited for a partial set.
+        const cleaned = pbHarufRows
+          .map((r) => ({
+            number: parseInt(r.number, 10),
+            amount: Math.round(Number(r.amount) * 100) / 100,
+          }))
+          .filter((r) =>
+            Number.isFinite(r.number) && r.number >= 0 && r.number <= 100 &&
+            Number.isFinite(r.amount) && r.amount >= 10
+          );
+        if (cleaned.length === 0) {
+          throw new Error('Add at least one number with amount ≥ ₹10 (each)');
         }
+        const seen = new Set();
+        for (const row of cleaned) {
+          if (seen.has(row.number)) {
+            throw new Error(`Number ${row.number} appears twice — combine them into one row`);
+          }
+          seen.add(row.number);
+        }
+        const totalBet = cleaned.reduce((sum, r) => sum + r.amount, 0);
+
         await runTransaction(db, async (tx) => {
           const userRef = doc(db, 'users', target.id);
           const snap = await tx.get(userRef);
@@ -106,9 +136,13 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
           const data = snap.data();
           const balance = Number(data.balance ?? data.walletBalance ?? 0) || 0;
           const winning = Number(data.winningMoney) || 0;
-          if (balance + winning < amount) throw new Error('Insufficient balance to place this bet');
+          if (balance + winning < totalBet) {
+            throw new Error(
+              `Insufficient balance: need ${formatCurrency(totalBet)}, have ${formatCurrency(balance + winning)}`
+            );
+          }
           // Same debit logic as Haruf.jsx — burn balance first, then winnings.
-          let remaining = amount;
+          let remaining = totalBet;
           const fromBalance = Math.min(balance, remaining);
           remaining -= fromBalance;
           const fromWinnings = Math.min(winning, remaining);
@@ -121,21 +155,31 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
             winningMoney: newWinning,
             lastActiveAt: serverTimestamp(),
           });
-          const betRef = doc(collection(db, 'harufBets'));
-          tx.set(betRef, {
-            userId: target.id,
-            marketName: pbMarket,
-            betType: 'Haruf',
-            selectedNumber: num,
-            betAmount: amount,
-            timestamp: serverTimestamp(),
-            status: 'pending',
-            placedByAdmin: true,
-            adminId: adminUser?.uid || null,
-          });
+          // One harufBets doc per row — settlement code handles each
+          // independently, exactly like the user-side multi-bet path.
+          for (const row of cleaned) {
+            const betRef = doc(collection(db, 'harufBets'));
+            tx.set(betRef, {
+              userId: target.id,
+              marketName: pbMarket,
+              betType: 'Haruf',
+              selectedNumber: row.number,
+              betAmount: row.amount,
+              timestamp: serverTimestamp(),
+              status: 'pending',
+              placedByAdmin: true,
+              adminId: adminUser?.uid || null,
+            });
+          }
         });
       } else {
-        // Sports bet on behalf of offline user.
+        // Sports bet on behalf of offline user — single bet, single
+        // match. Validate the amount field that's still used by the
+        // sports tab.
+        const amount = Math.round(Number(pbAmount) * 100) / 100;
+        if (!Number.isFinite(amount) || amount < 10) {
+          throw new Error('Minimum bet ₹10');
+        }
         if (!pbMatchId) throw new Error('Pick a match');
         const match = pbMatches.find((m) => m.id === pbMatchId);
         if (!match) throw new Error('Match not found');
@@ -1311,16 +1355,53 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
                   ))}
                 </select>
 
-                <label className="block text-sm font-medium text-gray-700 mb-1">Number (0–100)</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={pbNumber}
-                  onChange={(e) => { setPbNumber(e.target.value); setPbError(''); }}
-                  placeholder="e.g. 4"
-                  className="w-full mb-3 p-2.5 border rounded-lg text-sm"
-                />
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm font-medium text-gray-700">Numbers + amounts</label>
+                  <span className="text-xs text-gray-500">
+                    Total: <span className="font-semibold text-gray-900">{formatCurrency(harufRowsTotal)}</span>
+                  </span>
+                </div>
+                <div className="space-y-2 mb-2">
+                  {pbHarufRows.map((row, idx) => (
+                    <div key={row.id} className="flex items-center gap-2">
+                      <span className="text-xs text-gray-400 w-5 shrink-0 text-right">{idx + 1}.</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={row.number}
+                        onChange={(e) => { updateHarufRow(row.id, 'number', e.target.value); setPbError(''); }}
+                        placeholder="No. (0–100)"
+                        className="flex-1 min-w-0 p-2 border rounded-lg text-sm"
+                      />
+                      <input
+                        type="number"
+                        min="10"
+                        value={row.amount}
+                        onChange={(e) => { updateHarufRow(row.id, 'amount', e.target.value); setPbError(''); }}
+                        placeholder="Amount ₹"
+                        className="flex-1 min-w-0 p-2 border rounded-lg text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeHarufRow(row.id)}
+                        disabled={pbHarufRows.length <= 1}
+                        className="text-red-500 hover:text-red-700 disabled:text-gray-300 text-xl leading-none px-1"
+                        title="Remove this row"
+                      >×</button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={addHarufRow}
+                  className="text-xs font-semibold text-blue-600 hover:text-blue-800 mb-3"
+                >+ Add another number</button>
+                <p className="text-[11px] text-gray-500 mb-3">
+                  Har row pe ek number + uska amount. Empty row skip ho jaayegi.
+                  Same market me jitne numbers chahiye add karo, sab ek transaction
+                  me lag jayenge.
+                </p>
               </>
             ) : (
               <>
@@ -1384,15 +1465,19 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
               </>
             )}
 
-            <label className="block text-sm font-medium text-gray-700 mb-1">Bet amount (₹)</label>
-            <input
-              type="number"
-              min="10"
-              value={pbAmount}
-              onChange={(e) => { setPbAmount(e.target.value); setPbError(''); }}
-              placeholder="e.g. 50"
-              className="w-full mb-3 p-2.5 border rounded-lg text-sm"
-            />
+            {pbType === 'sports' && (
+              <>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Bet amount (₹)</label>
+                <input
+                  type="number"
+                  min="10"
+                  value={pbAmount}
+                  onChange={(e) => { setPbAmount(e.target.value); setPbError(''); }}
+                  placeholder="e.g. 50"
+                  className="w-full mb-3 p-2.5 border rounded-lg text-sm"
+                />
+              </>
+            )}
 
             <div className="bg-gray-50 border rounded-lg px-3 py-2 mb-3 text-xs text-gray-600">
               Current balance:{' '}
