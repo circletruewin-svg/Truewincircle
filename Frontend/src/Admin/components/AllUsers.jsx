@@ -105,9 +105,12 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
     setPbBusy(true);
     try {
       if (pbType === 'haruf') {
-        // Multi-row Haruf: each row = one number + one amount. We
-        // settle them all inside a single Firestore transaction so the
-        // user's balance never gets debited for a partial set.
+        // Multi-row Haruf — same rules as the user-side flow:
+        // ₹5–₹50 per number, and a user can only have one bet per
+        // (market, number, IST day). Deterministic doc ids guarantee
+        // the latter even if two writes race.
+        const HARUF_MIN_PER_BET = 5;
+        const HARUF_MAX_PER_BET = 50;
         const cleaned = pbHarufRows
           .map((r) => ({
             number: parseInt(r.number, 10),
@@ -115,10 +118,18 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
           }))
           .filter((r) =>
             Number.isFinite(r.number) && r.number >= 0 && r.number <= 100 &&
-            Number.isFinite(r.amount) && r.amount >= 10
+            Number.isFinite(r.amount) && r.amount > 0
           );
         if (cleaned.length === 0) {
-          throw new Error('Add at least one number with amount ≥ ₹10 (each)');
+          throw new Error(`Add at least one number with amount ₹${HARUF_MIN_PER_BET}–₹${HARUF_MAX_PER_BET}`);
+        }
+        for (const row of cleaned) {
+          if (row.amount < HARUF_MIN_PER_BET) {
+            throw new Error(`Number ${row.number}: minimum ₹${HARUF_MIN_PER_BET} per bet`);
+          }
+          if (row.amount > HARUF_MAX_PER_BET) {
+            throw new Error(`Number ${row.number}: maximum ₹${HARUF_MAX_PER_BET} per bet`);
+          }
         }
         const seen = new Set();
         for (const row of cleaned) {
@@ -129,10 +140,30 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
         }
         const totalBet = cleaned.reduce((sum, r) => sum + r.amount, 0);
 
+        const todayYmd = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+        }).format(new Date());
+        const safeMarket = String(pbMarket).replace(/\s+/g, '_').toUpperCase();
+
         await runTransaction(db, async (tx) => {
           const userRef = doc(db, 'users', target.id);
+
+          // ── READ PHASE ──────────────────────────────────
           const snap = await tx.get(userRef);
           if (!snap.exists()) throw new Error('User not found');
+
+          const reservations = [];
+          for (const row of cleaned) {
+            const betId = `${target.id}_${safeMarket}_${todayYmd}_${row.number}`;
+            const betRef = doc(db, 'harufBets', betId);
+            const betSnap = await tx.get(betRef);
+            if (betSnap.exists()) {
+              throw new Error(`User ne ${pbMarket} me number ${row.number} pe aaj pehle hi bet laga rakhi hai. Doosre number pe lagao.`);
+            }
+            reservations.push({ row, betRef });
+          }
+
+          // ── WRITE PHASE ─────────────────────────────────
           const data = snap.data();
           const balance = Number(data.balance ?? data.walletBalance ?? 0) || 0;
           const winning = Number(data.winningMoney) || 0;
@@ -141,7 +172,6 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
               `Insufficient balance: need ${formatCurrency(totalBet)}, have ${formatCurrency(balance + winning)}`
             );
           }
-          // Same debit logic as Haruf.jsx — burn balance first, then winnings.
           let remaining = totalBet;
           const fromBalance = Math.min(balance, remaining);
           remaining -= fromBalance;
@@ -155,10 +185,7 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
             winningMoney: newWinning,
             lastActiveAt: serverTimestamp(),
           });
-          // One harufBets doc per row — settlement code handles each
-          // independently, exactly like the user-side multi-bet path.
-          for (const row of cleaned) {
-            const betRef = doc(collection(db, 'harufBets'));
+          for (const { row, betRef } of reservations) {
             tx.set(betRef, {
               userId: target.id,
               marketName: pbMarket,
@@ -1376,10 +1403,11 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
                       />
                       <input
                         type="number"
-                        min="10"
+                        min="5"
+                        max="50"
                         value={row.amount}
                         onChange={(e) => { updateHarufRow(row.id, 'amount', e.target.value); setPbError(''); }}
-                        placeholder="Amount ₹"
+                        placeholder="₹5–₹50"
                         className="flex-1 min-w-0 p-2 border rounded-lg text-sm"
                       />
                       <button
@@ -1398,9 +1426,9 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
                   className="text-xs font-semibold text-blue-600 hover:text-blue-800 mb-3"
                 >+ Add another number</button>
                 <p className="text-[11px] text-gray-500 mb-3">
-                  Har row pe ek number + uska amount. Empty row skip ho jaayegi.
-                  Same market me jitne numbers chahiye add karo, sab ek transaction
-                  me lag jayenge.
+                  Min ₹5, max ₹50 per number. Same number pe ek hi bet allowed
+                  hai per din (different number alag se laga sakte ho). Empty row
+                  skip ho jaayegi.
                 </p>
               </>
             ) : (

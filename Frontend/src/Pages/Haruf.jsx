@@ -148,6 +148,22 @@ const HarufGrid = ({ marketName }) => {
     if (placedBets.length === 0)
       return toast.error("Please enter at least one bet.");
 
+    // Per-number limits and one-bet-per-number-per-day rule for Haruf
+    // markets. Min ₹5, max ₹50 on each individual number; the
+    // "already bet" check happens inside the transaction below using
+    // deterministic doc ids so two simultaneous taps can't sneak past.
+    const HARUF_MIN_PER_BET = 5;
+    const HARUF_MAX_PER_BET = 50;
+    for (const [num, amount] of placedBets) {
+      const rounded = Math.round(amount * 100) / 100;
+      if (rounded < HARUF_MIN_PER_BET) {
+        return toast.error(`Number ${num} pe minimum ₹${HARUF_MIN_PER_BET} laga sakte ho.`);
+      }
+      if (rounded > HARUF_MAX_PER_BET) {
+        return toast.error(`Number ${num} pe maximum ₹${HARUF_MAX_PER_BET} hi laga sakte ho.`);
+      }
+    }
+
     const totalBetAmount = Object.values(bets).reduce(
       (acc, b) => acc + (parseInt(b) || 0),
       0
@@ -158,14 +174,39 @@ const HarufGrid = ({ marketName }) => {
 
     setBettingLoading(true);
 
+    // IST date (YYYY-MM-DD) — used to scope "one bet per number per
+    // day" to a specific market session.
+    const todayYmd = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+    const safeMarket = String(marketName).replace(/\s+/g, '_').toUpperCase();
+
     try {
       await runTransaction(db, async (transaction) => {
         const userDocRef = doc(db, "users", user.uid);
 
+        // ── READ PHASE ────────────────────────────────────────
         const userDoc = await transaction.get(userDocRef);
-
         if (!userDoc.exists()) throw new Error("User does not exist!");
 
+        // For each number we're betting on, look up a deterministic
+        // doc to make sure the user hasn't already placed a bet on
+        // that number for this market today. The id is built from
+        // userId + market + ymd + number so the same user can still
+        // bet on the same number tomorrow, or on a different number
+        // today.
+        const reservations = [];
+        for (const [num, amount] of placedBets) {
+          const betId = `${user.uid}_${safeMarket}_${todayYmd}_${num}`;
+          const betRef = doc(db, "harufBets", betId);
+          const betSnap = await transaction.get(betRef);
+          if (betSnap.exists()) {
+            throw new Error(`${marketName} me number ${num} pe aap pehle hi bet laga chuke ho aaj. Doosre number pe lagao.`);
+          }
+          reservations.push({ num, amount, betRef });
+        }
+
+        // ── WRITE PHASE ───────────────────────────────────────
         const userData = userDoc.data();
         const currentBalance = Number(userData.balance || 0);
         const currentWinnings = Number(userData.winningMoney || 0);
@@ -193,13 +234,10 @@ const HarufGrid = ({ marketName }) => {
           winningMoney: Math.round(newWinnings * 100) / 100,
         });
 
-        const betsCollectionRef = collection(db, "harufBets");
-
-        placedBets.forEach(([num, amount]) => {
+        for (const { num, amount, betRef } of reservations) {
           const roundedAmount = Math.round(amount * 100) / 100;
-
           if (roundedAmount > 0) {
-            transaction.set(doc(betsCollectionRef), {
+            transaction.set(betRef, {
               userId: user.uid,
               marketName: marketName,
               betType: "Haruf",
@@ -209,7 +247,7 @@ const HarufGrid = ({ marketName }) => {
               status: "pending",
             });
           }
-        });
+        }
       });
 
       toast.success("Bet placed successfully!");
