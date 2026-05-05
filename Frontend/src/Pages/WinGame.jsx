@@ -34,72 +34,62 @@ const WinGame = () => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const gameStateRef = useCallback(() => doc(db, 'game_state', 'win_game_1_to_12'), []);
 
-    const processWinnings = useCallback(async (winningNumber, roundIdToProcess) => {
-        if (winningNumber === undefined || winningNumber === null || !roundIdToProcess) return;
-    
+    // Decentralized settlement: each user's browser settles their OWN
+    // bets only. The Firestore rules don't let a non-admin update
+    // another user's winningMoney, so a regular player's browser can't
+    // process other players' wins — this used to leave the game stuck
+    // on "Waiting for Result" forever once the original processWinnings
+    // batch silently failed. Now the winning number is broadcast via
+    // the game_state doc plus a wingame_rounds/{roundId} entry, and
+    // every user settles only their own bets the next time their
+    // browser sees the result.
+    const settleMyBetsForRound = useCallback(async (winningNumber, roundIdToProcess) => {
+        if (!user || winningNumber === undefined || winningNumber === null || !roundIdToProcess) return;
         try {
-            const betsQuery = query(collection(db, 'wingame_bets'), where('roundId', '==', roundIdToProcess));
-            const betsSnapshot = await getDocs(betsQuery);
-    
-            if (betsSnapshot.empty) {
-                console.log(`No bets in round ${roundIdToProcess}.`);
-                return;
-            }
-    
+            const myOpenBetsQuery = query(
+                collection(db, 'wingame_bets'),
+                where('userId', '==', user.uid),
+                where('roundId', '==', roundIdToProcess),
+                where('status', '==', 'open'),
+            );
+            const mySnap = await getDocs(myOpenBetsQuery);
+            if (mySnap.empty) return;
+
+            let totalWinnings = 0;
             const batch = writeBatch(db);
-            const winners = {}; // { userId: totalWinnings, ... }
-
-            // First pass: find winners and update bet statuses
-            betsSnapshot.forEach(doc => {
-                const bet = doc.data();
-                const betRef = doc.ref;
-
-                // Defensive check for malformed bet data
-                if (typeof bet.number !== 'number' || typeof bet.amount !== 'number' || isNaN(bet.amount) || !bet.userId) {
-                    console.warn('Skipping malformed bet object:', doc.id, bet);
+            mySnap.docs.forEach((d) => {
+                const bet = d.data();
+                if (typeof bet.number !== 'number' || typeof bet.amount !== 'number' || isNaN(bet.amount)) {
                     return;
                 }
-    
                 if (bet.number === winningNumber) {
-                    // 10x payout — matches the marketing copy on the page.
                     const winnings = bet.amount * 10;
-                    batch.update(betRef, { status: 'win', winnings: winnings });
-                    
-                    // Aggregate winnings per user
-                    if (!winners[bet.userId]) {
-                        winners[bet.userId] = 0;
-                    }
-                    winners[bet.userId] += winnings;
+                    totalWinnings += winnings;
+                    batch.update(d.ref, { status: 'win', winnings });
                 } else {
-                    batch.update(betRef, { status: 'loss' });
+                    batch.update(d.ref, { status: 'loss' });
                 }
             });
+            await batch.commit();
 
-            // If there are winners, fetch their documents and update their winningMoney
-            const userIds = Object.keys(winners);
-            if (userIds.length > 0) {
-                const userRefs = userIds.map(id => doc(db, 'users', id));
-                const userDocs = await Promise.all(userRefs.map(ref => getDoc(ref)));
-
-                userDocs.forEach(userDoc => {
-                    if (userDoc.exists()) {
-                        const userId = userDoc.id;
-                        const userRef = userDoc.ref;
-                        const currentWinningMoney = userDoc.data().winningMoney || 0;
-                        const totalWinnings = winners[userId];
-                        const newWinningMoney = currentWinningMoney + totalWinnings;
-                        batch.update(userRef, { winningMoney: newWinningMoney });
-                    }
+            // Credit own winningMoney for any wins. Always allowed
+            // because the user is updating their own doc.
+            if (totalWinnings > 0) {
+                await runTransaction(db, async (tx) => {
+                    const userRef = doc(db, 'users', user.uid);
+                    const userSnap = await tx.get(userRef);
+                    if (!userSnap.exists()) return;
+                    const cur = Number(userSnap.data().winningMoney || 0);
+                    tx.update(userRef, {
+                        winningMoney: Math.round((cur + totalWinnings) * 100) / 100,
+                        lastActiveAt: serverTimestamp(),
+                    });
                 });
             }
-            
-            await batch.commit();
-            console.log("Winnings distributed and bets updated.");
-    
-        } catch (error) {
-            console.error("Error calculating winnings:", error);
+        } catch (err) {
+            console.error('Failed to settle my bets for round', roundIdToProcess, err);
         }
-    }, []);
+    }, [user]);
 
     // Decide the winning number when the betting window closes.
     //
@@ -168,26 +158,43 @@ const WinGame = () => {
                 setLastWinningNumber(data.lastWinningNumber || null);
                 setTimer(remainingSeconds);
 
-                // A winner has been manually selected by admin
-                if (data.phase === 'results' && data.forcedWinner && !data.winnerProcessed) {
+                // Admin force-winner path. Whichever client claims the
+                // lock first persists the round result to
+                // wingame_rounds/{roundId} so every browser can read it
+                // and settle their own bets independently.
+                if (data.phase === 'results' && data.forcedWinner != null && !data.winnerProcessed) {
                     runTransaction(db, async (transaction) => {
                         const freshDoc = await transaction.get(gameStateRef());
                         if (freshDoc.exists() && freshDoc.data().winnerProcessed) {
-                            return; // Another client already processing
+                            return;
                         }
-                        transaction.update(gameStateRef(), { winnerProcessed: true });
+                        transaction.update(gameStateRef(), {
+                            winnerProcessed: true,
+                            winningNumber: data.forcedWinner,
+                        });
                     }).then(async () => {
-                        console.log(`Processing admin-forced winner: ${data.forcedWinner}`);
-                        await processWinnings(data.forcedWinner, data.roundId);
+                        // Persist round result for late-joining browsers.
+                        try {
+                            await setDoc(doc(db, 'wingame_rounds', String(data.roundId)), {
+                                roundId: data.roundId,
+                                result: data.forcedWinner,
+                                settledAt: new Date(),
+                            }, { merge: true });
+                        } catch (err) { console.warn('Failed to persist round result:', err); }
 
-                        // Transition to next betting round
+                        // Settle MY OWN bets only.
+                        await settleMyBetsForRound(data.forcedWinner, data.roundId);
+
+                        // Transition to next round (any client can race-win
+                        // this; setDoc replaces, so winnerProcessed /
+                        // forcedWinner / winningNumber are cleared).
                         const newEndTime = new Date(Date.now() + BETTING_DURATION_SECONDS * 1000);
                         await setDoc(gameStateRef(), {
                             roundId: Date.now(),
                             phase: 'betting',
                             phaseEndTime: newEndTime,
                             lastWinningNumber: data.forcedWinner,
-                        }); // This resets forcedWinner and winnerProcessed implicitly
+                        });
                     }).catch(error => {
                         if (error.code !== 'aborted') {
                             console.error("Failed to claim winner processing task:", error);
@@ -215,7 +222,7 @@ const WinGame = () => {
             setPhase('error');
         });
         return () => unsubscribe();
-    }, [gameStateRef, phase, roundId, processWinnings]);
+    }, [gameStateRef, phase, roundId, settleMyBetsForRound]);
 
     // Effect for the visual timer countdown
     useEffect(() => {
@@ -254,26 +261,56 @@ const WinGame = () => {
         // admin didn't manually pick one. Bias logic is in pickAutoWinner.
         else if (phase === 'results') {
             (async () => {
-                let claimed = false;
+                let claimedNumber = null;
+                let alreadySetNumber = null;
                 try {
+                    // First client to get here computes the winning
+                    // number and stamps it on game_state. Others read it.
                     await runTransaction(db, async (transaction) => {
                         const gameStateDoc = await transaction.get(gameStateRef());
                         if (!gameStateDoc.exists() || gameStateDoc.data().phase !== 'results' || gameStateDoc.data().roundId !== roundIdToEnd) {
                             throw new Error('State mismatch');
                         }
-                        // Admin override is being processed elsewhere — abort.
-                        if (gameStateDoc.data().forcedWinner || gameStateDoc.data().winnerProcessed) {
+                        const cur = gameStateDoc.data();
+                        if (cur.winningNumber != null) {
+                            alreadySetNumber = cur.winningNumber;
                             return;
                         }
-                        transaction.update(gameStateRef(), { winnerProcessed: true });
-                        claimed = true;
+                        if (cur.forcedWinner != null) {
+                            // Admin already picked — let the other effect handle.
+                            return;
+                        }
+                        // Pick winner (random or biased).
+                        const num = await pickAutoWinner(roundIdToEnd);
+                        transaction.update(gameStateRef(), {
+                            winnerProcessed: true,
+                            winningNumber: num,
+                        });
+                        claimedNumber = num;
                     });
 
-                    if (!claimed) return;
+                    const winningNumber = claimedNumber ?? alreadySetNumber;
+                    if (winningNumber == null) return;
 
-                    const winningNumber = await pickAutoWinner(roundIdToEnd);
-                    await processWinnings(winningNumber, roundIdToEnd);
+                    // Persist round result so users who join late can
+                    // settle their old open bets.
+                    if (claimedNumber != null) {
+                        try {
+                            await setDoc(doc(db, 'wingame_rounds', String(roundIdToEnd)), {
+                                roundId: roundIdToEnd,
+                                result: claimedNumber,
+                                settledAt: new Date(),
+                            }, { merge: true });
+                        } catch (err) { console.warn('Failed to persist round result:', err); }
+                    }
 
+                    // Each browser settles its OWN bets only. No
+                    // cross-user updates → never gets blocked by rules.
+                    await settleMyBetsForRound(winningNumber, roundIdToEnd);
+
+                    // Try to transition to next round. Any client wins
+                    // the race; setDoc replaces the whole doc so all
+                    // settlement flags clear out.
                     const newEndTime = new Date(Date.now() + BETTING_DURATION_SECONDS * 1000);
                     await setDoc(gameStateRef(), {
                         roundId: Date.now(),
@@ -288,7 +325,42 @@ const WinGame = () => {
                 }
             })();
         }
-    }, [timer, phase, user, roundId, pickAutoWinner, processWinnings, gameStateRef]);
+    }, [timer, phase, user, roundId, pickAutoWinner, settleMyBetsForRound, gameStateRef]);
+
+    // On mount / login, sweep up any of the current user's old bets
+    // that are still 'open' but whose round has already been resolved
+    // (e.g. they were offline when the round ended). Reads each round's
+    // stored result from /wingame_rounds and settles their own bets.
+    useEffect(() => {
+        if (!user) return undefined;
+        let cancelled = false;
+        (async () => {
+            try {
+                const myOpenQ = query(
+                    collection(db, 'wingame_bets'),
+                    where('userId', '==', user.uid),
+                    where('status', '==', 'open'),
+                );
+                const snap = await getDocs(myOpenQ);
+                if (cancelled || snap.empty) return;
+                const byRound = {};
+                snap.docs.forEach((d) => {
+                    const bet = d.data();
+                    if (!byRound[bet.roundId]) byRound[bet.roundId] = [];
+                    byRound[bet.roundId].push({ ref: d.ref, ...bet });
+                });
+                for (const [rId, bets] of Object.entries(byRound)) {
+                    const roundSnap = await getDoc(doc(db, 'wingame_rounds', String(rId)));
+                    if (!roundSnap.exists() || roundSnap.data().result == null) continue;
+                    if (cancelled) return;
+                    await settleMyBetsForRound(roundSnap.data().result, Number(rId));
+                }
+            } catch (err) {
+                console.warn('Backfill open-bet settlement failed:', err);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [user, settleMyBetsForRound]);
 
 
     const handleBetSubmit = async () => {

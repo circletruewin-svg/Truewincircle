@@ -162,10 +162,14 @@ service cloud.firestore {
       allow update: if request.auth != null;
     }
 
-    // Rules for the historical record of game rounds (1-12 Win)
+    // Rules for the historical record of game rounds (1-12 Win).
+    // Any authenticated client can append a round's result here when
+    // its browser is the one that resolves the result phase, so other
+    // browsers (and late visitors) can settle their own bets against
+    // the stored number.
     match /wingame_rounds/{roundId} {
       allow read: if request.auth != null;
-      allow create: if request.auth != null;
+      allow create, update: if request.auth != null;
     }
 
     // Rules for the withdrawals collection
