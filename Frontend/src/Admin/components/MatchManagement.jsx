@@ -5,7 +5,13 @@ import {
 } from "firebase/firestore";
 import { db } from "../../firebase";
 import { toast } from "react-toastify";
-import { settleMatch } from "../../utils/sportsSettlement";
+import {
+  settleMatch, settleCustomMarket, setCustomMarketStatus,
+} from "../../utils/sportsSettlement";
+
+// Generate a stable, URL-safe market id without pulling a uuid lib.
+const newMarketId = () =>
+  "m_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
 
 const MATCH_TYPES = ["T20", "ODI", "Test"];
 
@@ -326,11 +332,370 @@ function SettleModal({ match, onClose, onDone }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────
+// MarketsModal — manage 99exch-style session / fancy markets per match
+// ─────────────────────────────────────────────────────────────────
+const EMPTY_MARKET = {
+  category: "session",
+  name: "",
+  type: "overUnder",
+  line: 0,
+  oddsOver: 1.85,
+  oddsUnder: 1.85,
+  oddsYes: 1.95,
+  oddsNo: 1.85,
+};
+
+function MarketForm({ initial, onCancel, onSave }) {
+  const [m, setM] = useState(initial || EMPTY_MARKET);
+  const set = (k, v) => setM((p) => ({ ...p, [k]: v }));
+  const L = "block text-xs font-semibold text-gray-600 mb-1";
+  const I = "w-full border border-gray-300 rounded px-2 py-1.5 text-sm";
+
+  const submit = () => {
+    if (!m.name?.trim()) return toast.error("Market name required.");
+    if (m.type === "overUnder") {
+      if (!Number.isFinite(Number(m.line))) return toast.error("Valid line required.");
+      if (Number(m.oddsOver) < 1 || Number(m.oddsUnder) < 1)
+        return toast.error("Odds must be ≥ 1.");
+    } else {
+      if (Number(m.oddsYes) < 1 || Number(m.oddsNo) < 1)
+        return toast.error("Odds must be ≥ 1.");
+    }
+    onSave({
+      ...m,
+      name: m.name.trim(),
+      line: Number(m.line),
+      oddsOver: Number(m.oddsOver),
+      oddsUnder: Number(m.oddsUnder),
+      oddsYes: Number(m.oddsYes),
+      oddsNo: Number(m.oddsNo),
+    });
+  };
+
+  return (
+    <div className="border border-blue-200 rounded-lg p-3 bg-blue-50 space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className={L}>Category</label>
+          <select className={I} value={m.category} onChange={(e) => set("category", e.target.value)}>
+            <option value="session">Session</option>
+            <option value="fancy">Fancy</option>
+          </select>
+        </div>
+        <div>
+          <label className={L}>Type</label>
+          <select className={I} value={m.type} onChange={(e) => set("type", e.target.value)}>
+            <option value="overUnder">Over / Under (line)</option>
+            <option value="yesNo">Yes / No</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label className={L}>Market name</label>
+        <input
+          className={I}
+          value={m.name}
+          onChange={(e) => set("name", e.target.value)}
+          placeholder={m.category === "session" ? "6 over total runs" : "Virat Kohli 30+ runs"}
+        />
+      </div>
+
+      {m.type === "overUnder" ? (
+        <div className="grid grid-cols-3 gap-2">
+          <div>
+            <label className={L}>Line</label>
+            <input type="number" step="0.5" className={I} value={m.line} onChange={(e) => set("line", e.target.value)} />
+          </div>
+          <div>
+            <label className={L}>Over odds</label>
+            <input type="number" step="0.05" className={I} value={m.oddsOver} onChange={(e) => set("oddsOver", e.target.value)} />
+          </div>
+          <div>
+            <label className={L}>Under odds</label>
+            <input type="number" step="0.05" className={I} value={m.oddsUnder} onChange={(e) => set("oddsUnder", e.target.value)} />
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className={L}>Yes odds</label>
+            <input type="number" step="0.05" className={I} value={m.oddsYes} onChange={(e) => set("oddsYes", e.target.value)} />
+          </div>
+          <div>
+            <label className={L}>No odds</label>
+            <input type="number" step="0.05" className={I} value={m.oddsNo} onChange={(e) => set("oddsNo", e.target.value)} />
+          </div>
+        </div>
+      )}
+
+      <div className="flex justify-end gap-2 pt-1">
+        <button onClick={onCancel} className="px-3 py-1.5 bg-gray-200 rounded text-sm">Cancel</button>
+        <button onClick={submit} className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm">Save market</button>
+      </div>
+    </div>
+  );
+}
+
+function MarketSettleRow({ market, onSettle, busy }) {
+  const [actual, setActual] = useState("");
+  const [outcome, setOutcome] = useState("yes");
+
+  const submit = () => {
+    if (market.type === "overUnder") {
+      if (actual === "" || !Number.isFinite(Number(actual))) {
+        return toast.error("Enter actual numeric result.");
+      }
+      onSettle({ type: "overUnder", actual: Number(actual) });
+    } else {
+      onSettle({ type: "yesNo", outcome });
+    }
+  };
+
+  if (market.type === "overUnder") {
+    return (
+      <div className="flex items-center gap-2 mt-2">
+        <input
+          type="number"
+          step="0.5"
+          placeholder={`Actual (line ${market.line})`}
+          value={actual}
+          onChange={(e) => setActual(e.target.value)}
+          className="w-32 border border-gray-300 rounded px-2 py-1 text-sm"
+        />
+        <button
+          disabled={busy}
+          onClick={submit}
+          className="text-xs bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded disabled:opacity-40"
+        >
+          {busy ? "..." : "Settle"}
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => onSettle({ cancelled: true })}
+          className="text-xs bg-gray-500 hover:bg-gray-600 text-white px-2 py-1 rounded disabled:opacity-40"
+        >
+          Refund all
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2 mt-2">
+      <select value={outcome} onChange={(e) => setOutcome(e.target.value)} className="border border-gray-300 rounded px-2 py-1 text-sm">
+        <option value="yes">YES wins</option>
+        <option value="no">NO wins</option>
+      </select>
+      <button
+        disabled={busy}
+        onClick={submit}
+        className="text-xs bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded disabled:opacity-40"
+      >
+        {busy ? "..." : "Settle"}
+      </button>
+      <button
+        disabled={busy}
+        onClick={() => onSettle({ cancelled: true })}
+        className="text-xs bg-gray-500 hover:bg-gray-600 text-white px-2 py-1 rounded disabled:opacity-40"
+      >
+        Refund all
+      </button>
+    </div>
+  );
+}
+
+function MarketsModal({ match, onClose }) {
+  const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+
+  const customMarkets = match?.customMarkets || {};
+  const marketList = Object.entries(customMarkets).sort(
+    ([, a], [, b]) => (a?.createdAt?.toMillis?.() || 0) - (b?.createdAt?.toMillis?.() || 0)
+  );
+
+  const matchRef = doc(db, "matches", match.id);
+
+  const upsertMarket = async (id, data) => {
+    setBusyId(id);
+    try {
+      await updateDoc(matchRef, {
+        [`customMarkets.${id}`]: {
+          ...data,
+          id,
+          status: data.status || "open",
+          result: data.result ?? null,
+          createdAt: data.createdAt || serverTimestamp(),
+        },
+      });
+      toast.success(editingId ? "Market updated." : "Market created.");
+      setCreating(false);
+      setEditingId(null);
+    } catch (err) {
+      console.error(err);
+      toast.error("Save failed: " + err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const removeMarket = async (id) => {
+    if (!window.confirm("Delete this market? Existing bets stay but won't be settled.")) return;
+    setBusyId(id);
+    try {
+      // Firestore field path delete: use FieldValue.delete(). Easiest in
+      // modular SDK: use deleteField().
+      const { deleteField } = await import("firebase/firestore");
+      await updateDoc(matchRef, { [`customMarkets.${id}`]: deleteField() });
+      toast.success("Market deleted.");
+    } catch (err) {
+      toast.error("Delete failed: " + err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleStatus = async (id, current) => {
+    setBusyId(id);
+    try {
+      await setCustomMarketStatus(match.id, id, current === "open" ? "closed" : "open");
+      toast.success(current === "open" ? "Market closed." : "Market re-opened.");
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const settle = async (id, marketResult) => {
+    setBusyId(id);
+    try {
+      const out = await settleCustomMarket(match.id, id, marketResult);
+      toast.success(`Settled. Paid ${out.paidUsers}, refunded ${out.refundedUsers || 0}.`);
+    } catch (err) {
+      toast.error("Settle failed: " + err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-4 overflow-y-auto">
+      <div className="w-full max-w-3xl bg-white rounded-lg shadow-xl my-8">
+        <div className="border-b p-4 flex justify-between items-center sticky top-0 bg-white">
+          <div>
+            <h3 className="font-bold text-lg">Session & Fancy markets</h3>
+            <p className="text-xs text-gray-500">{match.teamA?.name} vs {match.teamB?.name}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-500 text-2xl">×</button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          {marketList.length === 0 && !creating && (
+            <p className="text-sm text-gray-500 text-center py-4">
+              No markets yet. Add session bets like "6 over runs" or fancy bets like "Virat 30+".
+            </p>
+          )}
+
+          {marketList.map(([id, mk]) => {
+            if (editingId === id) {
+              return (
+                <MarketForm
+                  key={id}
+                  initial={mk}
+                  onCancel={() => setEditingId(null)}
+                  onSave={(data) => upsertMarket(id, { ...mk, ...data })}
+                />
+              );
+            }
+            const settled = mk.status === "settled" || mk.status === "cancelled";
+            return (
+              <div key={id} className={`border rounded-lg p-3 ${settled ? "bg-gray-50" : "bg-white"}`}>
+                <div className="flex justify-between items-start gap-3">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                        mk.category === "session" ? "bg-purple-100 text-purple-700" : "bg-pink-100 text-pink-700"
+                      }`}>{mk.category}</span>
+                      <span className="font-semibold text-sm">{mk.name}</span>
+                      <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                        mk.status === "open" ? "bg-green-100 text-green-700" :
+                        mk.status === "closed" ? "bg-yellow-100 text-yellow-700" :
+                        mk.status === "settled" ? "bg-blue-100 text-blue-700" :
+                        "bg-red-100 text-red-700"
+                      }`}>{mk.status}</span>
+                    </div>
+                    <div className="text-xs text-gray-600 mt-1">
+                      {mk.type === "overUnder"
+                        ? <>Line {mk.line} · Over {Number(mk.oddsOver).toFixed(2)}x · Under {Number(mk.oddsUnder).toFixed(2)}x</>
+                        : <>Yes {Number(mk.oddsYes).toFixed(2)}x · No {Number(mk.oddsNo).toFixed(2)}x</>}
+                      {mk.result != null && <> · <b>Result: {String(mk.result)}</b></>}
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1 whitespace-nowrap">
+                    {!settled && (
+                      <>
+                        <button
+                          disabled={busyId === id}
+                          onClick={() => setEditingId(id)}
+                          className="text-xs bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded"
+                        >Edit</button>
+                        <button
+                          disabled={busyId === id}
+                          onClick={() => toggleStatus(id, mk.status)}
+                          className="text-xs bg-yellow-500 hover:bg-yellow-600 text-white px-2 py-1 rounded"
+                        >{mk.status === "open" ? "Close" : "Reopen"}</button>
+                      </>
+                    )}
+                    <button
+                      disabled={busyId === id}
+                      onClick={() => removeMarket(id)}
+                      className="text-xs bg-red-500 hover:bg-red-700 text-white px-2 py-1 rounded"
+                    >Delete</button>
+                  </div>
+                </div>
+
+                {!settled && (
+                  <MarketSettleRow
+                    market={mk}
+                    busy={busyId === id}
+                    onSettle={(r) => settle(id, r)}
+                  />
+                )}
+              </div>
+            );
+          })}
+
+          {creating ? (
+            <MarketForm
+              onCancel={() => setCreating(false)}
+              onSave={(data) => upsertMarket(newMarketId(), data)}
+            />
+          ) : (
+            <button
+              onClick={() => setCreating(true)}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded text-sm"
+            >
+              + Add market
+            </button>
+          )}
+        </div>
+
+        <div className="border-t p-4 flex justify-end sticky bottom-0 bg-white">
+          <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded">Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MatchManagement() {
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
   const [settleFor, setSettleFor] = useState(null);
+  const [marketsFor, setMarketsFor] = useState(null);
 
   useEffect(() => {
     const q = query(collection(db, "matches"), orderBy("startTime", "desc"));
@@ -438,6 +803,13 @@ export default function MatchManagement() {
                     {m.status === "upcoming" && (
                       <>
                         <button onClick={() => handleEdit(m)} className="text-xs bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded">Edit</button>
+                        <button onClick={() => setMarketsFor(m.id)} className="text-xs bg-purple-600 hover:bg-purple-700 text-white px-2 py-1 rounded">
+                          Markets {m.customMarkets && Object.keys(m.customMarkets).length > 0 && (
+                            <span className="ml-1 bg-white/30 rounded-full px-1.5 text-[10px]">
+                              {Object.keys(m.customMarkets).length}
+                            </span>
+                          )}
+                        </button>
                         <button onClick={() => setSettleFor(m)} className="text-xs bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded">Settle</button>
                       </>
                     )}
@@ -464,6 +836,15 @@ export default function MatchManagement() {
           onDone={() => setSettleFor(null)}
         />
       )}
+      {marketsFor && (() => {
+        // Pull the latest version of the match from the live snapshot so
+        // edits / settlements re-render without re-opening the modal.
+        const live = matches.find((m) => m.id === marketsFor);
+        if (!live) { setMarketsFor(null); return null; }
+        return (
+          <MarketsModal match={live} onClose={() => setMarketsFor(null)} />
+        );
+      })()}
     </div>
   );
 }

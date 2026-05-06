@@ -123,6 +123,42 @@ service cloud.firestore {
           // topBatsman is an array — verifying odds vs name in rules is
           // awkward, so cap odds at 50x and trust the array structure.
           || (bt == "topBatsman" && odds <= 50 && odds >= 1)
+          // ── 99exch-style session / fancy markets ─────────────
+          // Each match doc has an optional customMarkets map keyed by
+          // marketId. The bet doc carries marketId + selection. We
+          // look the market up and verify the bet's odds match what
+          // the admin published, the market is still open, and the
+          // selection is one of the four valid sides.
+          || ((bt == "session" || bt == "fancy") && customMarketLineUp(matchData))
+        );
+      }
+
+      function customMarketLineUp(matchData) {
+        let mid = request.resource.data.marketId;
+        let market = matchData.get("customMarkets", {}).get(mid, {});
+        let sel = request.resource.data.selection;
+        let odds = request.resource.data.oddsAtBet;
+        return market.get("status", "") == "open" && (
+          (market.get("type", "") == "overUnder" && (
+            (sel == "over"  && odds == market.get("oddsOver", 0))
+            || (sel == "under" && odds == market.get("oddsUnder", 0))
+          ))
+          || (market.get("type", "") == "yesNo" && (
+            (sel == "yes" && odds == market.get("oddsYes", 0))
+            || (sel == "no"  && odds == market.get("oddsNo",  0))
+          ))
+        );
+      }
+
+      // Built-in markets (winner / toss / total / topBatsman) close
+      // when the match starts. Session / fancy markets stay open
+      // through the match — their per-market `status` field gates them
+      // (already enforced inside customMarketLineUp).
+      function timingOk(matchData) {
+        let bt = request.resource.data.betType;
+        return matchData.status == "upcoming" && (
+          (bt == "session" || bt == "fancy")
+          || matchData.startTime > request.time
         );
       }
 
@@ -140,8 +176,7 @@ service cloud.firestore {
         && request.resource.data.oddsAtBet >= 1
         && request.resource.data.oddsAtBet <= 1000
         && exists(/databases/$(database)/documents/matches/$(request.resource.data.matchId))
-        && get(/databases/$(database)/documents/matches/$(request.resource.data.matchId)).data.status == "upcoming"
-        && get(/databases/$(database)/documents/matches/$(request.resource.data.matchId)).data.startTime > request.time
+        && timingOk(get(/databases/$(database)/documents/matches/$(request.resource.data.matchId)).data)
         && oddsLineUp(get(/databases/$(database)/documents/matches/$(request.resource.data.matchId)).data)
         && fundsDebitedByExactly(request.resource.data.betAmount);
 

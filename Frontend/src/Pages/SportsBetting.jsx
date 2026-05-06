@@ -11,10 +11,13 @@ import { formatCurrency } from "../utils/formatMoney";
 import { getFundsDeductionResult, getUserFunds } from "../utils/userFunds";
 import { useUserSoundContext } from "../contexts/UserSoundContext";
 
-// Single card that represents one cricket match and its four bet types.
+// Single card that represents one cricket match and its bet types.
 function MatchCard({ match, balance, onPick }) {
   const start = match.startTime?.toDate?.();
-  const bettingClosed = match.status !== "upcoming" || (start && start.getTime() <= Date.now());
+  const matchStarted = start && start.getTime() <= Date.now();
+  // Built-in markets close once the match starts; in-play session/fancy stay open.
+  const builtInClosed = match.status !== "upcoming" || matchStarted;
+  const matchOver = match.status !== "upcoming";
 
   const fmtTime = (d) => d ? d.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
 
@@ -23,11 +26,34 @@ function MatchCard({ match, balance, onPick }) {
   const oddsTot = match.odds?.total || {};
   const batsmen = match.odds?.topBatsman || [];
 
+  // Custom markets — keyed by marketId. Filter to those the user can act on.
+  const allCustom = match.customMarkets ? Object.values(match.customMarkets) : [];
+  const sessionMarkets = allCustom.filter((m) => m?.category === "session");
+  const fancyMarkets   = allCustom.filter((m) => m?.category === "fancy");
+  const hasCustom = sessionMarkets.length > 0 || fancyMarkets.length > 0;
+
+  // Tabs: 0 = match, 1 = sessions, 2 = fancy. Sessions/fancy hidden if empty.
+  const [tab, setTab] = useState(0);
+  const tabBtn = (idx, label, count) => (
+    <button
+      key={idx}
+      onClick={() => setTab(idx)}
+      className={`flex-1 py-2 text-xs font-bold uppercase tracking-wider transition ${
+        tab === idx ? "bg-yellow-500 text-black" : "bg-[#042346] text-gray-300 hover:bg-[#053163]"
+      }`}
+    >
+      {label}{count != null && <span className="ml-1 opacity-70">({count})</span>}
+    </button>
+  );
+
   return (
     <div className="bg-[#0a2d55] rounded-2xl border border-white/10 overflow-hidden">
       <div className="bg-gradient-to-r from-emerald-800 to-blue-900 px-4 py-2 flex items-center justify-between">
         <span className="text-xs uppercase tracking-widest text-emerald-200">🏏 {match.matchType || "T20"}</span>
-        <span className="text-xs text-emerald-100">{fmtTime(start)}</span>
+        <span className="text-xs text-emerald-100">
+          {matchStarted && !matchOver ? <span className="text-red-300 font-bold animate-pulse">● LIVE · </span> : null}
+          {fmtTime(start)}
+        </span>
       </div>
 
       <div className="px-4 py-3 text-white">
@@ -35,104 +61,224 @@ function MatchCard({ match, balance, onPick }) {
           <div className="text-lg font-bold">
             {match.teamA?.name} <span className="text-yellow-400 mx-1">vs</span> {match.teamB?.name}
           </div>
-          {bettingClosed && (
+          {matchOver && (
             <span className="text-[10px] bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded-full">CLOSED</span>
           )}
         </div>
 
-        {/* Match winner */}
-        <div className="mb-3">
-          <p className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">Match Winner</p>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              disabled={bettingClosed}
-              onClick={() => onPick(match, "winner", "A", `${match.teamA?.short || match.teamA?.name} to win`, oddsW.A)}
-              className="bg-[#042346] hover:bg-[#053163] disabled:opacity-40 rounded-lg py-2 flex flex-col items-center"
-            >
-              <span className="font-semibold text-sm">{match.teamA?.short || match.teamA?.name}</span>
-              <span className="text-yellow-400 text-xs font-bold">{Number(oddsW.A || 0).toFixed(2)}x</span>
-            </button>
-            <button
-              disabled={bettingClosed}
-              onClick={() => onPick(match, "winner", "B", `${match.teamB?.short || match.teamB?.name} to win`, oddsW.B)}
-              className="bg-[#042346] hover:bg-[#053163] disabled:opacity-40 rounded-lg py-2 flex flex-col items-center"
-            >
-              <span className="font-semibold text-sm">{match.teamB?.short || match.teamB?.name}</span>
-              <span className="text-yellow-400 text-xs font-bold">{Number(oddsW.B || 0).toFixed(2)}x</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Toss winner */}
-        {oddsT.A && oddsT.B && (
-          <div className="mb-3">
-            <p className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">Toss Winner</p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                disabled={bettingClosed}
-                onClick={() => onPick(match, "toss", "A", `${match.teamA?.short || match.teamA?.name} to win toss`, oddsT.A)}
-                className="bg-[#042346] hover:bg-[#053163] disabled:opacity-40 rounded-lg py-2 text-xs font-semibold flex justify-between px-3"
-              >
-                <span>{match.teamA?.short || match.teamA?.name}</span>
-                <span className="text-yellow-400">{Number(oddsT.A).toFixed(2)}x</span>
-              </button>
-              <button
-                disabled={bettingClosed}
-                onClick={() => onPick(match, "toss", "B", `${match.teamB?.short || match.teamB?.name} to win toss`, oddsT.B)}
-                className="bg-[#042346] hover:bg-[#053163] disabled:opacity-40 rounded-lg py-2 text-xs font-semibold flex justify-between px-3"
-              >
-                <span>{match.teamB?.short || match.teamB?.name}</span>
-                <span className="text-yellow-400">{Number(oddsT.B).toFixed(2)}x</span>
-              </button>
-            </div>
+        {hasCustom && (
+          <div className="flex rounded-lg overflow-hidden mb-3 border border-white/10">
+            {tabBtn(0, "Match")}
+            {sessionMarkets.length > 0 && tabBtn(1, "Sessions", sessionMarkets.length)}
+            {fancyMarkets.length > 0   && tabBtn(2, "Fancy",    fancyMarkets.length)}
           </div>
         )}
 
-        {/* Total runs Over/Under */}
-        {oddsTot.line != null && (
-          <div className="mb-3">
-            <p className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">Total Runs (line {oddsTot.line})</p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                disabled={bettingClosed}
-                onClick={() => onPick(match, "total", "over", `Over ${oddsTot.line} runs`, oddsTot.over, { line: oddsTot.line })}
-                className="bg-[#042346] hover:bg-[#053163] disabled:opacity-40 rounded-lg py-2 text-xs font-semibold flex justify-between px-3"
-              >
-                <span>Over {oddsTot.line}</span>
-                <span className="text-yellow-400">{Number(oddsTot.over).toFixed(2)}x</span>
-              </button>
-              <button
-                disabled={bettingClosed}
-                onClick={() => onPick(match, "total", "under", `Under ${oddsTot.line} runs`, oddsTot.under, { line: oddsTot.line })}
-                className="bg-[#042346] hover:bg-[#053163] disabled:opacity-40 rounded-lg py-2 text-xs font-semibold flex justify-between px-3"
-              >
-                <span>Under {oddsTot.line}</span>
-                <span className="text-yellow-400">{Number(oddsTot.under).toFixed(2)}x</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Top batsman */}
-        {batsmen.length > 0 && (
-          <div>
-            <p className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">Top Batsman</p>
-            <div className="grid grid-cols-2 gap-2">
-              {batsmen.map((b) => (
+        {tab === 0 && (
+          <>
+            {/* Match winner */}
+            <div className="mb-3">
+              <p className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">Match Winner</p>
+              <div className="grid grid-cols-2 gap-2">
                 <button
-                  key={b.name}
-                  disabled={bettingClosed}
-                  onClick={() => onPick(match, "topBatsman", b.name, `${b.name} top batsman`, b.odds)}
-                  className="bg-[#042346] hover:bg-[#053163] disabled:opacity-40 rounded-lg py-2 text-xs font-semibold flex justify-between px-3"
+                  disabled={builtInClosed}
+                  onClick={() => onPick(match, "winner", "A", `${match.teamA?.short || match.teamA?.name} to win`, oddsW.A)}
+                  className="bg-[#042346] hover:bg-[#053163] disabled:opacity-40 rounded-lg py-2 flex flex-col items-center"
                 >
-                  <span className="truncate mr-2">{b.name}</span>
-                  <span className="text-yellow-400">{Number(b.odds).toFixed(2)}x</span>
+                  <span className="font-semibold text-sm">{match.teamA?.short || match.teamA?.name}</span>
+                  <span className="text-yellow-400 text-xs font-bold">{Number(oddsW.A || 0).toFixed(2)}x</span>
                 </button>
-              ))}
+                <button
+                  disabled={builtInClosed}
+                  onClick={() => onPick(match, "winner", "B", `${match.teamB?.short || match.teamB?.name} to win`, oddsW.B)}
+                  className="bg-[#042346] hover:bg-[#053163] disabled:opacity-40 rounded-lg py-2 flex flex-col items-center"
+                >
+                  <span className="font-semibold text-sm">{match.teamB?.short || match.teamB?.name}</span>
+                  <span className="text-yellow-400 text-xs font-bold">{Number(oddsW.B || 0).toFixed(2)}x</span>
+                </button>
+              </div>
             </div>
-          </div>
+
+            {/* Toss winner */}
+            {oddsT.A && oddsT.B && (
+              <div className="mb-3">
+                <p className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">Toss Winner</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    disabled={builtInClosed}
+                    onClick={() => onPick(match, "toss", "A", `${match.teamA?.short || match.teamA?.name} to win toss`, oddsT.A)}
+                    className="bg-[#042346] hover:bg-[#053163] disabled:opacity-40 rounded-lg py-2 text-xs font-semibold flex justify-between px-3"
+                  >
+                    <span>{match.teamA?.short || match.teamA?.name}</span>
+                    <span className="text-yellow-400">{Number(oddsT.A).toFixed(2)}x</span>
+                  </button>
+                  <button
+                    disabled={builtInClosed}
+                    onClick={() => onPick(match, "toss", "B", `${match.teamB?.short || match.teamB?.name} to win toss`, oddsT.B)}
+                    className="bg-[#042346] hover:bg-[#053163] disabled:opacity-40 rounded-lg py-2 text-xs font-semibold flex justify-between px-3"
+                  >
+                    <span>{match.teamB?.short || match.teamB?.name}</span>
+                    <span className="text-yellow-400">{Number(oddsT.B).toFixed(2)}x</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Total runs Over/Under */}
+            {oddsTot.line != null && (
+              <div className="mb-3">
+                <p className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">Total Runs (line {oddsTot.line})</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    disabled={builtInClosed}
+                    onClick={() => onPick(match, "total", "over", `Over ${oddsTot.line} runs`, oddsTot.over, { line: oddsTot.line })}
+                    className="bg-[#042346] hover:bg-[#053163] disabled:opacity-40 rounded-lg py-2 text-xs font-semibold flex justify-between px-3"
+                  >
+                    <span>Over {oddsTot.line}</span>
+                    <span className="text-yellow-400">{Number(oddsTot.over).toFixed(2)}x</span>
+                  </button>
+                  <button
+                    disabled={builtInClosed}
+                    onClick={() => onPick(match, "total", "under", `Under ${oddsTot.line} runs`, oddsTot.under, { line: oddsTot.line })}
+                    className="bg-[#042346] hover:bg-[#053163] disabled:opacity-40 rounded-lg py-2 text-xs font-semibold flex justify-between px-3"
+                  >
+                    <span>Under {oddsTot.line}</span>
+                    <span className="text-yellow-400">{Number(oddsTot.under).toFixed(2)}x</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Top batsman */}
+            {batsmen.length > 0 && (
+              <div>
+                <p className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">Top Batsman</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {batsmen.map((b) => (
+                    <button
+                      key={b.name}
+                      disabled={builtInClosed}
+                      onClick={() => onPick(match, "topBatsman", b.name, `${b.name} top batsman`, b.odds)}
+                      className="bg-[#042346] hover:bg-[#053163] disabled:opacity-40 rounded-lg py-2 text-xs font-semibold flex justify-between px-3"
+                    >
+                      <span className="truncate mr-2">{b.name}</span>
+                      <span className="text-yellow-400">{Number(b.odds).toFixed(2)}x</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {builtInClosed && !matchOver && (
+              <p className="text-[11px] text-gray-400 mt-2">Match started — only Sessions / Fancy markets remain open.</p>
+            )}
+          </>
+        )}
+
+        {tab === 1 && (
+          <CustomMarketList markets={sessionMarkets} match={match} onPick={onPick} matchOver={matchOver} />
+        )}
+        {tab === 2 && (
+          <CustomMarketList markets={fancyMarkets} match={match} onPick={onPick} matchOver={matchOver} />
         )}
       </div>
+    </div>
+  );
+}
+
+// Render a list of session OR fancy markets with two-button rows.
+function CustomMarketList({ markets, match, onPick, matchOver }) {
+  if (!markets.length) {
+    return <p className="text-xs text-gray-400 text-center py-4">No markets in this category yet.</p>;
+  }
+  return (
+    <div className="space-y-3">
+      {markets.map((mk) => {
+        const closed = matchOver || mk.status !== "open";
+        const settled = mk.status === "settled" || mk.status === "cancelled";
+        return (
+          <div key={mk.id} className="bg-[#042346] rounded-lg p-3 border border-white/5">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-gray-200">{mk.name}</p>
+              {settled && (
+                <span className="text-[10px] bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded-full">
+                  {mk.status === "cancelled" ? "REFUNDED" : `Result: ${String(mk.result)}`}
+                </span>
+              )}
+              {!settled && mk.status !== "open" && (
+                <span className="text-[10px] bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded-full">CLOSED</span>
+              )}
+            </div>
+            {mk.type === "overUnder" ? (
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  disabled={closed}
+                  onClick={() => onPick(
+                    match,
+                    mk.category,           // betType: "session" or "fancy"
+                    "over",
+                    `${mk.name} — Over ${mk.line}`,
+                    mk.oddsOver,
+                    { marketId: mk.id, marketName: mk.name, line: mk.line }
+                  )}
+                  className="bg-[#0a2d55] hover:bg-[#0f3a6d] disabled:opacity-40 rounded-lg py-2 text-xs font-semibold flex justify-between px-3"
+                >
+                  <span>Over {mk.line}</span>
+                  <span className="text-yellow-400">{Number(mk.oddsOver).toFixed(2)}x</span>
+                </button>
+                <button
+                  disabled={closed}
+                  onClick={() => onPick(
+                    match,
+                    mk.category,
+                    "under",
+                    `${mk.name} — Under ${mk.line}`,
+                    mk.oddsUnder,
+                    { marketId: mk.id, marketName: mk.name, line: mk.line }
+                  )}
+                  className="bg-[#0a2d55] hover:bg-[#0f3a6d] disabled:opacity-40 rounded-lg py-2 text-xs font-semibold flex justify-between px-3"
+                >
+                  <span>Under {mk.line}</span>
+                  <span className="text-yellow-400">{Number(mk.oddsUnder).toFixed(2)}x</span>
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  disabled={closed}
+                  onClick={() => onPick(
+                    match,
+                    mk.category,
+                    "yes",
+                    `${mk.name} — YES`,
+                    mk.oddsYes,
+                    { marketId: mk.id, marketName: mk.name }
+                  )}
+                  className="bg-[#0a2d55] hover:bg-[#0f3a6d] disabled:opacity-40 rounded-lg py-2 text-xs font-semibold flex justify-between px-3"
+                >
+                  <span>YES</span>
+                  <span className="text-yellow-400">{Number(mk.oddsYes).toFixed(2)}x</span>
+                </button>
+                <button
+                  disabled={closed}
+                  onClick={() => onPick(
+                    match,
+                    mk.category,
+                    "no",
+                    `${mk.name} — NO`,
+                    mk.oddsNo,
+                    { marketId: mk.id, marketName: mk.name }
+                  )}
+                  className="bg-[#0a2d55] hover:bg-[#0f3a6d] disabled:opacity-40 rounded-lg py-2 text-xs font-semibold flex justify-between px-3"
+                >
+                  <span>NO</span>
+                  <span className="text-yellow-400">{Number(mk.oddsNo).toFixed(2)}x</span>
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -154,6 +300,7 @@ function BetModal({ pick, balance, onClose, onPlaced }) {
 
     setLoading(true);
     try {
+      const isCustom = pick.betType === "session" || pick.betType === "fancy";
       // Re-check match is still open before committing.
       const matchRef = doc(db, "matches", pick.match.id);
       const fresh = await getDoc(matchRef);
@@ -161,8 +308,22 @@ function BetModal({ pick, balance, onClose, onPlaced }) {
         throw new Error("Match is no longer accepting bets.");
       }
       const start = fresh.data().startTime?.toDate?.();
-      if (start && start.getTime() <= Date.now()) {
+      // Built-in markets close at startTime; session/fancy stay open in-play.
+      if (!isCustom && start && start.getTime() <= Date.now()) {
         throw new Error("Match already started.");
+      }
+      if (isCustom) {
+        // Per-market gate: market still open + odds unchanged?
+        const market = fresh.data().customMarkets?.[pick.extra?.marketId];
+        if (!market) throw new Error("Market not found.");
+        if (market.status !== "open") throw new Error("This market is no longer accepting bets.");
+        const liveOdds = pick.selection === "over"  ? market.oddsOver
+                       : pick.selection === "under" ? market.oddsUnder
+                       : pick.selection === "yes"   ? market.oddsYes
+                       : pick.selection === "no"    ? market.oddsNo : null;
+        if (Number(liveOdds) !== Number(pick.odds)) {
+          throw new Error("Odds just changed — please tap again.");
+        }
       }
 
       await runTransaction(db, async (tx) => {
@@ -184,6 +345,8 @@ function BetModal({ pick, balance, onClose, onPlaced }) {
           oddsAtBet: Number(pick.odds),
           betAmount,
           line: pick.extra?.line ?? null,
+          marketId: pick.extra?.marketId ?? null,
+          marketName: pick.extra?.marketName ?? null,
           debitedFromBalance: deduction.debitedFromBalance,
           debitedFromWinnings: deduction.debitedFromWinnings,
           status: "pending",
