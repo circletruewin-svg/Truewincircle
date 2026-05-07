@@ -44,6 +44,14 @@ const DiceRoll = lazy(() => import('./Pages/DiceRoll'));
 const Notifications = lazy(() => import('./Pages/Notifications'));
 const SportsBetting = lazy(() => import('./Pages/SportsBetting'));
 const Landing = lazy(() => import('./Pages/Landing'));
+const Casino = lazy(() => import('./Pages/Casino'));
+const Lucky7 = lazy(() => import('./Pages/Lucky7'));
+const HiLo = lazy(() => import('./Pages/HiLo'));
+const Mines = lazy(() => import('./Pages/Mines'));
+const Roulette = lazy(() => import('./Pages/Roulette'));
+const Baccarat = lazy(() => import('./Pages/Baccarat'));
+const Plinko = lazy(() => import('./Pages/Plinko'));
+const Cards32 = lazy(() => import('./Pages/Cards32'));
 
 const RouteFallback = () => (
   <div className="min-h-screen bg-[#042346] text-white flex items-center justify-center">
@@ -114,6 +122,14 @@ const AppContent = () => {
           <Route path="/diceroll" element={<DiceRoll />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/sports" element={<SportsBetting />} />
+          <Route path="/casino" element={<Casino />} />
+          <Route path="/lucky7" element={<Lucky7 />} />
+          <Route path="/hilo" element={<HiLo />} />
+          <Route path="/mines" element={<Mines />} />
+          <Route path="/roulette" element={<Roulette />} />
+          <Route path="/baccarat" element={<Baccarat />} />
+          <Route path="/plinko" element={<Plinko />} />
+          <Route path="/32cards" element={<Cards32 />} />
           <Route path="/landing" element={<Landing />} />
           <Route path="/lp" element={<Landing />} />
           <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />

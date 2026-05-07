@@ -382,6 +382,40 @@ service cloud.firestore {
       allow read: if request.auth != null;
     }
 
+    // ── 99exch-style additions ─────────────────────────────────────────
+    // All 7 follow the same shape as the older casino history collections:
+    // owner-only create with userId match, broad read for the leaderboard
+    // / "live winners" feeds the Home page renders.
+
+    match /lucky7History/{id} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null;
+    }
+    match /hiLoHistory/{id} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null;
+    }
+    match /minesHistory/{id} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null;
+    }
+    match /rouletteHistory/{id} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null;
+    }
+    match /baccaratHistory/{id} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null;
+    }
+    match /plinkoHistory/{id} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null;
+    }
+    match /cards32History/{id} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null;
+    }
+
     // ── END: Casino games collections ──────────────────────────────────
 
   }
