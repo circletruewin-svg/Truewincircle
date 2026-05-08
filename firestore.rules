@@ -269,6 +269,14 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Per-number bet limits for Gali / Disawar / etc. (Haruf). Public
+    // read so the betting UI can render the right validation messages
+    // and disable inputs above the cap; admin-only write.
+    match /settings/harufLimits {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // Bets (legacy)
     match /bets/{betId} {
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;

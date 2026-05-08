@@ -46,12 +46,31 @@ const BetBox = ({ num, value, onChange }) => {
   );
 };
 
+// Default fallbacks — used until the live `settings/harufLimits` doc loads
+// (or if it doesn't exist yet on a fresh project).
+const HARUF_LIMIT_DEFAULTS = { min: 5, max: 50 };
+
 const HarufGrid = ({ marketName }) => {
   const [bets, setBets] = useState({});
   const [bettingLoading, setBettingLoading] = useState(false);
   const { user } = useAuthStore();
   const [marketTimings, setMarketTimings] = useState({ openTime: null, closeTime: null });
   const [marketStatus, setMarketStatus] = useState({ isOpen: true, message: "Loading..." });
+  const [limits, setLimits] = useState(HARUF_LIMIT_DEFAULTS);
+
+  // Subscribe to admin-controlled per-number bet caps.
+  useEffect(() => {
+    const ref = doc(db, "settings", "harufLimits");
+    const unsub = onSnapshot(ref, (snap) => {
+      if (!snap.exists()) return;
+      const d = snap.data();
+      setLimits({
+        min: Number.isFinite(d.min) ? Number(d.min) : HARUF_LIMIT_DEFAULTS.min,
+        max: Number.isFinite(d.max) ? Number(d.max) : HARUF_LIMIT_DEFAULTS.max,
+      });
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     if (!marketName) return;
@@ -149,18 +168,18 @@ const HarufGrid = ({ marketName }) => {
       return toast.error("Please enter at least one bet.");
 
     // Per-number limits and one-bet-per-number-per-day rule for Haruf
-    // markets. Min ₹5, max ₹50 on each individual number; the
-    // "already bet" check happens inside the transaction below using
-    // deterministic doc ids so two simultaneous taps can't sneak past.
-    const HARUF_MIN_PER_BET = 5;
-    const HARUF_MAX_PER_BET = 50;
+    // markets. Cap range is admin-controlled via settings/harufLimits;
+    // the "already bet" check happens inside the transaction below
+    // using deterministic doc ids so two simultaneous taps can't sneak past.
+    const minPerBet = Number(limits.min) || HARUF_LIMIT_DEFAULTS.min;
+    const maxPerBet = Number(limits.max) || HARUF_LIMIT_DEFAULTS.max;
     for (const [num, amount] of placedBets) {
       const rounded = Math.round(amount * 100) / 100;
-      if (rounded < HARUF_MIN_PER_BET) {
-        return toast.error(`Number ${num} pe minimum ₹${HARUF_MIN_PER_BET} laga sakte ho.`);
+      if (rounded < minPerBet) {
+        return toast.error(`Number ${num} pe minimum ₹${minPerBet} laga sakte ho.`);
       }
-      if (rounded > HARUF_MAX_PER_BET) {
-        return toast.error(`Number ${num} pe maximum ₹${HARUF_MAX_PER_BET} hi laga sakte ho.`);
+      if (rounded > maxPerBet) {
+        return toast.error(`Number ${num} pe maximum ₹${maxPerBet} hi laga sakte ho.`);
       }
     }
 

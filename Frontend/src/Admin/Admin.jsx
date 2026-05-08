@@ -34,6 +34,7 @@ import MatchManagement from './components/MatchManagement';
 import UserSoundsAdmin from './components/UserSoundsAdmin';
 import Commissions from './components/Commissions';
 import DailyReport from './components/DailyReport';
+import HarufLimits from './components/HarufLimits';
 
 // Component Imports
 import AllUsers from './components/AllUsers';
@@ -461,6 +462,7 @@ const AdminDashboard = () => {
           // ── NEW ──────────────────────────────────────────────────────
           { id: 'gamesStats',   label: '🎮 Games Stats',      icon: Star       },
           { id: 'userSounds',   label: '🔔 User Sounds',      icon: Bell       },
+          { id: 'harufLimits',  label: '🎯 Haruf Limits',     icon: Settings   },
           // ─────────────────────────────────────────────────────────────
         ].map(item => (
           <button
@@ -506,6 +508,7 @@ const AdminDashboard = () => {
             .replace('commissions', '💰 Commissions')
             .replace('referrals',   'Referrals')
             .replace('gamesStats',  '🎮 Games Stats')
+            .replace('harufLimits', '🎯 Haruf Limits')
           }
         </h2>
       </div>
@@ -752,6 +755,7 @@ const AdminDashboard = () => {
       // ── NEW ────────────────────────────────────────────────────────
       case 'gamesStats':    return <GamesStats />;
       case 'userSounds':    return <UserSoundsAdmin />;
+      case 'harufLimits':   return <HarufLimits />;
       // ──────────────────────────────────────────────────────────────
 
       default:              return <DashboardView stats={stats} />;

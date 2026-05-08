@@ -68,6 +68,23 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
   const [pbError, setPbError] = useState('');
   const [pbMatches, setPbMatches] = useState([]);
 
+  // Per-number Haruf bet caps. Subscribed live so when the admin
+  // changes the limits in another tab, this validation picks them up
+  // immediately. Falls back to legacy ₹5–₹50 if the doc is missing.
+  const HARUF_LIMIT_DEFAULTS = { min: 5, max: 50 };
+  const [harufLimits, setHarufLimits] = useState(HARUF_LIMIT_DEFAULTS);
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'harufLimits'), (snap) => {
+      if (!snap.exists()) return;
+      const d = snap.data();
+      setHarufLimits({
+        min: Number.isFinite(d.min) ? Number(d.min) : HARUF_LIMIT_DEFAULTS.min,
+        max: Number.isFinite(d.max) ? Number(d.max) : HARUF_LIMIT_DEFAULTS.max,
+      });
+    });
+    return unsub;
+  }, []);
+
   // Load upcoming cricket matches lazily when the bet modal opens.
   useEffect(() => {
     if (!placeBetModal.open) return undefined;
@@ -106,11 +123,11 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
     try {
       if (pbType === 'haruf') {
         // Multi-row Haruf — same rules as the user-side flow:
-        // ₹5–₹50 per number, and a user can only have one bet per
-        // (market, number, IST day). Deterministic doc ids guarantee
-        // the latter even if two writes race.
-        const HARUF_MIN_PER_BET = 5;
-        const HARUF_MAX_PER_BET = 50;
+        // admin-controlled per-number caps (settings/harufLimits), and
+        // a user can only have one bet per (market, number, IST day).
+        // Deterministic doc ids guarantee the latter even if two writes race.
+        const HARUF_MIN_PER_BET = Number(harufLimits.min) || HARUF_LIMIT_DEFAULTS.min;
+        const HARUF_MAX_PER_BET = Number(harufLimits.max) || HARUF_LIMIT_DEFAULTS.max;
         const cleaned = pbHarufRows
           .map((r) => ({
             number: parseInt(r.number, 10),
@@ -1426,9 +1443,9 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
                   className="text-xs font-semibold text-blue-600 hover:text-blue-800 mb-3"
                 >+ Add another number</button>
                 <p className="text-[11px] text-gray-500 mb-3">
-                  Min ₹5, max ₹50 per number. Same number pe ek hi bet allowed
-                  hai per din (different number alag se laga sakte ho). Empty row
-                  skip ho jaayegi.
+                  Min ₹{harufLimits.min}, max ₹{harufLimits.max} per number. Same number pe ek hi bet
+                  allowed hai per din (different number alag se laga sakte ho).
+                  Empty row skip ho jaayegi.
                 </p>
               </>
             ) : (
