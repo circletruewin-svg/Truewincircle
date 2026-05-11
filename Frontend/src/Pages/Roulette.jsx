@@ -9,6 +9,7 @@ import { formatCurrency } from "../utils/formatMoney";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { getRouletteNumber } from "../utils/houseEdge";
 import RouletteWheel from "../components/RouletteWheel";
+import RouletteStats from "../components/RouletteStats";
 import {
   isSfxMuted, setSfxMuted, playChime, playWhoosh, playClick,
 } from "../utils/gameSfx";
@@ -96,9 +97,10 @@ export default function Roulette() {
     });
   }, [user]);
 
-  // Live ticker of the last 14 results (real, from Firestore).
+  // Live ticker of the last 100 results — the ticker shows 14 of them
+  // but the stats sidebar uses the full 100 for hot/cold/distribution.
   useEffect(() => {
-    const q = query(collection(db, "rouletteHistory"), orderBy("createdAt", "desc"), limit(14));
+    const q = query(collection(db, "rouletteHistory"), orderBy("createdAt", "desc"), limit(100));
     return onSnapshot(q, (snap) => {
       setHistory(snap.docs.map((d) => d.data()?.number).filter((n) => Number.isFinite(n)));
     }, () => {});
@@ -200,11 +202,11 @@ export default function Roulette() {
           </button>
         </div>
 
-        {/* History ticker */}
+        {/* History ticker — top 14 of the live feed */}
         <div className="flex gap-1.5 mb-4 overflow-x-auto pb-1">
           {history.length === 0 ? (
             <div className="text-xs text-gray-500">No spins yet.</div>
-          ) : history.map((n, i) => (
+          ) : history.slice(0, 14).map((n, i) => (
             <span
               key={i}
               className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold ${
@@ -276,6 +278,12 @@ export default function Roulette() {
               );
             })}
           </div>
+        </div>
+
+        {/* Statistics sidebar — sits right above the bet panel so a
+            player can glance at hot/cold trends without scrolling. */}
+        <div className="mb-4">
+          <RouletteStats recent={history} />
         </div>
 
         {/* Bet panel */}

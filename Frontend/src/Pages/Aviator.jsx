@@ -13,6 +13,8 @@ import { formatCurrency } from "../utils/formatMoney";
 import {
   isSfxMuted, setSfxMuted, playChime, playCrash, startEngineHum,
 } from "../utils/gameSfx";
+import AviatorLiveBets from "../components/aviator/AviatorLiveBets";
+import AviatorClouds from "../components/aviator/AviatorClouds";
 
 const ROUND_WAIT = 6000;
 const HISTORY_LIMIT = 15;
@@ -364,6 +366,9 @@ export default function Aviator() {
         >
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_30%,rgba(255,255,255,0.08),transparent_35%),radial-gradient(circle_at_70%_15%,rgba(255,255,255,0.05),transparent_30%)]" />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_10%,#ffffff55_0.5px,transparent_1px),radial-gradient(circle_at_40%_22%,#ffffff33_0.5px,transparent_1px),radial-gradient(circle_at_80%_8%,#ffffff55_0.5px,transparent_1px),radial-gradient(circle_at_90%_28%,#ffffff33_0.5px,transparent_1px)]" />
+          {/* Parallax clouds drift only while the plane is flying so the
+              waiting phase reads as a calm sky. */}
+          <AviatorClouds moving={phase === "flying"} />
           <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-amber-500/15 via-orange-400/5 to-transparent" />
           {[25, 50, 75].map((p) => (
             <div key={`h${p}`} className="absolute w-full border-t border-blue-900/30" style={{ top: `${p}%` }} />
@@ -462,6 +467,11 @@ export default function Aviator() {
 
         <div className="mt-3 text-center text-[10px] uppercase tracking-[0.25em] text-gray-600">
           Balance · {formatCurrency(balance)}
+        </div>
+
+        {/* LIVE ACTIVITY PANEL — winners ticker + All / My / Top tabs */}
+        <div className="mt-4">
+          <AviatorLiveBets currentUid={user?.uid} />
         </div>
       </div>
     </div>
