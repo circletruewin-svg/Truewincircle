@@ -1,30 +1,44 @@
-import { useEffect, useRef, useState } from "react";
-import { addDoc, collection, doc, onSnapshot, serverTimestamp } from "firebase/firestore";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  addDoc, collection, doc, onSnapshot, orderBy, query, serverTimestamp, limit,
+} from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { db } from "../firebase";
 import Navbar from "../components/Navbar";
 import { formatCurrency } from "../utils/formatMoney";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { getRouletteNumber } from "../utils/houseEdge";
+import RouletteWheel from "../components/RouletteWheel";
+import {
+  isSfxMuted, setSfxMuted, playChime, playWhoosh, playClick,
+} from "../utils/gameSfx";
 
-// European wheel red numbers.
 const RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
 const colorOf = (n) => (n === 0 ? "green" : RED.has(n) ? "red" : "black");
 
-// Outside bets a user can place on this simplified table.
-const OUTSIDE = [
-  { id: "red",    label: "RED",    payout: 2, hint: "1:1" },
-  { id: "black",  label: "BLACK",  payout: 2, hint: "1:1" },
-  { id: "odd",    label: "ODD",    payout: 2, hint: "1:1" },
-  { id: "even",   label: "EVEN",   payout: 2, hint: "1:1" },
-  { id: "low",    label: "1-18",   payout: 2, hint: "1:1" },
-  { id: "high",   label: "19-36",  payout: 2, hint: "1:1" },
-  { id: "dozen1", label: "1-12",   payout: 3, hint: "2:1" },
-  { id: "dozen2", label: "13-24",  payout: 3, hint: "2:1" },
-  { id: "dozen3", label: "25-36",  payout: 3, hint: "2:1" },
+const NUMBER_GRID = [
+  // Standard European felt layout: 3 rows × 12 cols, top row holds high numbers.
+  [3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36],
+  [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35],
+  [1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34],
 ];
 
-const NUMBERS_GRID = Array.from({ length: 36 }, (_, i) => i + 1);
+const OUTSIDE = [
+  { id: "low",    label: "1 to 18", payout: 2 },
+  { id: "even",   label: "EVEN",    payout: 2 },
+  { id: "red",    label: "RED",     payout: 2 },
+  { id: "black",  label: "BLACK",   payout: 2 },
+  { id: "odd",    label: "ODD",     payout: 2 },
+  { id: "high",   label: "19 to 36",payout: 2 },
+];
+
+const DOZENS = [
+  { id: "dozen1", label: "1st 12",  payout: 3 },
+  { id: "dozen2", label: "2nd 12",  payout: 3 },
+  { id: "dozen3", label: "3rd 12",  payout: 3 },
+];
+
+const CHIPS = [10, 50, 100, 500, 1000];
 
 function evaluate(bet, n) {
   if (typeof bet === "number") return bet === n ? 36 : 0;
@@ -41,17 +55,37 @@ function evaluate(bet, n) {
 }
 
 const labelFor = (b) =>
-  typeof b === "number" ? `Number ${b}` : (OUTSIDE.find((o) => o.id === b)?.label || b);
+  typeof b === "number"
+    ? `Number ${b}`
+    : [...OUTSIDE, ...DOZENS].find((o) => o.id === b)?.label || b;
+
+// Felt-table number cell — red/black background based on roulette color.
+function NumberCell({ n, selected, onClick, disabled, big }) {
+  const c = colorOf(n);
+  const base = c === "red" ? "bg-rose-700" : c === "black" ? "bg-zinc-900" : "bg-emerald-700";
+  const ring = selected ? "ring-2 ring-yellow-300 z-10" : "ring-1 ring-black/40";
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`${base} ${ring} ${big ? "py-6" : "py-2"} text-white font-black flex items-center justify-center transition disabled:opacity-60 disabled:cursor-not-allowed`}
+    >
+      {n}
+    </button>
+  );
+}
 
 export default function Roulette() {
   const auth = getAuth();
   const user = auth.currentUser;
   const [balance, setBalance] = useState(0);
-  const [betAmount, setBetAmount] = useState("");
+  const [chipIdx, setChipIdx] = useState(1); // default ₹50
   const [bet, setBet] = useState(null);
-  const [phase, setPhase] = useState("betting");
+  const [phase, setPhase] = useState("betting"); // betting → spinning → result
   const [resultNum, setResultNum] = useState(null);
   const [msg, setMsg] = useState("");
+  const [history, setHistory] = useState([]);
+  const [muted, setMuted] = useState(isSfxMuted());
   const balanceRef = useRef(0);
 
   useEffect(() => { balanceRef.current = balance; }, [balance]);
@@ -62,135 +96,221 @@ export default function Roulette() {
     });
   }, [user]);
 
+  // Live ticker of the last 14 results (real, from Firestore).
+  useEffect(() => {
+    const q = query(collection(db, "rouletteHistory"), orderBy("createdAt", "desc"), limit(14));
+    return onSnapshot(q, (snap) => {
+      setHistory(snap.docs.map((d) => d.data()?.number).filter((n) => Number.isFinite(n)));
+    }, () => {});
+  }, []);
+
+  const stake = CHIPS[chipIdx];
+  const potentialReturn = useMemo(() => {
+    if (bet == null) return 0;
+    const payout = typeof bet === "number" ? 36
+      : [...OUTSIDE, ...DOZENS].find((o) => o.id === bet)?.payout || 0;
+    return parseFloat((stake * payout).toFixed(2));
+  }, [bet, stake]);
+
   const spin = async () => {
-    const amount = parseFloat(betAmount);
     if (!user) return setMsg("Please log in first");
-    if (bet === null) return setMsg("Place a bet first");
-    if (!amount || amount < 10) return setMsg(`Min bet ${formatCurrency(10)}`);
-    if (amount > balanceRef.current) return setMsg("Insufficient balance");
+    if (bet === null) return setMsg("Place a bet on the table first");
+    if (stake > balanceRef.current) return setMsg("Insufficient balance");
     if (phase !== "betting") return;
 
     setPhase("spinning");
-    setMsg("");
     setResultNum(null);
+    setMsg("");
 
     try {
-      await debitUserFunds(db, user.uid, amount);
+      await debitUserFunds(db, user.uid, stake);
     } catch (err) {
       setPhase("betting");
       return setMsg(err.message || "Could not place bet.");
     }
 
-    const winning = getRouletteNumber();
-    const payout = evaluate(bet, winning);
-    const won = payout > 0;
-    const winAmount = won ? parseFloat((amount * payout).toFixed(2)) : 0;
+    playWhoosh();
+    // Periodic ticks while the ball rolls — gives the felt arena some life.
+    const tickHandle = setInterval(() => playClick(), 280);
+    setTimeout(() => clearInterval(tickHandle), 4100);
 
-    setTimeout(async () => {
-      setResultNum(winning);
-      if (won) await creditUserWinnings(db, user.uid, winAmount);
-      try {
-        await addDoc(collection(db, "rouletteHistory"), {
-          userId: user.uid, bet: String(bet), label: labelFor(bet),
-          number: winning, color: colorOf(winning),
-          betAmount: amount, winAmount, won,
-          createdAt: serverTimestamp(),
-        });
-      } catch {}
-      setMsg(won ? `${winning} ${colorOf(winning)} — Won ${formatCurrency(winAmount)}!` : `${winning} ${colorOf(winning)} — No luck.`);
-      setPhase("result");
-      setTimeout(() => { setPhase("betting"); setBet(null); setMsg(""); setResultNum(null); }, 3000);
-    }, 2200);
+    const winning = getRouletteNumber();
+    setResultNum(winning);
+
+    // The wheel component fires onLanded after its animation finishes.
+    // We finalise everything from there.
+    setPhase("spinning");
+    setSpinResolver({ winning });
   };
 
-  return (
-    <div className="min-h-screen bg-[#05081a] text-white">
-      <Navbar />
-      <div className="max-w-md mx-auto px-4 pt-20 pb-10">
-        <h1 className="text-2xl font-black tracking-widest text-center text-yellow-400 mb-2">ROULETTE</h1>
-        <p className="text-center text-xs text-gray-400 mb-5">European 0-36 · Outside 1:1 / 2:1 · Single 35:1</p>
+  // We park the resolver in a ref so the wheel's onLanded callback can
+  // fire the wallet write at the precise moment the ball stops.
+  const [spinResolver, setSpinResolver] = useState(null);
+  const finaliseRound = async (winning) => {
+    const payout = evaluate(bet, winning);
+    const won = payout > 0;
+    const winAmount = won ? parseFloat((stake * payout).toFixed(2)) : 0;
+    if (won) {
+      try { await creditUserWinnings(db, user.uid, winAmount); } catch {}
+      playChime();
+    }
+    try {
+      await addDoc(collection(db, "rouletteHistory"), {
+        userId: user.uid,
+        bet: String(bet),
+        label: labelFor(bet),
+        number: winning,
+        color: colorOf(winning),
+        betAmount: stake,
+        winAmount,
+        won,
+        createdAt: serverTimestamp(),
+      });
+    } catch {}
+    setMsg(
+      won
+        ? `${winning} ${colorOf(winning).toUpperCase()} — Won ${formatCurrency(winAmount)}!`
+        : `${winning} ${colorOf(winning).toUpperCase()} — Try again.`
+    );
+    setPhase("result");
+    setTimeout(() => {
+      setPhase("betting");
+      setBet(null);
+      setResultNum(null);
+      setMsg("");
+      setSpinResolver(null);
+    }, 3400);
+  };
 
-        {/* Wheel display */}
-        <div className="flex justify-center mb-5">
-          <div className={`relative w-40 h-40 rounded-full border-[6px] ${phase === "spinning" ? "animate-spin border-yellow-400" : "border-yellow-500"} bg-gradient-to-br from-[#1f0d3a] via-[#0c1444] to-[#020415] flex items-center justify-center shadow-[0_0_50px_-10px_rgba(250,204,21,0.5)]`}>
-            <span className={`text-5xl font-black ${
-              resultNum == null ? "text-gray-500" :
-              colorOf(resultNum) === "red" ? "text-rose-400" :
-              colorOf(resultNum) === "black" ? "text-white" :
-              "text-emerald-300"
-            }`}>
-              {resultNum ?? "?"}
+  const isBetting = phase === "betting";
+  const dis = phase !== "betting";
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-[#03070f] via-[#070d22] to-[#03070f] text-white">
+      <Navbar />
+      <div className="max-w-2xl mx-auto px-4 pt-20 pb-10">
+        <div className="flex items-center justify-between mb-3">
+          <h1 className="text-2xl font-black tracking-widest text-yellow-400">ROULETTE</h1>
+          <button
+            onClick={() => { const next = !muted; setMuted(next); setSfxMuted(next); }}
+            className="text-xs bg-white/10 hover:bg-white/15 rounded-full px-3 py-1.5"
+            title="Toggle sound"
+          >
+            {muted ? "🔇 Sound off" : "🔊 Sound on"}
+          </button>
+        </div>
+
+        {/* History ticker */}
+        <div className="flex gap-1.5 mb-4 overflow-x-auto pb-1">
+          {history.length === 0 ? (
+            <div className="text-xs text-gray-500">No spins yet.</div>
+          ) : history.map((n, i) => (
+            <span
+              key={i}
+              className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold ${
+                colorOf(n) === "red" ? "bg-rose-700" : colorOf(n) === "black" ? "bg-zinc-900 border border-white/10" : "bg-emerald-700"
+              }`}
+            >
+              {n}
             </span>
+          ))}
+        </div>
+
+        {/* Wheel */}
+        <div className="bg-gradient-to-b from-[#0d1a3a] to-[#040a1a] rounded-3xl border border-yellow-400/15 p-5 mb-4 shadow-[0_0_60px_-30px_rgba(250,204,21,0.4)]">
+          <RouletteWheel
+            winningNumber={resultNum}
+            spinning={phase === "spinning" && resultNum != null}
+            onLanded={() => spinResolver && finaliseRound(spinResolver.winning)}
+          />
+          <div className="mt-3 text-center min-h-[28px]">
+            {phase === "betting"  && <span className="text-xs text-gray-400 uppercase tracking-widest">Place your bet</span>}
+            {phase === "spinning" && <span className="text-sm font-semibold text-amber-300 animate-pulse">No more bets…</span>}
+            {phase === "result"   && resultNum != null && (
+              <span className={`text-base font-bold ${msg.includes("Won") ? "text-emerald-300" : "text-yellow-300"}`}>{msg}</span>
+            )}
           </div>
         </div>
 
-        {msg && (
-          <div className={`mb-4 text-center text-sm font-semibold rounded-xl py-2 px-3 ${
-            msg.includes("Won") ? "bg-emerald-500/15 text-emerald-300" : "bg-yellow-500/10 text-yellow-300"
-          }`}>{msg}</div>
-        )}
+        {/* Felt table */}
+        <div className="bg-gradient-to-b from-[#0a4d24] to-[#063418] rounded-2xl border border-emerald-900/60 p-3 mb-4 shadow-inner">
+          <div className="flex gap-1.5">
+            {/* Zero column — full height */}
+            <button
+              onClick={() => isBetting && setBet(0)}
+              disabled={dis}
+              className={`bg-emerald-700 ring-1 ring-black/40 ${bet === 0 ? "ring-2 ring-yellow-300" : ""} text-white font-black flex items-center justify-center w-10 disabled:opacity-60 disabled:cursor-not-allowed`}
+            >0</button>
+            {/* 3 × 12 number grid */}
+            <div className="flex-1 grid grid-rows-3 grid-cols-12 gap-1">
+              {NUMBER_GRID.flat().map((n) => (
+                <NumberCell key={n} n={n} selected={bet === n} onClick={() => isBetting && setBet(n)} disabled={dis} />
+              ))}
+            </div>
+          </div>
 
-        {/* Outside bets */}
-        <div className="grid grid-cols-3 gap-2 mb-3">
-          {OUTSIDE.map((o) => {
-            const colour =
-              o.id === "red"   ? "bg-rose-700"  :
-              o.id === "black" ? "bg-zinc-800"  :
-              "bg-[#101a3a]";
-            return (
+          <div className="grid grid-cols-3 gap-1 mt-1.5">
+            {DOZENS.map((d) => (
               <button
-                key={o.id}
-                onClick={() => phase === "betting" && setBet(o.id)}
-                disabled={phase !== "betting"}
-                className={`rounded-xl py-3 text-xs font-bold border-2 transition ${
-                  bet === o.id ? "border-yellow-400 ring-2 ring-yellow-400/50" : "border-white/10"
-                } ${colour} disabled:opacity-50`}
-              >
-                <div>{o.label}</div>
-                <div className="text-[10px] opacity-70">{o.hint}</div>
-              </button>
-            );
-          })}
-        </div>
+                key={d.id}
+                onClick={() => isBetting && setBet(d.id)}
+                disabled={dis}
+                className={`bg-emerald-800 ring-1 ring-black/40 text-white text-xs font-bold py-2 ${bet === d.id ? "ring-2 ring-yellow-300" : ""} disabled:opacity-60`}
+              >{d.label}</button>
+            ))}
+          </div>
 
-        {/* Number grid */}
-        <div className="bg-[#0d1430] rounded-2xl p-2 mb-4 border border-white/5">
-          <button
-            onClick={() => phase === "betting" && setBet(0)}
-            disabled={phase !== "betting"}
-            className={`w-full rounded-lg py-2 text-xs font-bold mb-1 bg-emerald-700 ${bet === 0 ? "ring-2 ring-yellow-400" : ""} disabled:opacity-50`}
-          >0 (35:1)</button>
-          <div className="grid grid-cols-6 gap-1">
-            {NUMBERS_GRID.map((n) => {
-              const colour = RED.has(n) ? "bg-rose-700" : "bg-zinc-800";
+          <div className="grid grid-cols-6 gap-1 mt-1.5">
+            {OUTSIDE.map((o) => {
+              const c =
+                o.id === "red"   ? "bg-rose-700"  :
+                o.id === "black" ? "bg-zinc-900"  :
+                "bg-emerald-800";
               return (
                 <button
-                  key={n}
-                  onClick={() => phase === "betting" && setBet(n)}
-                  disabled={phase !== "betting"}
-                  className={`rounded text-[11px] font-bold py-2 ${colour} ${bet === n ? "ring-2 ring-yellow-400" : ""} disabled:opacity-50`}
-                >{n}</button>
+                  key={o.id}
+                  onClick={() => isBetting && setBet(o.id)}
+                  disabled={dis}
+                  className={`${c} ring-1 ring-black/40 text-white text-[11px] font-bold py-2 ${bet === o.id ? "ring-2 ring-yellow-300" : ""} disabled:opacity-60`}
+                >{o.label}</button>
               );
             })}
           </div>
         </div>
 
+        {/* Bet panel */}
         <div className="bg-[#0d1430] rounded-2xl p-4 border border-white/5">
-          {bet !== null && <div className="text-xs text-gray-400 mb-2">Bet: <span className="text-yellow-300 font-bold">{labelFor(bet)}</span></div>}
-          <div className="flex gap-2 mb-3">
-            <input type="number" value={betAmount} onChange={(e) => setBetAmount(e.target.value)}
-              placeholder={`Bet (Min ${formatCurrency(10)})`} disabled={phase !== "betting"}
-              className="flex-1 bg-[#070b1e] border border-white/10 rounded-xl px-3 py-2.5 text-sm" />
-            <div className="bg-[#070b1e] rounded-xl px-3 py-2.5 text-xs text-gray-400">{formatCurrency(balance)}</div>
+          <div className="flex items-center justify-between mb-3 text-xs">
+            <span className="text-gray-400">Bet on: <span className="text-yellow-300 font-bold">{bet == null ? "—" : labelFor(bet)}</span></span>
+            <span className="text-gray-400">Returns: <span className="text-emerald-300 font-bold">{formatCurrency(potentialReturn)}</span></span>
           </div>
-          <div className="grid grid-cols-4 gap-2 mb-3">
-            {[50, 100, 200, 500].map((v) => (
-              <button key={v} onClick={() => setBetAmount((p) => String((parseFloat(p) || 0) + v))} disabled={phase !== "betting"}
-                className="bg-[#070b1e] hover:bg-[#0f1838] disabled:opacity-30 rounded-lg py-1.5 text-xs font-bold">+{formatCurrency(v)}</button>
+
+          <div className="grid grid-cols-5 gap-2 mb-3">
+            {CHIPS.map((c, i) => (
+              <button
+                key={c}
+                onClick={() => setChipIdx(i)}
+                disabled={dis}
+                className={`rounded-full py-2 text-xs font-black border-2 ${
+                  chipIdx === i
+                    ? "bg-yellow-400 border-yellow-200 text-black shadow-[0_0_18px_-2px_rgba(250,204,21,0.6)]"
+                    : "bg-[#070b1e] border-white/10 text-gray-200"
+                } disabled:opacity-40`}
+              >₹{c}</button>
             ))}
           </div>
-          <button onClick={spin} disabled={phase !== "betting"} className="w-full bg-yellow-400 hover:bg-yellow-300 disabled:opacity-40 rounded-xl py-3 font-black text-black text-lg">
-            {phase === "spinning" ? "Spinning..." : phase === "result" ? "..." : "SPIN"}
+
+          <div className="flex items-center justify-between text-xs text-gray-400 mb-3">
+            <span>Balance</span>
+            <span className="text-white font-semibold">{formatCurrency(balance)}</span>
+          </div>
+
+          <button
+            onClick={spin}
+            disabled={dis || bet === null}
+            className="w-full bg-yellow-400 hover:bg-yellow-300 disabled:opacity-40 rounded-xl py-3 font-black text-black text-lg"
+          >
+            {phase === "spinning" ? "Spinning…" : phase === "result" ? "Next round…" : `SPIN ₹${stake}`}
           </button>
         </div>
       </div>
