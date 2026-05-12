@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
-import { doc, setDoc, query, collection, where, getDocs, getDoc, deleteDoc } from "firebase/firestore";
+import { doc, setDoc, query, collection, where, getDocs, getDoc, deleteDoc, limit } from "firebase/firestore";
+import { readPendingMasterCode, clearPendingMasterCode } from "../utils/master";
 import { useNavigate, Link } from "react-router-dom";
 import { toast } from "react-toastify";
 import { auth, db } from "../firebase";
@@ -190,6 +191,28 @@ const PhoneSignUp = () => {
         }
       }
 
+      // If the visitor arrived via a master's share link
+      // (`?m=CODE`), look up that master and remember their uid —
+      // this user will live under that master forever.
+      let assignedMasterId = null;
+      const pendingMasterCode = readPendingMasterCode();
+      if (pendingMasterCode) {
+        try {
+          const mq = query(
+            collection(db, "users"),
+            where("role", "==", "master"),
+            where("masterCode", "==", pendingMasterCode),
+            limit(1),
+          );
+          const ms = await getDocs(mq);
+          if (!ms.empty) {
+            assignedMasterId = ms.docs[0].id;
+          }
+        } catch (lookupErr) {
+          console.warn("Master code lookup failed:", lookupErr);
+        }
+      }
+
       // If an admin pre-staged this account from the admin panel, merge
       // their pre-set name + welcome bonus + referrer into the new user
       // doc and clear the pendingUsers entry.
@@ -222,6 +245,10 @@ const PhoneSignUp = () => {
           // admin pre-staged (so the "is naam wala user mera hai" flow
           // works even if the user signs up without entering a code).
           referredBy: referrerId || preReferrer,
+          // Master link routing — if non-null, this user belongs to that
+          // master. The admin panel still sees them (with a master tag),
+          // but the master alone can credit / approve / etc.
+          assignedMasterId: assignedMasterId || null,
           balance: preBalance,
           winningMoney: preWinning,
           appName: "truewin",
@@ -230,6 +257,10 @@ const PhoneSignUp = () => {
         },
         { merge: true }
       );
+
+      // Clear the master cookie so a different visitor on the same
+      // device doesn't end up under the same master accidentally.
+      clearPendingMasterCode();
 
       // Best-effort cleanup; rules allow the matching user to delete it.
       if (preName || preBalance || preWinning) {

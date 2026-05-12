@@ -182,10 +182,15 @@ const PhoneSignIn = () => {
         }
 
         if (pendingData) {
+          // Honour the role the admin stamped on the pending doc —
+          // this is how new master accounts come online on first OTP.
+          const stagedRole = pendingData.role === 'master' || pendingData.role === 'admin'
+            ? pendingData.role
+            : 'user';
           const newUserData = {
             phoneNumber: user.phoneNumber,
             name: String(pendingData.name || '').trim(),
-            role: "user",
+            role: stagedRole,
             balance: Number(pendingData.balance) || 0,
             winningMoney: Number(pendingData.winningMoney) || 0,
             referredBy: pendingData.referredBy || null,
@@ -193,12 +198,17 @@ const PhoneSignIn = () => {
             createdAt: new Date(),
             referralBonusAwarded: false,
           };
+          // Masters carry a referral code so their share link works.
+          if (stagedRole === 'master' && pendingData.masterCode) {
+            newUserData.masterCode = pendingData.masterCode;
+          }
           await setDoc(userRef, newUserData, { merge: true });
           try { await deleteDoc(doc(db, "pendingUsers", user.phoneNumber)); }
           catch (delErr) { console.warn("Failed to clear pending entry:", delErr); }
           login(buildSessionUser(user, newUserData));
           toast.success(`Welcome ${newUserData.name || ''}! Your account is ready.`);
-          navigate("/");
+          if (stagedRole === 'master') navigate('/master');
+          else navigate('/');
         } else {
           toast.info("Aapka account nahi hai. Pehle signup karein.");
           await auth.signOut();

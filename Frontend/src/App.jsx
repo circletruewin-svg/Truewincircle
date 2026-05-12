@@ -12,6 +12,7 @@ import Spinner from './components/Loader';
 import { buildSessionUser } from './utils/sessionUser';
 import { UserSoundProvider } from './contexts/UserSoundContext';
 import UserSoundListener from './components/UserSoundListener';
+import { rememberMasterCode } from './utils/master';
 
 const Home = lazy(() => import('./Pages/Home'));
 const SpinWheel = lazy(() => import('./Pages/SpinWheel'));
@@ -45,6 +46,8 @@ const Notifications = lazy(() => import('./Pages/Notifications'));
 const SportsBetting = lazy(() => import('./Pages/SportsBetting'));
 const Landing = lazy(() => import('./Pages/Landing'));
 const Casino = lazy(() => import('./Pages/Casino'));
+const MasterDashboard = lazy(() => import('./Master/Master'));
+const MasterRoute = lazy(() => import('./Master/MasterRoute'));
 const Lucky7 = lazy(() => import('./Pages/Lucky7'));
 const HiLo = lazy(() => import('./Pages/HiLo'));
 const Mines = lazy(() => import('./Pages/Mines'));
@@ -68,9 +71,23 @@ const AppContent = () => {
   // first paint), so the global navbar is hidden on /landing and /lp.
   const showNavbar = path !== '/admin' && path !== '/landing' && path !== '/lp';
 
+  // Capture ?m=CODE on any landing so a visitor who arrives via a
+  // master's share link gets remembered until they finish signing up.
+  // Runs once per pathname change so the cleanup-on-signup flow can
+  // still wipe the key without us re-stamping it on the next route.
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('m');
+      if (code) rememberMasterCode(code);
+    } catch { /* SSR-safe */ }
+  }, [location.pathname]);
+
   useEffect(() => {
     if (user && user.role === 'admin') {
       navigate('/admin');
+    } else if (user && user.role === 'master') {
+      navigate('/master');
     }
   }, [user, navigate]);
 
@@ -132,7 +149,8 @@ const AppContent = () => {
           <Route path="/32cards" element={<Cards32 />} />
           <Route path="/landing" element={<Landing />} />
           <Route path="/lp" element={<Landing />} />
-          <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
+          <Route path="/admin"  element={<AdminRoute><AdminDashboard /></AdminRoute>} />
+          <Route path="/master" element={<MasterRoute><MasterDashboard /></MasterRoute>} />
         </Routes>
       </Suspense>
     </UserSoundProvider>

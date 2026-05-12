@@ -8,6 +8,20 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
+    // Master role — sits between admin and regular users. Has finite
+    // points and can only touch users assigned to them (via signup
+    // referral link).
+    function isMaster() {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master';
+    }
+
+    // True when targetUid is a player under the calling master.
+    function isMyPlayer(targetUid) {
+      return isMaster() &&
+        get(/databases/$(database)/documents/users/$(targetUid)).data.assignedMasterId == request.auth.uid;
+    }
+
     // Rules for the results collection
     match /results/{resultId} {
       allow read: if true;
@@ -19,16 +33,31 @@ service cloud.firestore {
       allow read: if request.auth != null && (
         request.auth.uid == userId ||
         isAdmin() ||
-        resource.data.referredBy == request.auth.uid
+        resource.data.referredBy == request.auth.uid ||
+        // Master can read their own players. Same query the master
+        // panel uses (where assignedMasterId == my uid) is allowed.
+        (isMaster() && resource.data.get('assignedMasterId', '') == request.auth.uid) ||
+        // Anonymous-but-authenticated visitors need a 1-row lookup of
+        // a master by code at signup time so the link can be honoured.
+        // We only allow that exact shape: querying users with
+        // role=='master' is OK. The actual rule engine doesn't see
+        // queries directly so the per-doc read still applies — a
+        // visitor reading a master doc only ever happens via the
+        // signup lookup. To keep this safe we allow read of any user
+        // whose role is 'master' (their masterCode is public-shareable
+        // anyway since it's on their referral link).
+        resource.data.get('role', '') == 'master'
       );
       allow create: if request.auth != null;
       allow delete: if request.auth != null && request.auth.uid == userId;
       allow update: if request.auth != null && (
         isAdmin() ||
         (request.auth.uid == userId && (
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'suspended']) ||
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'suspended', 'masterCode', 'assignedMasterId']) ||
           (request.resource.data.role == resource.data.role &&
-           request.resource.data.get('suspended', false) == resource.data.get('suspended', false))
+           request.resource.data.get('suspended', false) == resource.data.get('suspended', false) &&
+           request.resource.data.get('masterCode', '') == resource.data.get('masterCode', '') &&
+           request.resource.data.get('assignedMasterId', '') == resource.data.get('assignedMasterId', ''))
         ))
       );
 
@@ -48,6 +77,16 @@ service cloud.firestore {
     // commission data, so users see no UI difference.
     match /commissions/{commissionId} {
       allow read, create, update, delete: if isAdmin();
+    }
+
+    // Master point ledger — every admin↔master and master↔player
+    // balance adjustment lands here for audit. Admin-only writes
+    // through the admin panel; masters get read access to their own
+    // entries in Phase 2 (so they can show their own history).
+    match /masterLedger/{txId} {
+      allow read:   if isAdmin() ||
+        (isMaster() && resource.data.masterId == request.auth.uid);
+      allow create, update, delete: if isAdmin();
     }
 
     // Pre-staged user accounts. Admin creates a /pendingUsers/{phone}
