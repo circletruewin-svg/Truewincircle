@@ -47,11 +47,69 @@ function CreateMasterModal({ onClose, onCreated }) {
 
     setBusy(true);
     try {
-      // ── pendingUsers/{phone} is the existing pre-stage pattern. We
-      //    add role='master' + masterCode so when the master signs in
-      //    via OTP, the existing PhoneSignIn pre-stage merge picks
-      //    them up as a master with the right code + initial points.
       const code = await pickUnusedMasterCode();
+
+      // First: does this phone already belong to an existing user
+      // (someone who signed up before being promoted)?  If yes,
+      // promote them in place — we update their existing user doc to
+      // role=master and add the initial points to their balance.
+      const existingQ = query(
+        collection(db, 'users'),
+        where('phoneNumber', '==', e164),
+        limit(1),
+      );
+      const existingSnap = await getDocs(existingQ);
+
+      if (!existingSnap.empty) {
+        const existing = existingSnap.docs[0];
+        const existingBalance = Number(existing.data().balance ?? existing.data().walletBalance ?? 0);
+        const newBalance = Math.round((existingBalance + points) * 100) / 100;
+
+        // Confirm with the admin so they don't silently nuke an
+        // existing user's role / balance accounting.
+        const goAhead = window.confirm(
+          `${existing.data().name || 'Existing user'} already exists with balance ${formatCurrency(existingBalance)}.\n\n` +
+          `After promotion:\n` +
+          `• Role: user → master\n` +
+          `• Balance: ${formatCurrency(existingBalance)} + ${formatCurrency(points)} = ${formatCurrency(newBalance)}\n` +
+          `• Master code: ${code}\n\n` +
+          `Proceed?`
+        );
+        if (!goAhead) { setBusy(false); return; }
+
+        await updateDoc(doc(db, 'users', existing.id), {
+          role: 'master',
+          masterCode: code,
+          name: name.trim() || existing.data().name || '',
+          balance: newBalance,
+          walletBalance: newBalance,
+          // If they were previously someone else's player, they aren't
+          // anymore — masters can't sit under another master.
+          assignedMasterId: null,
+        });
+
+        // Log it to the audit ledger like a normal top-up.
+        if (points > 0) {
+          await addDoc(collection(db, 'masterLedger'), {
+            type: 'admin_to_master',
+            masterId: existing.id,
+            masterName: name.trim(),
+            pending: false,
+            amount: points,
+            note: 'Initial points on user→master promotion',
+            createdAt: serverTimestamp(),
+          });
+        }
+
+        toast.success(`Existing user promoted to master with code ${code}. They'll see the master panel on next login.`);
+        onCreated?.();
+        onClose();
+        return;
+      }
+
+      // New phone: pre-stage in pendingUsers as before. First OTP
+      // login will merge the staged role + code + points into a real
+      // user doc.
       await setDoc(doc(db, 'pendingUsers', e164), {
         phoneNumber: e164,
         name: name.trim(),
@@ -62,7 +120,7 @@ function CreateMasterModal({ onClose, onCreated }) {
         appName: 'truewin',
         createdAt: serverTimestamp(),
       });
-      toast.success(`Master ${name.trim()} created with code ${code}. Share their phone to sign them in.`);
+      toast.success(`Master ${name.trim()} created with code ${code}. Share their link — they'll OTP in and become ACTIVE.`);
       onCreated?.();
       onClose();
     } catch (err) {
