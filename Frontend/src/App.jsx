@@ -1,7 +1,7 @@
 import { useEffect, useState, lazy, Suspense } from 'react';
 import { Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { getAuth, onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, onSnapshot } from "firebase/firestore";
 import { db } from './firebase';
 
 import Navbar from './components/Navbar';
@@ -163,22 +163,40 @@ const App = () => {
   const [loadingAuth, setLoadingAuth] = useState(!user);
 
   useEffect(() => {
+    // Live profile subscription — when admin promotes the user to
+    // master (or changes role / balance / suspended), the change
+    // propagates to the session immediately so the app redirects to
+    // the right panel without a forced logout/login.
+    let unsubProfile = null;
     const unsubscribe = onAuthStateChanged(auth, async (userAuth) => {
+      if (unsubProfile) { unsubProfile(); unsubProfile = null; }
       if (userAuth) {
         const userRef = doc(db, "users", userAuth.uid);
-        const userSnap = await getDoc(userRef);
-        if (userSnap.exists()) {
-          login(buildSessionUser(userAuth, userSnap.data()));
-        } else {
-          login(buildSessionUser(userAuth));
-        }
+        unsubProfile = onSnapshot(
+          userRef,
+          (snap) => {
+            if (snap.exists()) {
+              login(buildSessionUser(userAuth, snap.data()));
+            } else {
+              login(buildSessionUser(userAuth));
+            }
+            setLoadingAuth(false);
+          },
+          (err) => {
+            console.error('Profile snapshot error:', err);
+            setLoadingAuth(false);
+          },
+        );
       } else {
         login(null);
+        setLoadingAuth(false);
       }
-      setLoadingAuth(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      if (unsubProfile) unsubProfile();
+      unsubscribe();
+    };
   }, [auth, login]);
 
   if (loadingAuth) {

@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot, query, doc, updateDoc, writeBatch, where, setDoc, serverTimestamp, getDoc, deleteDoc, runTransaction, addDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, doc, updateDoc, writeBatch, where, setDoc, serverTimestamp, getDoc, deleteDoc, runTransaction, addDoc, getDocs, limit } from 'firebase/firestore';
 import { db } from '../../firebase';
 import Loader from '../../components/Loader';
 import UserBettingHistory from './UserBettingHistory';
 import UserWinLoss from './UserWinLoss';
 import { formatCurrency } from '../../utils/formatMoney';
 import useAuthStore from '../../store/authStore';
+import { generateMasterCode } from '../../utils/master';
+import { toast } from 'react-toastify';
 
 const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
   const [users, setUsers] = useState([]);
@@ -669,6 +671,76 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
     }
   };
 
+  // Promote an existing user directly to a master account. Bypasses
+  // phone-matching entirely (admin clicks the actual user row) so it
+  // works regardless of how the user's phoneNumber was originally
+  // stored (with/without +, with country code, offline-staged etc).
+  const promoteToMaster = async (user) => {
+    const existingBalance = Number(user.balance ?? user.walletBalance ?? 0);
+    const initialStr = window.prompt(
+      `Promote "${user.name || user.phoneNumber || user.id}" to MASTER?\n\n` +
+      `Current balance: ${formatCurrency(existingBalance)}\n\n` +
+      `How many additional master points should be added?\n(Existing balance stays as part of their master pool.)`,
+      '10000',
+    );
+    if (initialStr === null) return; // cancelled
+    const initial = Number(initialStr);
+    if (!Number.isFinite(initial) || initial < 0) {
+      toast.error('Enter a valid non-negative number.');
+      return;
+    }
+
+    try {
+      // Generate a unique master code with a few retries.
+      let code = null;
+      for (let i = 0; i < 6; i++) {
+        const candidate = generateMasterCode();
+        const taken = await getDocs(query(
+          collection(db, 'users'),
+          where('masterCode', '==', candidate),
+          limit(1),
+        ));
+        if (taken.empty) { code = candidate; break; }
+      }
+      if (!code) throw new Error('Could not generate unique code — try again.');
+
+      const newBalance = Math.round((existingBalance + initial) * 100) / 100;
+
+      await updateDoc(doc(db, 'users', user.id), {
+        role: 'master',
+        masterCode: code,
+        balance: newBalance,
+        walletBalance: newBalance,
+        // Master can't sit under another master.
+        assignedMasterId: null,
+      });
+
+      if (initial > 0) {
+        await addDoc(collection(db, 'masterLedger'), {
+          type: 'admin_to_master',
+          masterId: user.id,
+          masterName: user.name || null,
+          pending: false,
+          amount: initial,
+          note: 'Promoted via AllUsers',
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      // If a stale pendingUsers entry was left behind from an earlier
+      // failed "Create Master" attempt for this phone, clean it up so
+      // the Master Management list no longer shows a duplicate.
+      if (user.phoneNumber) {
+        try { await deleteDoc(doc(db, 'pendingUsers', user.phoneNumber)); } catch {}
+      }
+
+      toast.success(`${user.name || 'User'} promoted to master with code ${code}. They need to log out + log in to see the master panel.`);
+    } catch (err) {
+      console.error('Promote to master failed:', err);
+      toast.error('Promote failed: ' + (err.message || err));
+    }
+  };
+
   // Build a per-user "latest activity" timestamp from the user doc's
   // lastActiveAt PLUS their most recent top-up / withdrawal createdAt.
   // This way users whose activity predates the lastActiveAt field
@@ -1166,6 +1238,20 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
                         >
                           Remove Admin
                         </button>
+                      )}
+                      {user.role !== 'admin' && user.role !== 'master' && (
+                        <button
+                          onClick={() => promoteToMaster(user)}
+                          className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-1 px-3 rounded text-xs"
+                          title="Convert this user into a master account"
+                        >
+                          Make Master
+                        </button>
+                      )}
+                      {user.role === 'master' && (
+                        <span className="bg-purple-100 text-purple-700 border border-purple-300 font-bold py-1 px-3 rounded text-[10px] uppercase tracking-wider">
+                          Master · {user.masterCode || '—'}
+                        </span>
                       )}
                       <button
                         onClick={() => toggleSuspend(user.id, !isSuspended)}
