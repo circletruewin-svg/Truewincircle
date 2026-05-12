@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   collection, onSnapshot, query, where, doc, getDoc, getDocs, setDoc,
-  serverTimestamp, runTransaction, addDoc, limit,
+  serverTimestamp, runTransaction, addDoc, limit, updateDoc, deleteDoc,
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { toast } from 'react-toastify';
@@ -122,26 +122,42 @@ function TopUpModal({ master, onClose, onDone }) {
 
     setBusy(true);
     try {
-      await runTransaction(db, async (tx) => {
-        const masterRef = doc(db, 'users', master.id);
-        const snap = await tx.get(masterRef);
-        if (!snap.exists()) throw new Error('Master account no longer exists.');
-        const current = Number(snap.data().balance ?? snap.data().walletBalance ?? 0);
+      if (master.pending) {
+        // Pending master — adjust the staged initial balance on the
+        // pendingUsers doc. When they first OTP in, this amount is
+        // merged onto the real user doc.
+        const stageRef = doc(db, 'pendingUsers', master.id);
+        const snap = await getDoc(stageRef);
+        if (!snap.exists()) throw new Error('Pending master no longer exists.');
+        const current = Number(snap.data().balance || 0);
         const next = direction === 'credit' ? current + value : current - value;
-        if (next < 0) throw new Error(`Cannot debit more than master has (${formatCurrency(current)}).`);
-        tx.update(masterRef, {
-          balance: Math.round(next * 100) / 100,
-          // Keep legacy field in sync so existing reporting tools that
-          // read walletBalance still see the master's true points.
-          walletBalance: Math.round(next * 100) / 100,
+        if (next < 0) throw new Error(`Cannot debit more than staged amount (${formatCurrency(current)}).`);
+        await updateDoc(stageRef, { balance: Math.round(next * 100) / 100 });
+      } else {
+        // Active master — atomic update on their real user doc.
+        await runTransaction(db, async (tx) => {
+          const masterRef = doc(db, 'users', master.id);
+          const snap = await tx.get(masterRef);
+          if (!snap.exists()) throw new Error('Master account no longer exists.');
+          const current = Number(snap.data().balance ?? snap.data().walletBalance ?? 0);
+          const next = direction === 'credit' ? current + value : current - value;
+          if (next < 0) throw new Error(`Cannot debit more than master has (${formatCurrency(current)}).`);
+          tx.update(masterRef, {
+            balance: Math.round(next * 100) / 100,
+            // Keep legacy field in sync so existing reporting tools that
+            // read walletBalance still see the master's true points.
+            walletBalance: Math.round(next * 100) / 100,
+          });
         });
-      });
+      }
 
-      // Audit ledger — admin → master adjustment.
+      // Audit ledger — admin → master adjustment. We log for both
+      // active and pending masters so the trail is continuous.
       await addDoc(collection(db, 'masterLedger'), {
         type: direction === 'credit' ? 'admin_to_master' : 'master_to_admin',
         masterId: master.id,
         masterName: master.name || null,
+        pending: !!master.pending,
         amount: value,
         createdAt: serverTimestamp(),
       });
@@ -207,22 +223,35 @@ function TopUpModal({ master, onClose, onDone }) {
 }
 
 export default function MasterManagement() {
-  const [masters, setMasters] = useState([]);
+  const [activeMasters, setActiveMasters] = useState([]);
+  const [pendingMasters, setPendingMasters] = useState([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [topUpFor, setTopUpFor] = useState(null);
   const [search, setSearch] = useState('');
 
-  // Live list of master accounts (role=='master').
+  // Active masters: live `users` docs where role == 'master'. These
+  // are the masters who have completed their first OTP login.
   useEffect(() => {
     const q = query(collection(db, 'users'), where('role', '==', 'master'));
     return onSnapshot(q, (snap) => {
-      setMasters(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setActiveMasters(snap.docs.map((d) => ({ id: d.id, ...d.data(), pending: false })));
       setLoading(false);
     }, () => setLoading(false));
   }, []);
 
+  // Pending masters: those that admin pre-staged but who haven't
+  // logged in yet. They show with a PENDING badge so admin knows to
+  // share the link / share the code with the master.
+  useEffect(() => {
+    const q = query(collection(db, 'pendingUsers'), where('role', '==', 'master'));
+    return onSnapshot(q, (snap) => {
+      setPendingMasters(snap.docs.map((d) => ({ id: d.id, ...d.data(), pending: true })));
+    }, () => setPendingMasters([]));
+  }, []);
+
   // Player counts grouped by master uid — one snapshot, derive locally.
+  // Only active masters can have players (signup needs a real user doc).
   const [playerCounts, setPlayerCounts] = useState({});
   useEffect(() => {
     const q = query(collection(db, 'users'), where('role', '==', 'user'));
@@ -236,6 +265,13 @@ export default function MasterManagement() {
     }, () => {});
   }, []);
 
+  // Combined list — pending masters surface at the top so admin sees
+  // the ones that need attention first.
+  const masters = useMemo(
+    () => [...pendingMasters, ...activeMasters],
+    [pendingMasters, activeMasters],
+  );
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return masters;
@@ -245,6 +281,20 @@ export default function MasterManagement() {
       (m.masterCode || '').toLowerCase().includes(q)
     );
   }, [masters, search]);
+
+  // Cancel a pending master that the admin no longer wants — clears
+  // the staged entry. Once a master has logged in we don't expose a
+  // delete to keep audit trail honest; admin can debit them to 0 and
+  // mark them suspended instead.
+  const cancelPending = async (m) => {
+    if (!window.confirm(`Cancel pending master "${m.name || m.id}"? They won't be created when they OTP in.`)) return;
+    try {
+      await deleteDoc(doc(db, 'pendingUsers', m.id));
+      toast.success('Pending master cancelled.');
+    } catch (err) {
+      toast.error('Could not cancel: ' + (err.message || err));
+    }
+  };
 
   const copy = async (text, label) => {
     try {
@@ -287,7 +337,7 @@ export default function MasterManagement() {
         </div>
       ) : (
         <div className="bg-white rounded-xl shadow overflow-x-auto">
-          <table className="w-full min-w-[800px]">
+          <table className="w-full min-w-[900px]">
             <thead className="bg-gray-50 border-b">
               <tr className="text-xs font-semibold text-gray-600">
                 <th className="p-3 text-left">Master</th>
@@ -295,14 +345,15 @@ export default function MasterManagement() {
                 <th className="p-3 text-left">Code</th>
                 <th className="p-3 text-right">Points</th>
                 <th className="p-3 text-center">Players</th>
+                <th className="p-3 text-center">Status</th>
                 <th className="p-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((m) => (
-                <tr key={m.id} className="border-b last:border-0 hover:bg-gray-50">
+                <tr key={`${m.pending ? 'p_' : 'a_'}${m.id}`} className={`border-b last:border-0 hover:bg-gray-50 ${m.pending ? 'bg-yellow-50/50' : ''}`}>
                   <td className="p-3 text-sm font-semibold">{m.name || '—'}</td>
-                  <td className="p-3 text-xs text-gray-600">{m.phoneNumber || '—'}</td>
+                  <td className="p-3 text-xs text-gray-600">{m.phoneNumber || m.id || '—'}</td>
                   <td className="p-3 text-xs">
                     {m.masterCode ? (
                       <button
@@ -316,7 +367,14 @@ export default function MasterManagement() {
                   <td className="p-3 text-right text-sm font-bold text-emerald-700">
                     {formatCurrency(m.balance ?? m.walletBalance ?? 0)}
                   </td>
-                  <td className="p-3 text-center text-sm">{playerCounts[m.id] || 0}</td>
+                  <td className="p-3 text-center text-sm">
+                    {m.pending ? <span className="text-gray-400">—</span> : (playerCounts[m.id] || 0)}
+                  </td>
+                  <td className="p-3 text-center">
+                    {m.pending
+                      ? <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">PENDING OTP</span>
+                      : <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">ACTIVE</span>}
+                  </td>
                   <td className="p-3 text-right space-x-2 whitespace-nowrap">
                     {m.masterCode && (
                       <button
@@ -329,11 +387,21 @@ export default function MasterManagement() {
                       onClick={() => setTopUpFor(m)}
                       className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-1 rounded"
                     >+ / − Points</button>
+                    {m.pending && (
+                      <button
+                        onClick={() => cancelPending(m)}
+                        className="text-xs bg-rose-500 hover:bg-rose-700 text-white px-2 py-1 rounded"
+                        title="Cancel pending master"
+                      >Cancel</button>
+                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <p className="text-[11px] text-gray-500 px-4 py-2 border-t bg-gray-50">
+            <b>PENDING OTP</b> = master ne abhi tak pehli baar login nahi kiya. Unhe phone share karke OTP karwao — automatically <b>ACTIVE</b> ho jayenge.
+          </p>
         </div>
       )}
 
