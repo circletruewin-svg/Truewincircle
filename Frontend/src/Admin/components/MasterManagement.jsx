@@ -31,101 +31,138 @@ async function pickUnusedMasterCode(maxAttempts = 8) {
   throw new Error('Could not generate a unique master code — try again.');
 }
 
+// Try a handful of phone-format variants since stored phoneNumber
+// fields can drift: with/without "+", with or without country code,
+// even old offline-created users with "+91" prepended manually.
+async function findExistingUserByPhone(rawPhone) {
+  const cleanDigits = rawPhone.replace(/\D/g, '');
+  const last10 = cleanDigits.slice(-10);
+  const candidates = new Set([
+    rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`,
+    rawPhone.replace(/^\+/, ''),
+    cleanDigits,
+    last10,
+    `+91${last10}`,
+    `91${last10}`,
+  ]);
+
+  for (const candidate of candidates) {
+    const snap = await getDocs(query(
+      collection(db, 'users'),
+      where('phoneNumber', '==', candidate),
+      limit(1),
+    ));
+    if (!snap.empty) return snap.docs[0];
+  }
+  return null;
+}
+
 function CreateMasterModal({ onClose, onCreated }) {
+  const [step, setStep] = useState('form'); // form | confirmNew | confirmExisting
   const [name, setName]   = useState('');
   const [phone, setPhone] = useState('');
   const [initial, setInitial] = useState('10000');
   const [busy, setBusy] = useState(false);
+  // Lookup result for the existing-user branch — held so step 2 can
+  // show the admin the real balance / name before they confirm.
+  const [resolved, setResolved] = useState(null);
+  const [pendingCode, setPendingCode] = useState(null);
 
-  const submit = async () => {
-    const cleanPhone = phone.replace(/\s/g, '');
-    if (!name.trim()) return toast.error('Master name required.');
+  const trimmedName = name.trim();
+  const cleanPhone = phone.replace(/\s/g, '');
+  const e164 = cleanPhone.startsWith('+') ? cleanPhone : `+${cleanPhone}`;
+  const points = Number(initial) || 0;
+
+  // Step 1 → check, decide whether to show "new" or "existing" confirm.
+  const lookup = async () => {
+    if (!trimmedName) return toast.error('Master name required.');
     if (!/^\+?\d{10,15}$/.test(cleanPhone)) return toast.error('Valid phone with country code required (e.g. +91XXXXXXXXXX).');
-    const e164 = cleanPhone.startsWith('+') ? cleanPhone : `+${cleanPhone}`;
-    const points = Number(initial);
     if (!Number.isFinite(points) || points < 0) return toast.error('Initial points must be a non-negative number.');
 
     setBusy(true);
     try {
+      const existing = await findExistingUserByPhone(e164);
       const code = await pickUnusedMasterCode();
-
-      // First: does this phone already belong to an existing user
-      // (someone who signed up before being promoted)?  If yes,
-      // promote them in place — we update their existing user doc to
-      // role=master and add the initial points to their balance.
-      const existingQ = query(
-        collection(db, 'users'),
-        where('phoneNumber', '==', e164),
-        limit(1),
-      );
-      const existingSnap = await getDocs(existingQ);
-
-      if (!existingSnap.empty) {
-        const existing = existingSnap.docs[0];
-        const existingBalance = Number(existing.data().balance ?? existing.data().walletBalance ?? 0);
-        const newBalance = Math.round((existingBalance + points) * 100) / 100;
-
-        // Confirm with the admin so they don't silently nuke an
-        // existing user's role / balance accounting.
-        const goAhead = window.confirm(
-          `${existing.data().name || 'Existing user'} already exists with balance ${formatCurrency(existingBalance)}.\n\n` +
-          `After promotion:\n` +
-          `• Role: user → master\n` +
-          `• Balance: ${formatCurrency(existingBalance)} + ${formatCurrency(points)} = ${formatCurrency(newBalance)}\n` +
-          `• Master code: ${code}\n\n` +
-          `Proceed?`
-        );
-        if (!goAhead) { setBusy(false); return; }
-
-        await updateDoc(doc(db, 'users', existing.id), {
-          role: 'master',
-          masterCode: code,
-          name: name.trim() || existing.data().name || '',
-          balance: newBalance,
-          walletBalance: newBalance,
-          // If they were previously someone else's player, they aren't
-          // anymore — masters can't sit under another master.
-          assignedMasterId: null,
-        });
-
-        // Log it to the audit ledger like a normal top-up.
-        if (points > 0) {
-          await addDoc(collection(db, 'masterLedger'), {
-            type: 'admin_to_master',
-            masterId: existing.id,
-            masterName: name.trim(),
-            pending: false,
-            amount: points,
-            note: 'Initial points on user→master promotion',
-            createdAt: serverTimestamp(),
-          });
-        }
-
-        toast.success(`Existing user promoted to master with code ${code}. They'll see the master panel on next login.`);
-        onCreated?.();
-        onClose();
-        return;
+      setPendingCode(code);
+      if (existing) {
+        setResolved({ id: existing.id, data: existing.data() });
+        setStep('confirmExisting');
+      } else {
+        setResolved(null);
+        setStep('confirmNew');
       }
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || 'Lookup failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
-      // New phone: pre-stage in pendingUsers as before. First OTP
-      // login will merge the staged role + code + points into a real
-      // user doc.
+  // Step 2a (existing user) → flip role to master + sum balances.
+  const confirmExisting = async () => {
+    if (!resolved) return;
+    setBusy(true);
+    try {
+      const existingBalance = Number(resolved.data.balance ?? resolved.data.walletBalance ?? 0);
+      const newBalance = Math.round((existingBalance + points) * 100) / 100;
+
+      await updateDoc(doc(db, 'users', resolved.id), {
+        role: 'master',
+        masterCode: pendingCode,
+        name: trimmedName || resolved.data.name || '',
+        balance: newBalance,
+        walletBalance: newBalance,
+        assignedMasterId: null,
+      });
+
+      if (points > 0) {
+        await addDoc(collection(db, 'masterLedger'), {
+          type: 'admin_to_master',
+          masterId: resolved.id,
+          masterName: trimmedName,
+          pending: false,
+          amount: points,
+          note: 'Initial points on user→master promotion',
+          createdAt: serverTimestamp(),
+        });
+      }
+      // Sweep stale pendingUsers entry for this phone (left over from
+      // a prior failed attempt) so Master Management doesn't show
+      // both a PENDING and ACTIVE row.
+      try { await deleteDoc(doc(db, 'pendingUsers', e164)); } catch {}
+
+      toast.success(`Existing user promoted to master · code ${pendingCode}.`);
+      onCreated?.();
+      onClose();
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || 'Could not promote.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Step 2b (new phone) → pre-stage in pendingUsers.
+  const confirmNew = async () => {
+    setBusy(true);
+    try {
       await setDoc(doc(db, 'pendingUsers', e164), {
         phoneNumber: e164,
-        name: name.trim(),
+        name: trimmedName,
         role: 'master',
-        masterCode: code,
+        masterCode: pendingCode,
         balance: points,
         winningMoney: 0,
         appName: 'truewin',
         createdAt: serverTimestamp(),
       });
-      toast.success(`Master ${name.trim()} created with code ${code}. Share their link — they'll OTP in and become ACTIVE.`);
+      toast.success(`Master ${trimmedName} pre-staged · code ${pendingCode}. Share the link — they'll OTP in.`);
       onCreated?.();
       onClose();
     } catch (err) {
       console.error(err);
-      toast.error(err.message || 'Could not create master.');
+      toast.error(err.message || 'Could not stage master.');
     } finally {
       setBusy(false);
     }
@@ -134,34 +171,107 @@ function CreateMasterModal({ onClose, onCreated }) {
   const I = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm';
   const L = 'block text-xs font-semibold text-gray-600 mb-1';
 
+  // ── STEP 1: form ────────────────────────────────────────────────
+  if (step === 'form') {
+    return (
+      <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-white rounded-xl shadow-xl">
+          <div className="border-b p-4 flex justify-between items-center">
+            <h3 className="font-bold text-lg">Create master account</h3>
+            <button onClick={onClose} className="text-gray-500 text-2xl">×</button>
+          </div>
+          <div className="p-4 space-y-3">
+            <div>
+              <label className={L}>Master name</label>
+              <input className={I} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ramesh Bhai" />
+            </div>
+            <div>
+              <label className={L}>Phone (with country code)</label>
+              <input className={I} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+919876543210" />
+            </div>
+            <div>
+              <label className={L}>Initial points (master can credit this much to their players)</label>
+              <input type="number" min="0" className={I} value={initial} onChange={(e) => setInitial(e.target.value)} />
+            </div>
+            <p className="text-[11px] text-gray-500">
+              <b>Step 1 of 2.</b> Next button pe details review karke confirm karna padega — galti se master ban jaane se bachne ke liye.
+            </p>
+          </div>
+          <div className="border-t p-4 flex justify-end gap-2">
+            <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded">Cancel</button>
+            <button onClick={lookup} disabled={busy} className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-40">
+              {busy ? 'Checking…' : 'Next → Review'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── STEP 2a: existing user — needs strong confirmation ────────────
+  if (step === 'confirmExisting') {
+    const existingBalance = Number(resolved.data.balance ?? resolved.data.walletBalance ?? 0);
+    const newBalance = Math.round((existingBalance + points) * 100) / 100;
+    return (
+      <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-white rounded-xl shadow-xl border-l-4 border-amber-500">
+          <div className="border-b p-4 flex justify-between items-center bg-amber-50">
+            <h3 className="font-bold text-lg text-amber-900">⚠ Existing user — promote?</h3>
+            <button onClick={onClose} className="text-gray-500 text-2xl">×</button>
+          </div>
+          <div className="p-4 space-y-3 text-sm">
+            <p>Ye phone pehle se ek user ka hai. Confirm karoge to vo <b>user se master ban jayega</b>.</p>
+            <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-xs">
+              <div className="flex justify-between"><span className="text-gray-600">Current name:</span><span className="font-semibold">{resolved.data.name || '—'}</span></div>
+              <div className="flex justify-between"><span className="text-gray-600">Phone:</span><span className="font-mono">{resolved.data.phoneNumber || e164}</span></div>
+              <div className="flex justify-between"><span className="text-gray-600">Current role:</span><span className="font-semibold">{resolved.data.role || 'user'}</span></div>
+              <div className="flex justify-between"><span className="text-gray-600">Current balance:</span><span className="font-semibold text-emerald-700">{formatCurrency(existingBalance)}</span></div>
+            </div>
+
+            <p className="font-bold text-amber-900">After promotion:</p>
+            <div className="bg-emerald-50 rounded-lg p-3 space-y-1 text-xs">
+              <div className="flex justify-between"><span>Role</span><span className="font-bold">user → master</span></div>
+              <div className="flex justify-between"><span>Master code</span><span className="font-mono font-bold">{pendingCode}</span></div>
+              <div className="flex justify-between"><span>Balance</span><span className="font-bold">{formatCurrency(existingBalance)} + {formatCurrency(points)} = {formatCurrency(newBalance)}</span></div>
+              <div className="flex justify-between"><span>Name</span><span className="font-bold">{trimmedName || resolved.data.name}</span></div>
+            </div>
+
+            <p className="text-[11px] text-rose-700 font-semibold">
+              Cancel karke pichli screen pe wapas ja sakte ho. Confirm sirf tab dabao jab pura sure ho.
+            </p>
+          </div>
+          <div className="border-t p-4 flex justify-end gap-2">
+            <button onClick={() => setStep('form')} className="px-4 py-2 bg-gray-200 rounded">← Back</button>
+            <button onClick={confirmExisting} disabled={busy} className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded disabled:opacity-40">
+              {busy ? 'Promoting…' : '✓ Confirm: Make Master'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── STEP 2b: new phone — straightforward confirm ─────────────────
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white rounded-xl shadow-xl">
         <div className="border-b p-4 flex justify-between items-center">
-          <h3 className="font-bold text-lg">Create master account</h3>
+          <h3 className="font-bold text-lg">Confirm new master</h3>
           <button onClick={onClose} className="text-gray-500 text-2xl">×</button>
         </div>
-        <div className="p-4 space-y-3">
-          <div>
-            <label className={L}>Master name</label>
-            <input className={I} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ramesh Bhai" />
+        <div className="p-4 space-y-3 text-sm">
+          <p>Ye phone pehle kabhi register nahi hua. Confirm karne pe ek <b>new pre-staged master</b> ban jayega — jab vo phone se OTP karega, account ACTIVE ho jayega.</p>
+          <div className="bg-emerald-50 rounded-lg p-3 space-y-1 text-xs">
+            <div className="flex justify-between"><span>Name</span><span className="font-bold">{trimmedName}</span></div>
+            <div className="flex justify-between"><span>Phone</span><span className="font-mono">{e164}</span></div>
+            <div className="flex justify-between"><span>Master code</span><span className="font-mono font-bold">{pendingCode}</span></div>
+            <div className="flex justify-between"><span>Initial points</span><span className="font-bold">{formatCurrency(points)}</span></div>
           </div>
-          <div>
-            <label className={L}>Phone (with country code)</label>
-            <input className={I} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+919876543210" />
-          </div>
-          <div>
-            <label className={L}>Initial points (master can credit this much to their players)</label>
-            <input type="number" min="0" className={I} value={initial} onChange={(e) => setInitial(e.target.value)} />
-          </div>
-          <p className="text-[11px] text-gray-500">
-            Master ka account pre-stage hoga is phone par. Jab vo first time OTP login karega, account auto-create ho jayega with the assigned code + points.
-          </p>
         </div>
         <div className="border-t p-4 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded">Cancel</button>
-          <button onClick={submit} disabled={busy} className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-40">
-            {busy ? 'Creating…' : 'Create master'}
+          <button onClick={() => setStep('form')} className="px-4 py-2 bg-gray-200 rounded">← Back</button>
+          <button onClick={confirmNew} disabled={busy} className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-40">
+            {busy ? 'Creating…' : '✓ Confirm: Create master'}
           </button>
         </div>
       </div>
@@ -280,6 +390,180 @@ function TopUpModal({ master, onClose, onDone }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Drill-down detail view for one master: their info card + all their
+// players + their masterLedger history. Opened from the Master
+// Management list when admin clicks a row.
+// ─────────────────────────────────────────────────────────────────
+function MasterDetail({ master, onBack, onTopUp }) {
+  const [players, setPlayers] = useState([]);
+  const [ledger, setLedger] = useState([]);
+
+  useEffect(() => {
+    const pq = query(collection(db, 'users'), where('assignedMasterId', '==', master.id));
+    return onSnapshot(pq, (snap) => {
+      setPlayers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    }, () => setPlayers([]));
+  }, [master.id]);
+
+  useEffect(() => {
+    const lq = query(
+      collection(db, 'masterLedger'),
+      where('masterId', '==', master.id),
+      // No orderBy — that would need an index. Sort client-side.
+    );
+    return onSnapshot(lq, (snap) => {
+      const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      docs.sort((a, b) => {
+        const ta = a.createdAt?.toDate?.()?.getTime() || 0;
+        const tb = b.createdAt?.toDate?.()?.getTime() || 0;
+        return tb - ta;
+      });
+      setLedger(docs);
+    }, () => setLedger([]));
+  }, [master.id]);
+
+  const totalDeposited = useMemo(
+    () => players.reduce((s, p) => s + Number(p.balance ?? p.walletBalance ?? 0), 0),
+    [players],
+  );
+  const totalWinning = useMemo(
+    () => players.reduce((s, p) => s + Number(p.winningMoney ?? 0), 0),
+    [players],
+  );
+  const fmtDate = (ts) => {
+    const d = ts?.toDate?.();
+    return d ? d.toLocaleString('en-IN') : '—';
+  };
+
+  return (
+    <div className="p-4 md:p-6 space-y-4">
+      <div className="flex items-center gap-3 mb-2">
+        <button onClick={onBack} className="text-sm bg-gray-200 hover:bg-gray-300 px-3 py-1.5 rounded">← Back to list</button>
+        <h2 className="text-xl font-bold text-gray-800">Master · {master.name || '—'}</h2>
+      </div>
+
+      {/* Master card */}
+      <div className="bg-white rounded-xl shadow border p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+        <div>
+          <p className="text-[10px] uppercase text-gray-500">Phone</p>
+          <p className="font-mono font-semibold">{master.phoneNumber || master.id}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase text-gray-500">Code</p>
+          <p className="font-mono font-bold text-amber-700">{master.masterCode || '—'}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase text-gray-500">Master Points</p>
+          <p className="font-bold text-emerald-700">{formatCurrency(master.balance ?? master.walletBalance ?? 0)}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase text-gray-500">Status</p>
+          <p className="font-bold">
+            {master.pending ? <span className="text-amber-700">PENDING OTP</span>
+                            : <span className="text-emerald-700">ACTIVE</span>}
+          </p>
+        </div>
+
+        <div className="col-span-2 md:col-span-4 flex justify-end gap-2 pt-2">
+          {master.masterCode && (
+            <button
+              onClick={() => navigator.clipboard.writeText(buildMasterReferralLink(master.masterCode)).then(() => toast.success('Link copied'))}
+              className="text-xs bg-gray-200 hover:bg-gray-300 px-3 py-1.5 rounded"
+            >Copy share link</button>
+          )}
+          <button
+            onClick={() => onTopUp(master)}
+            className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded font-bold"
+          >+ / − Master Points</button>
+        </div>
+      </div>
+
+      {/* Players list */}
+      <div className="bg-white rounded-xl shadow border">
+        <div className="border-b px-4 py-3 flex justify-between items-center">
+          <h3 className="font-bold">Players ({players.length})</h3>
+          <div className="text-xs text-gray-600">
+            Total balance: <span className="font-bold text-emerald-700">{formatCurrency(totalDeposited)}</span>{' '}
+            · winnings: <span className="font-bold text-yellow-700">{formatCurrency(totalWinning)}</span>
+          </div>
+        </div>
+        {players.length === 0 ? (
+          <p className="p-4 text-sm text-gray-500 text-center">Abhi tak koi player nahi.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[600px] text-sm">
+              <thead className="bg-gray-50 border-b text-[10px] uppercase text-gray-500">
+                <tr>
+                  <th className="text-left px-3 py-2">Name</th>
+                  <th className="text-left px-3 py-2">Phone</th>
+                  <th className="text-right px-3 py-2">Balance</th>
+                  <th className="text-right px-3 py-2">Winning</th>
+                  <th className="text-center px-3 py-2">Status</th>
+                  <th className="text-left px-3 py-2">Joined</th>
+                </tr>
+              </thead>
+              <tbody>
+                {players.map((p) => (
+                  <tr key={p.id} className="border-b last:border-0 hover:bg-gray-50">
+                    <td className="px-3 py-2 font-semibold">{p.name || '—'}</td>
+                    <td className="px-3 py-2 text-xs text-gray-600">{p.phoneNumber || '—'}</td>
+                    <td className="px-3 py-2 text-right text-emerald-700 font-semibold">{formatCurrency(p.balance ?? p.walletBalance ?? 0)}</td>
+                    <td className="px-3 py-2 text-right text-yellow-700">{formatCurrency(p.winningMoney ?? 0)}</td>
+                    <td className="px-3 py-2 text-center">
+                      {p.suspended
+                        ? <span className="text-[10px] bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full">SUSPENDED</span>
+                        : <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">ACTIVE</span>}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-gray-600">{fmtDate(p.createdAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Ledger */}
+      <div className="bg-white rounded-xl shadow border">
+        <div className="border-b px-4 py-3">
+          <h3 className="font-bold">Activity (admin ↔ master ledger)</h3>
+        </div>
+        {ledger.length === 0 ? (
+          <p className="p-4 text-sm text-gray-500 text-center">Koi adjustment nahi hua abhi tak.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[500px] text-sm">
+              <thead className="bg-gray-50 border-b text-[10px] uppercase text-gray-500">
+                <tr>
+                  <th className="text-left px-3 py-2">When</th>
+                  <th className="text-left px-3 py-2">Type</th>
+                  <th className="text-right px-3 py-2">Amount</th>
+                  <th className="text-left px-3 py-2">Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ledger.map((l) => (
+                  <tr key={l.id} className="border-b last:border-0">
+                    <td className="px-3 py-2 text-xs">{fmtDate(l.createdAt)}</td>
+                    <td className="px-3 py-2 text-xs">
+                      {l.type === 'admin_to_master'
+                        ? <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-semibold">Credit (admin → master)</span>
+                        : <span className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-semibold">Debit (master → admin)</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right font-bold">{formatCurrency(l.amount)}</td>
+                    <td className="px-3 py-2 text-xs text-gray-500">{l.note || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function MasterManagement() {
   const [activeMasters, setActiveMasters] = useState([]);
   const [pendingMasters, setPendingMasters] = useState([]);
@@ -287,6 +571,7 @@ export default function MasterManagement() {
   const [createOpen, setCreateOpen] = useState(false);
   const [topUpFor, setTopUpFor] = useState(null);
   const [search, setSearch] = useState('');
+  const [detailMasterId, setDetailMasterId] = useState(null);
 
   // Active masters: live `users` docs where role == 'master'. These
   // are the masters who have completed their first OTP login.
@@ -354,12 +639,33 @@ export default function MasterManagement() {
     }
   };
 
-  const copy = async (text, label) => {
+  const copy = async (text, label, e) => {
+    if (e) e.stopPropagation();
     try {
       await navigator.clipboard.writeText(text);
       toast.success(`${label} copied`);
     } catch { toast.error('Copy failed'); }
   };
+
+  // Drill-down view takes precedence when a master row is clicked.
+  const detailMaster = useMemo(
+    () => masters.find((m) => m.id === detailMasterId) || null,
+    [masters, detailMasterId],
+  );
+  if (detailMaster) {
+    return (
+      <>
+        <MasterDetail
+          master={detailMaster}
+          onBack={() => setDetailMasterId(null)}
+          onTopUp={(m) => setTopUpFor(m)}
+        />
+        {topUpFor && (
+          <TopUpModal master={topUpFor} onClose={() => setTopUpFor(null)} onDone={() => {}} />
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="p-4 md:p-6">
@@ -409,13 +715,21 @@ export default function MasterManagement() {
             </thead>
             <tbody>
               {filtered.map((m) => (
-                <tr key={`${m.pending ? 'p_' : 'a_'}${m.id}`} className={`border-b last:border-0 hover:bg-gray-50 ${m.pending ? 'bg-yellow-50/50' : ''}`}>
-                  <td className="p-3 text-sm font-semibold">{m.name || '—'}</td>
+                <tr
+                  key={`${m.pending ? 'p_' : 'a_'}${m.id}`}
+                  onClick={() => !m.pending && setDetailMasterId(m.id)}
+                  className={`border-b last:border-0 hover:bg-blue-50 ${m.pending ? 'bg-yellow-50/50' : 'cursor-pointer'}`}
+                  title={m.pending ? '' : 'Click to view full master details'}
+                >
+                  <td className="p-3 text-sm font-semibold">
+                    {m.name || '—'}
+                    {!m.pending && <span className="ml-2 text-[10px] text-blue-600">(click row to view details)</span>}
+                  </td>
                   <td className="p-3 text-xs text-gray-600">{m.phoneNumber || m.id || '—'}</td>
                   <td className="p-3 text-xs">
                     {m.masterCode ? (
                       <button
-                        onClick={() => copy(m.masterCode, 'Code')}
+                        onClick={(e) => copy(m.masterCode, 'Code', e)}
                         className="bg-yellow-100 text-yellow-800 font-mono font-bold px-2 py-0.5 rounded"
                       >
                         {m.masterCode}
@@ -433,10 +747,10 @@ export default function MasterManagement() {
                       ? <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">PENDING OTP</span>
                       : <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">ACTIVE</span>}
                   </td>
-                  <td className="p-3 text-right space-x-2 whitespace-nowrap">
+                  <td className="p-3 text-right space-x-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                     {m.masterCode && (
                       <button
-                        onClick={() => copy(buildMasterReferralLink(m.masterCode), 'Link')}
+                        onClick={(e) => copy(buildMasterReferralLink(m.masterCode), 'Link', e)}
                         className="text-xs bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded"
                         title="Copy share link"
                       >Link</button>

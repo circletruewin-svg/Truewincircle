@@ -249,14 +249,24 @@ service cloud.firestore {
     // Rules for the withdrawals collection
     match /withdrawals/{withdrawalId} {
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+      // Owner + admin + the player's master can read. Master access
+      // lets the master panel show their player's withdrawal history.
+      allow read: if request.auth != null && (
+        resource.data.userId == request.auth.uid ||
+        isAdmin() ||
+        (isMaster() && get(/databases/$(database)/documents/users/$(resource.data.userId)).data.get('assignedMasterId', '') == request.auth.uid)
+      );
       allow update: if isAdmin();
     }
 
     // Rules for top-up (deposit) requests
     match /top-ups/{topUpId} {
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if request.auth != null && (
+        resource.data.userId == request.auth.uid ||
+        isAdmin() ||
+        (isMaster() && get(/databases/$(database)/documents/users/$(resource.data.userId)).data.get('assignedMasterId', '') == request.auth.uid)
+      );
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
