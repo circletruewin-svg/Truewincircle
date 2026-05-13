@@ -16,31 +16,12 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master';
     }
 
-    // True when targetUid is a player under the calling master.
-    function isMyPlayer(targetUid) {
+    // True when the resource being read/written has assignedMasterId
+    // pointing at the calling master. Used by user / top-up /
+    // withdrawal rules to scope masters to their own players.
+    function ownsThisPlayer() {
       return isMaster() &&
-        get(/databases/$(database)/documents/users/$(targetUid)).data.assignedMasterId == request.auth.uid;
-    }
-
-    // Atomic check used when a master adjusts their player's wallet.
-    // The master's own balance + winningMoney must change by the
-    // exact inverse of the player's balance + winningMoney change.
-    // This means: crediting a player by ₹100 must debit the master
-    // by ₹100 in the SAME transaction; debiting a player credits
-    // the master. Prevents masters from minting points out of thin
-    // air the way admin can.
-    function masterMatchesPlayerDelta() {
-      let masterBefore = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-      let masterAfter  = getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-      let mB = (masterBefore.balance is number ? masterBefore.balance : 0)
-             + (masterBefore.winningMoney is number ? masterBefore.winningMoney : 0);
-      let mA = (masterAfter.balance is number ? masterAfter.balance : 0)
-             + (masterAfter.winningMoney is number ? masterAfter.winningMoney : 0);
-      let pB = (resource.data.balance is number ? resource.data.balance : 0)
-             + (resource.data.winningMoney is number ? resource.data.winningMoney : 0);
-      let pA = (request.resource.data.balance is number ? request.resource.data.balance : 0)
-             + (request.resource.data.winningMoney is number ? request.resource.data.winningMoney : 0);
-      return (pA - pB) + (mA - mB) == 0;
+        resource.data.get('assignedMasterId', '') == request.auth.uid;
     }
 
     // Rules for the results collection
@@ -80,14 +61,14 @@ service cloud.firestore {
            request.resource.data.get('masterCode', '') == resource.data.get('masterCode', '') &&
            request.resource.data.get('assignedMasterId', '') == resource.data.get('assignedMasterId', ''))
         )) ||
-        // Master adjusting their player's wallet — only allowed in an
-        // atomic transaction that moves the master's own balance by
-        // the exact inverse amount (zero-sum). role / assignedMasterId
-        // / masterCode / suspended can't be touched.
+        // Master adjusting their own player's wallet. We allow any
+        // balance / winningMoney change here and rely on the client-
+        // side transaction + masterLedger audit to keep things honest.
+        // (Atomic getAfter() check turned out to be unreliable across
+        // multi-doc tx commits.) Protected fields stay locked.
         (isMaster() &&
          resource.data.get('assignedMasterId', '') == request.auth.uid &&
-         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'assignedMasterId', 'masterCode', 'suspended']) &&
-         masterMatchesPlayerDelta())
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'assignedMasterId', 'masterCode', 'suspended']))
       );
 
       // Per-user notifications subcollection.

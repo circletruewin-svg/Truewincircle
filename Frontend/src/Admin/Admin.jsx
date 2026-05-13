@@ -105,7 +105,9 @@ const AdminDashboard = () => {
     const truewinUsersQuery = query(collection(db, 'users'), where('appName', '==', 'truewin'));
     const unsubscribeTruewinUsers = onSnapshot(truewinUsersQuery, (snapshot) => {
       const newTruewinUserMap = {};
-      snapshot.docs.forEach(d => { newTruewinUserMap[d.id] = true; });
+      // Store the whole user doc — admin uses assignedMasterId to keep
+      // master-owned players out of the admin approval queues.
+      snapshot.docs.forEach(d => { newTruewinUserMap[d.id] = d.data(); });
       setTruewinUserMap(newTruewinUserMap);
       setTotalUsers(snapshot.size);
     });
@@ -137,7 +139,11 @@ const AdminDashboard = () => {
         if (c.type !== 'added') return false;
         const data = c.doc.data();
         if (data.status !== 'pending') return false;
-        return isAfterSubscribe(data.createdAt);
+        if (!isAfterSubscribe(data.createdAt)) return false;
+        // Skip master-owned players — those approvals belong to the
+        // master, admin shouldn't be pinged.
+        const u = truewinUserMapRef.current?.[data.userId];
+        return !!u && !u.assignedMasterId;
       });
       if (newPending.length > 0) {
         playNotificationRef.current?.();
@@ -161,7 +167,9 @@ const AdminDashboard = () => {
         if (c.type !== 'added') return false;
         const data = c.doc.data();
         if (data.status !== 'pending') return false;
-        return isAfterSubscribe(data.createdAt);
+        if (!isAfterSubscribe(data.createdAt)) return false;
+        const u = truewinUserMapRef.current?.[data.userId];
+        return !!u && !u.assignedMasterId;
       });
       if (newPending.length > 0) {
         playNotificationRef.current?.();
@@ -192,10 +200,17 @@ const AdminDashboard = () => {
       return;
     }
 
-    const truewinPayments = allPayments.filter(p => truewinUserMap[p.userId]);
+    // Admin queues only show DIRECT users (no assignedMasterId).
+    // Master-owned players are handled exclusively by their master.
+    const isDirectUser = (userId) => {
+      const u = truewinUserMap[userId];
+      return !!u && !u.assignedMasterId;
+    };
+
+    const truewinPayments = allPayments.filter(p => isDirectUser(p.userId));
     setPayments(truewinPayments);
 
-    const truewinWithdrawals = allWithdrawals.filter(w => truewinUserMap[w.userId]);
+    const truewinWithdrawals = allWithdrawals.filter(w => isDirectUser(w.userId));
     setWithdrawals(truewinWithdrawals);
 
     const paymentUserIds = [...new Set(truewinPayments.map(p => p.userId))];
