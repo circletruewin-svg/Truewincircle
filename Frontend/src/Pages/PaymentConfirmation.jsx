@@ -136,9 +136,21 @@ export default function PaymentConfirmation() {
     } catch (err) {
       console.error('Error submitting top-up request:', err);
       // Pass through the suspended-account message so the user can see it.
-      const friendly = err?.message?.includes('suspended')
-        ? err.message
-        : 'Failed to submit request. Please check your connection and try again.';
+      // For everything else, surface the underlying Firebase error code
+      // so we can debug which step (Storage upload vs Firestore write)
+      // actually failed instead of a useless generic message.
+      let friendly;
+      if (err?.message?.includes('suspended')) {
+        friendly = err.message;
+      } else if (err?.code === 'storage/unauthorized') {
+        friendly = 'Screenshot upload denied. Please tell admin to deploy storage rules.';
+      } else if (err?.code === 'permission-denied') {
+        friendly = 'Permission denied by Firestore rules. Please tell admin to redeploy rules.';
+      } else if (err?.code) {
+        friendly = `Failed (${err.code}): ${err.message || 'unknown error'}`;
+      } else {
+        friendly = `Failed: ${err?.message || 'check your connection and try again'}`;
+      }
       setError(friendly);
       setSubmissionState('error');
     } finally {
