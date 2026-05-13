@@ -1337,20 +1337,23 @@ export default function MasterDashboard() {
         <main className="flex-1 overflow-y-auto">{content}</main>
       </div>
 
-      {/* Mobile bottom nav — fixed, 5 main tabs */}
-      <div className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#0a0f24] border-t border-white/10 grid grid-cols-5">
-        {SECTIONS.slice(0, 5).map((s) => (
-          <button
-            key={s.id}
-            onClick={() => switchTab(s.id)}
-            className={`flex flex-col items-center gap-0.5 py-2 text-[10px] ${
-              activeTab === s.id && !openPlayer ? 'text-yellow-400' : 'text-gray-400'
-            }`}
-          >
-            <s.icon className="h-5 w-5" />
-            {s.short}
-          </button>
-        ))}
+      {/* Mobile bottom nav — horizontal scroll so all sections
+          (including QR / Activity / Link) stay reachable in one tap. */}
+      <div className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#0a0f24] border-t border-white/10">
+        <div className="flex overflow-x-auto no-scrollbar" style={{ scrollbarWidth: 'none' }}>
+          {SECTIONS.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => switchTab(s.id)}
+              className={`shrink-0 basis-1/5 flex flex-col items-center gap-0.5 py-2 text-[10px] ${
+                activeTab === s.id && !openPlayer ? 'text-yellow-400' : 'text-gray-400'
+              }`}
+            >
+              <s.icon className="h-5 w-5" />
+              {s.short}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

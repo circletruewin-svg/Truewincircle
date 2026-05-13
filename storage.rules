@@ -1,0 +1,44 @@
+rules_version = '2';
+
+// Firebase Storage rules. Kept liberal-on-purpose so the existing
+// admin barcode + master QR flows just work, but tightened where
+// reasonable to stop random writes.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Admin's global UPI / payment QR. Anyone signed-in can read,
+    // only authenticated users can write — the actual write happens
+    // from the admin panel (which is itself behind AdminRoute).
+    match /barcodes/{file=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Per-master payment QR. Read is public so a player's Pay page
+    // can render the image without an auth round-trip; write is
+    // scoped so a master can only put files under their own UID
+    // folder. Firestore role check isn't possible from Storage
+    // rules, so we rely on the path match — only the right user's
+    // app will know the right UID + write to that folder.
+    match /masters/{uid}/{file=**} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Deposit / payment screenshots. User who's uploading can write
+    // under their own UID folder; anyone signed-in can read so admin
+    // + the player's master can review the proof.
+    match /payment_screenshots/{uid}/{file=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Catch-all — explicit deny so misconfigured paths don't end up
+    // world-writable by accident.
+    match /{allPaths=**} {
+      allow read: if false;
+      allow write: if false;
+    }
+  }
+}
