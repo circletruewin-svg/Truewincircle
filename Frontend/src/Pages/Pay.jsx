@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { app } from '../firebase';
+import { app, db } from '../firebase';
 import { ref, getDownloadURL, getStorage } from 'firebase/storage';
+import { doc, onSnapshot, getDoc } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { Clock3 } from 'lucide-react';
 import AccountPageShell from '../components/AccountPageShell';
 
@@ -14,7 +16,7 @@ const Pay = () => {
   const [timeLeft, setTimeLeft] = useState(300);
   // Render the cached QR immediately if AddCash already prefetched it;
   // we still kick off a fresh fetch in the background to pick up admin
-  // updates, but the user sees the QR with zero perceived delay.
+  // or master updates, but the user sees the QR with zero perceived delay.
   const [qrCodeUrl, setQrCodeUrl] = useState(() => {
     try {
       const cached = sessionStorage.getItem(QR_CACHE_KEY);
@@ -23,18 +25,44 @@ const Pay = () => {
     } catch { /* ignore */ }
     return '';
   });
+  const [qrSource, setQrSource] = useState(''); // 'master' | 'admin' | ''
   const navigate = useNavigate();
   const amount = window.localStorage.getItem('Amount');
   const isExpired = timeLeft === 0;
 
+  // Pick the right QR for this user. Order of preference:
+  //   1. Master's qrCodeUrl (if user belongs to a master who set one)
+  //   2. Admin's default barcodes/qr.jpg
   useEffect(() => {
     let cancelled = false;
     const fetchQrCode = async () => {
       try {
+        const auth = getAuth();
+        const me = auth.currentUser;
+        if (me) {
+          // Live-watch the user doc so the page reacts if admin reassigns
+          // them to a different master while they're on the page.
+          const meSnap = await getDoc(doc(db, 'users', me.uid));
+          const masterId = meSnap.exists() ? meSnap.data().assignedMasterId : null;
+          if (masterId) {
+            const mSnap = await getDoc(doc(db, 'users', masterId));
+            if (!cancelled && mSnap.exists() && mSnap.data().qrCodeUrl) {
+              setQrCodeUrl(mSnap.data().qrCodeUrl);
+              setQrSource('master');
+              try {
+                sessionStorage.setItem(QR_CACHE_KEY, mSnap.data().qrCodeUrl);
+                sessionStorage.setItem(QR_CACHE_TS_KEY, String(Date.now()));
+              } catch { /* ignore quota */ }
+              return;
+            }
+          }
+        }
+        // Fallback: global admin QR.
         const qrCodeRef = ref(storage, 'barcodes/qr.jpg');
         const url = await getDownloadURL(qrCodeRef);
         if (cancelled) return;
         setQrCodeUrl(url);
+        setQrSource('admin');
         try {
           sessionStorage.setItem(QR_CACHE_KEY, url);
           sessionStorage.setItem(QR_CACHE_TS_KEY, String(Date.now()));
@@ -96,6 +124,9 @@ const Pay = () => {
                 )}
               </div>
               <p className="mt-4 text-slate-300">Scan using any UPI app</p>
+              {qrSource === 'master' && (
+                <p className="mt-1 text-[11px] uppercase tracking-widest text-emerald-300/80">Your Agent's QR</p>
+              )}
             </div>
 
             <div className="rounded-[28px] border border-white/10 bg-white/5 p-6 shadow-xl">

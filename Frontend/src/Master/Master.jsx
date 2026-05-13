@@ -1,15 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   collection, doc, onSnapshot, query, where, addDoc, setDoc, serverTimestamp,
-  orderBy, limit, getDocs,
+  orderBy, limit, getDocs, updateDoc,
 } from 'firebase/firestore';
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
   Users, LayoutDashboard, Link as LinkIcon, CreditCard, DollarSign,
   LogOut, Menu, X, Copy, ChevronLeft, UserPlus, History, ArrowLeft,
+  QrCode,
 } from 'lucide-react';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
-import { db, auth } from '../firebase';
+import { db, auth, app } from '../firebase';
 import useAuthStore from '../store/authStore';
 import { formatCurrency } from '../utils/formatMoney';
 import { buildMasterReferralLink } from '../utils/master';
@@ -31,6 +33,7 @@ const SECTIONS = [
   { id: 'addPlayer', label: 'Add Player',        icon: UserPlus,        short: 'Add'     },
   { id: 'deposits',  label: 'Deposit Approvals', icon: CreditCard,      short: 'Deposit' },
   { id: 'withdraws', label: 'Withdrawal Approvals', icon: DollarSign,   short: 'Withdraw'},
+  { id: 'qr',        label: 'My Payment QR',     icon: QrCode,          short: 'QR'      },
   { id: 'activity',  label: 'My Activity',       icon: History,         short: 'Log'     },
   { id: 'link',      label: 'My Referral Link',  icon: LinkIcon,        short: 'Link'    },
 ];
@@ -455,6 +458,155 @@ function ActivityView({ masterUid }) {
   );
 }
 
+// Master's own UPI / payment QR. Whatever the master saves here is
+// what their players see on the Pay page — instead of the global
+// admin QR. If the master hasn't set one yet, players keep seeing
+// the admin QR (fallback in Pay.jsx).
+function PaymentQRView({ master }) {
+  const [uploading, setUploading] = useState(false);
+  const [urlInput, setUrlInput] = useState('');
+  const [savingUrl, setSavingUrl] = useState(false);
+
+  const currentUrl = master?.qrCodeUrl || '';
+
+  const onPickFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Sirf image file allowed hai.');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image 5 MB se chhoti honi chahiye.');
+      return;
+    }
+    setUploading(true);
+    try {
+      const storage = getStorage(app);
+      // .png keeps QR sharp; even if the user uploads JPEG, Storage
+      // doesn't care about the extension — it's just for cache keying.
+      const path = `masters/${master.uid}/qr.png`;
+      const sref = storageRef(storage, path);
+      await uploadBytes(sref, file, { contentType: file.type });
+      const downloadUrl = await getDownloadURL(sref);
+      await updateDoc(doc(db, 'users', master.uid), {
+        qrCodeUrl: downloadUrl,
+        qrUpdatedAt: serverTimestamp(),
+      });
+      toast.success('QR upload ho gaya. Tumhare players ko ab ye QR dikhega.');
+    } catch (err) {
+      console.error(err);
+      toast.error('Upload fail: ' + (err.message || err));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const saveUrl = async () => {
+    const url = urlInput.trim();
+    if (!url) return toast.error('URL paste karo.');
+    if (!/^https?:\/\//.test(url)) return toast.error('Sirf https://... wala URL chalega.');
+    setSavingUrl(true);
+    try {
+      await updateDoc(doc(db, 'users', master.uid), {
+        qrCodeUrl: url,
+        qrUpdatedAt: serverTimestamp(),
+      });
+      setUrlInput('');
+      toast.success('QR URL save ho gaya.');
+    } catch (err) {
+      toast.error('Save fail: ' + (err.message || err));
+    } finally {
+      setSavingUrl(false);
+    }
+  };
+
+  const clearQr = async () => {
+    if (!window.confirm('QR hata do? Tumhare players wapas admin ka default QR dekhne lagenge.')) return;
+    try {
+      await updateDoc(doc(db, 'users', master.uid), {
+        qrCodeUrl: null,
+        qrUpdatedAt: serverTimestamp(),
+      });
+      toast.success('QR clear kar diya.');
+    } catch (err) {
+      toast.error('Clear fail: ' + (err.message || err));
+    }
+  };
+
+  return (
+    <div className="p-4 md:p-6 space-y-4">
+      <h2 className="text-lg font-bold text-white">My Payment QR</h2>
+      <p className="text-xs text-gray-400">
+        Tumhare players ko Add Cash → Pay page pe ye QR dikhega. Jab tumhe paise mile, deposit approval me jaake confirm karna — tumhare master points us amount se kam ho jayenge aur player ke wallet me jaayenge.
+      </p>
+
+      {/* Current QR preview */}
+      <div className="rounded-2xl border border-white/5 bg-[#0d1228] p-4">
+        <p className="text-[11px] uppercase tracking-widest text-gray-400 mb-3">Current QR</p>
+        {currentUrl ? (
+          <div className="flex flex-col md:flex-row items-center gap-4">
+            <div className="rounded-2xl bg-white p-3 shadow-lg">
+              <img src={currentUrl} alt="Your QR" className="w-48 h-48 object-contain" />
+            </div>
+            <div className="flex-1 text-xs text-gray-400 break-all">
+              <p className="text-[10px] uppercase tracking-widest text-emerald-400 mb-1 font-bold">Active</p>
+              <p className="mb-2">Ye QR tumhare saare players ko Pay page pe dikh raha hai.</p>
+              <a href={currentUrl} target="_blank" rel="noreferrer" className="text-blue-300 underline">Open full image</a>
+              <button onClick={clearQr} className="block mt-3 text-rose-300 hover:text-rose-200 text-xs">Remove QR (revert to admin's default)</button>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-4 text-sm text-amber-200">
+            Abhi koi QR set nahi hai. Niche se upload karo ya URL paste karo. Jab tak set nahi karoge, tumhare players ko admin ka default QR dikhega.
+          </div>
+        )}
+      </div>
+
+      {/* Upload via file picker */}
+      <div className="rounded-2xl border border-white/5 bg-[#0d1228] p-4 space-y-3">
+        <p className="text-[11px] uppercase tracking-widest text-gray-400 font-bold">Upload new QR (image)</p>
+        <p className="text-xs text-gray-500">
+          PNG / JPG. Apne UPI app me "QR" share/save karke yahan upload kar do.
+        </p>
+        <label className="block">
+          <input type="file" accept="image/*" disabled={uploading} onChange={onPickFile} className="hidden" />
+          <span className={`block text-center w-full bg-yellow-400 hover:bg-yellow-300 text-black font-black rounded-xl py-3 cursor-pointer ${uploading ? 'opacity-40 cursor-not-allowed' : ''}`}>
+            {uploading ? 'Uploading…' : '📁 Choose image'}
+          </span>
+        </label>
+      </div>
+
+      {/* Or paste a URL */}
+      <div className="rounded-2xl border border-white/5 bg-[#0d1228] p-4 space-y-3">
+        <p className="text-[11px] uppercase tracking-widest text-gray-400 font-bold">Or paste image URL</p>
+        <p className="text-xs text-gray-500">
+          Agar QR pehle se kahin hosted hai (drive, imgur, etc.) to seedha URL daal do.
+        </p>
+        <input
+          type="url"
+          value={urlInput}
+          onChange={(e) => setUrlInput(e.target.value)}
+          placeholder="https://example.com/your-qr.png"
+          className="w-full bg-[#070b1e] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white"
+        />
+        <button
+          onClick={saveUrl}
+          disabled={savingUrl || !urlInput.trim()}
+          className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 rounded-xl py-3 font-bold text-white"
+        >
+          {savingUrl ? 'Saving…' : 'Save URL'}
+        </button>
+      </div>
+
+      <p className="text-[11px] text-gray-500 px-1">
+        Tip: phone me UPI app kholo → "My QR" → screenshot le ke yahan upload kar do.
+      </p>
+    </div>
+  );
+}
+
 function LinkView({ master }) {
   const link = master.masterCode ? buildMasterReferralLink(master.masterCode) : '';
 
@@ -585,6 +737,7 @@ export default function MasterDashboard() {
       case 'players':   return <PlayersListView players={players} onOpenPlayer={(p) => setOpenPlayer(p)} />;
       case 'addPlayer': return <AddPlayerView masterUid={user?.uid} onCreated={() => switchTab('players')} />;
       case 'activity':  return <ActivityView masterUid={user?.uid} />;
+      case 'qr':        return <PaymentQRView master={master} />;
       case 'deposits':  return <Placeholder title="Deposit Approvals" />;
       case 'withdraws': return <Placeholder title="Withdrawal Approvals" />;
       case 'link':      return <LinkView master={master} />;

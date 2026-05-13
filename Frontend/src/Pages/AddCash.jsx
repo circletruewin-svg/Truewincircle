@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { useState, useEffect, useMemo } from 'react';
 import { toast } from 'react-toastify';
 import { getAuth } from "firebase/auth";
-import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
+import { collection, query, where, onSnapshot, limit, doc, getDoc } from "firebase/firestore";
 import { getStorage, ref, getDownloadURL } from 'firebase/storage';
 import { db, app } from "../firebase";
 import { ArrowDownCircle, CheckCircle, Clock, Loader2, XCircle } from 'lucide-react';
@@ -39,17 +39,33 @@ export function AddCash() {
 
   // Pre-fetch QR code URL while the user is filling in the amount, so
   // /pay can render the image immediately instead of showing a loading
-  // placeholder on arrival.
+  // placeholder on arrival. Picks the master's QR (if user has one
+  // assigned) before falling back to admin's global one.
   useEffect(() => {
+    if (!user?.uid) return undefined;
     let cancelled = false;
     const prefetch = async () => {
       try {
+        // Always try the user's master first — it's the most up-to-date.
+        const meSnap = await getDoc(doc(db, 'users', user.uid));
+        const masterId = meSnap.exists() ? meSnap.data().assignedMasterId : null;
+        if (masterId) {
+          const mSnap = await getDoc(doc(db, 'users', masterId));
+          if (mSnap.exists() && mSnap.data().qrCodeUrl) {
+            if (cancelled) return;
+            const url = mSnap.data().qrCodeUrl;
+            sessionStorage.setItem(QR_CACHE_KEY, url);
+            sessionStorage.setItem(QR_CACHE_TS_KEY, String(Date.now()));
+            const img = new Image(); img.src = url;
+            return;
+          }
+        }
+
+        // No master QR — fall back to cached admin or fetch fresh.
         const cachedUrl = sessionStorage.getItem(QR_CACHE_KEY);
         const cachedAt = Number(sessionStorage.getItem(QR_CACHE_TS_KEY) || 0);
         if (cachedUrl && Date.now() - cachedAt < QR_CACHE_TTL_MS) {
-          // Warm the browser image cache so /pay renders instantly.
-          const img = new Image();
-          img.src = cachedUrl;
+          const img = new Image(); img.src = cachedUrl;
           return;
         }
         const storage = getStorage(app);
@@ -57,15 +73,14 @@ export function AddCash() {
         if (cancelled) return;
         sessionStorage.setItem(QR_CACHE_KEY, url);
         sessionStorage.setItem(QR_CACHE_TS_KEY, String(Date.now()));
-        const img = new Image();
-        img.src = url;
+        const img = new Image(); img.src = url;
       } catch {
         /* network or rules issue — Pay.jsx will fetch on its own */
       }
     };
     prefetch();
     return () => { cancelled = true; };
-  }, []);
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!user) return;
