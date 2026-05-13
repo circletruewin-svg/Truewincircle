@@ -202,9 +202,14 @@ const AdminDashboard = () => {
 
     // Admin queues only show DIRECT users (no assignedMasterId).
     // Master-owned players are handled exclusively by their master.
+    // Treat null / undefined / empty-string assignedMasterId as
+    // "direct user" so old user docs (created before the master
+    // feature existed) still show up where admin expects them.
     const isDirectUser = (userId) => {
       const u = truewinUserMap[userId];
-      return !!u && !u.assignedMasterId;
+      if (!u) return false; // unknown user — hide until snapshot resolves
+      const m = u.assignedMasterId;
+      return m == null || m === '';
     };
 
     const truewinPayments = allPayments.filter(p => isDirectUser(p.userId));

@@ -995,10 +995,21 @@ function DepositApprovalsView({ master, players }) {
                     }`}>{tu.status || 'pending'}</span>
                   </div>
                 </div>
-                {tu.screenshot && (
-                  <a href={tu.screenshot} target="_blank" rel="noreferrer" className="block mt-2 text-[11px] text-blue-300 underline">View screenshot</a>
+                {tu.paymentProof && (
+                  <div className="mt-2">
+                    <p className="text-[10px] uppercase tracking-widest text-gray-400 mb-1">Payment screenshot</p>
+                    <a href={tu.paymentProof} target="_blank" rel="noreferrer" className="block">
+                      <img
+                        src={tu.paymentProof}
+                        alt="Payment proof"
+                        className="rounded-lg max-h-48 w-full object-contain bg-black/40 border border-white/10"
+                      />
+                      <span className="block mt-1 text-[11px] text-blue-300 underline">Open full size</span>
+                    </a>
+                  </div>
                 )}
                 {tu.utr && <p className="text-[11px] text-gray-400 mt-1">UTR: <span className="font-mono">{tu.utr}</span></p>}
+                {tu.message && <p className="text-[11px] text-gray-400 mt-1">Note: {tu.message}</p>}
                 {tu.adminComment && <p className="text-[11px] text-rose-300 mt-1">Reject reason: {tu.adminComment}</p>}
 
                 {isPending && (
