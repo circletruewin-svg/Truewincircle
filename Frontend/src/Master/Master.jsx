@@ -16,6 +16,7 @@ import useAuthStore from '../store/authStore';
 import { formatCurrency } from '../utils/formatMoney';
 import { buildMasterReferralLink } from '../utils/master';
 import { getUserFunds } from '../utils/userFunds';
+import { playChime } from '../utils/gameSfx';
 
 // ─────────────────────────────────────────────────────────────────
 // Phase 1 master panel — now with:
@@ -315,6 +316,57 @@ function AdjustWalletModal({ master, player, onClose }) {
   );
 }
 
+// Map a bet doc from one of the game-history collections to a human-
+// readable {title, sub, status} so the player drill-down can show
+// "GALI · Number 04 · Pending" instead of the bare collection name.
+function describeBet(b) {
+  switch (b.src) {
+    case 'harufBets': {
+      const market = (b.marketName || 'Market').toUpperCase();
+      const num = b.selectedNumber != null ? String(b.selectedNumber).padStart(2, '0') : '?';
+      return {
+        title: `${market} · ${num}`,
+        sub: 'Haruf',
+        status: b.status || 'pending',
+      };
+    }
+    case 'sportsBets': {
+      const teamA = b.teamASnapshot || '';
+      const teamB = b.teamBSnapshot || '';
+      return {
+        title: b.selectionLabel || `${teamA} vs ${teamB}`,
+        sub: `Cricket · ${(b.betType || '').replace('Batsman', ' Batsman')}`,
+        status: b.status || 'pending',
+      };
+    }
+    case 'aviatorBets':
+      return {
+        title: b.won === true
+          ? `Cashed @ ${Number(b.cashoutMultiplier || 0).toFixed(2)}x`
+          : `Crashed @ ${Number(b.crashPoint || 0).toFixed(2)}x`,
+        sub: 'Aviator',
+        status: b.won === true ? 'won' : 'lost',
+      };
+    case 'colorBets':       return { title: `Color · ${b.selection || ''}`, sub: 'Color',     status: b.won === true ? 'won' : b.won === false ? 'lost' : 'pending' };
+    case 'diceBets':        return { title: `Dice · ${b.selection || ''}`,  sub: 'Dice',      status: b.won === true ? 'won' : b.won === false ? 'lost' : 'pending' };
+    case 'lucky7History':   return { title: `Lucky 7 · ${b.bet || ''}`,     sub: 'Lucky 7',   status: b.won === true ? 'won' : 'lost' };
+    case 'rouletteHistory': return { title: `Roulette · ${b.label || b.number || ''}`, sub: 'Roulette', status: b.won === true ? 'won' : 'lost' };
+    default:
+      return {
+        title: b.src.replace(/History|Bets/g, ''),
+        sub: '',
+        status: b.status || (b.won === true ? 'won' : b.won === false ? 'lost' : 'pending'),
+      };
+  }
+}
+
+const BET_STATUS_BADGE = {
+  pending:  'bg-amber-500/20 text-amber-300',
+  won:      'bg-emerald-500/20 text-emerald-300',
+  lost:     'bg-rose-500/20 text-rose-300',
+  refunded: 'bg-zinc-500/20 text-zinc-200',
+};
+
 // Player drill-down — opened from My Players. Shows balance + recent
 // activity across the games + payments. All reads are scoped to that
 // player's userId so Firestore rules pass (master is allowed to read
@@ -410,19 +462,24 @@ function PlayerDetailView({ player, master, onBack }) {
           <p className="p-4 text-xs text-gray-500 text-center">No bets yet.</p>
         ) : (
           <ul className="divide-y divide-white/5">
-            {bets.slice(0, 15).map((b) => (
-              <li key={`${b.src}_${b.id}`} className="px-4 py-2 text-xs flex items-center justify-between">
-                <div>
-                  <p className="text-white font-semibold capitalize">{b.src.replace('History', '').replace('Bets', '')}</p>
-                  <p className="text-[10px] text-gray-500">{fmtTime(b.createdAt || b.timestamp)}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-gray-300">₹{Number(b.betAmount || 0).toFixed(0)}</p>
-                  {b.won === true && <p className="text-emerald-300 text-[10px] font-bold">+₹{Number(b.winAmount || 0).toFixed(0)}</p>}
-                  {b.won === false && <p className="text-rose-300 text-[10px]">lost</p>}
-                </div>
-              </li>
-            ))}
+            {bets.slice(0, 15).map((b) => {
+              const d = describeBet(b);
+              return (
+                <li key={`${b.src}_${b.id}`} className="px-4 py-2 text-xs flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-white font-semibold truncate">{d.title}</p>
+                    <p className="text-[10px] text-gray-500">{d.sub} · {fmtTime(b.createdAt || b.timestamp)}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-gray-300">₹{Number(b.betAmount || 0).toFixed(0)}</p>
+                    <span className={`inline-block text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full mt-0.5 ${BET_STATUS_BADGE[d.status] || BET_STATUS_BADGE.pending}`}>
+                      {d.status}
+                      {d.status === 'won' && b.winAmount > 0 && ` · +₹${Number(b.winAmount).toFixed(0)}`}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
@@ -1243,6 +1300,54 @@ export default function MasterDashboard() {
       setPlayers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     }, () => setPlayers([]));
   }, [user?.uid]);
+
+  // ── Notification sound + toast on new pending deposits/withdrawals ──
+  // Mirrors the admin's notification UX so a master also gets pinged
+  // when one of their players submits something. Only fires for docs
+  // whose createdAt is AFTER the master opened the panel — we don't
+  // want a barrage of old pendings on every refresh.
+  useEffect(() => {
+    if (!user?.uid || players.length === 0) return undefined;
+    const playerIds = players.map((p) => p.id).slice(0, 30);
+    if (!playerIds.length) return undefined;
+
+    const subscribedAt = Date.now();
+    const isAfter = (createdAt) => {
+      let t;
+      if (createdAt?.toDate) t = createdAt.toDate().getTime();
+      else if (typeof createdAt === 'string') t = new Date(createdAt).getTime();
+      else if (createdAt instanceof Date) t = createdAt.getTime();
+      return Number.isFinite(t) && t > subscribedAt - 5000;
+    };
+
+    const tu = query(collection(db, 'top-ups'), where('userId', 'in', playerIds));
+    const unsubTU = onSnapshot(tu, (snap) => {
+      const fresh = snap.docChanges().filter((c) => {
+        if (c.type !== 'added') return false;
+        const d = c.doc.data();
+        return d.status === 'pending' && isAfter(d.createdAt);
+      });
+      if (fresh.length > 0) {
+        try { playChime(); } catch {}
+        toast.info(`💰 ${fresh.length} naya deposit approval pending`);
+      }
+    }, () => {});
+
+    const wd = query(collection(db, 'withdrawals'), where('userId', 'in', playerIds));
+    const unsubWD = onSnapshot(wd, (snap) => {
+      const fresh = snap.docChanges().filter((c) => {
+        if (c.type !== 'added') return false;
+        const d = c.doc.data();
+        return d.status === 'pending' && isAfter(d.createdAt);
+      });
+      if (fresh.length > 0) {
+        try { playChime(); } catch {}
+        toast.info(`🏦 ${fresh.length} naya withdrawal pending`);
+      }
+    }, () => {});
+
+    return () => { unsubTU(); unsubWD(); };
+  }, [user?.uid, players.length]);
 
   const handleLogout = async () => {
     try {
