@@ -673,6 +673,48 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
   // This file used to host a "Make Master" shortcut here; it was
   // removed so admin only has one way to mint masters (cleaner audit).
 
+  // Live list of active masters, used by the "Assign to Master" picker.
+  const [mastersList, setMastersList] = useState([]);
+  useEffect(() => {
+    const q = query(collection(db, 'users'), where('role', '==', 'master'));
+    return onSnapshot(q, (snap) => {
+      setMastersList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    }, () => setMastersList([]));
+  }, []);
+
+  const [assignMasterFor, setAssignMasterFor] = useState(null); // user object or null
+
+  // Move an existing user under a master (or clear the assignment).
+  // Used when a user signed up directly but admin wants their future
+  // deposits / withdrawals to land in a master's queue.
+  const assignUserToMaster = async (userObj, masterId) => {
+    try {
+      await updateDoc(doc(db, 'users', userObj.id), {
+        assignedMasterId: masterId || null,
+      });
+      const m = mastersList.find((x) => x.id === masterId);
+      if (masterId && m) {
+        // Note this in the master ledger as an audit trail (no balance change).
+        try {
+          await addDoc(collection(db, 'masterLedger'), {
+            type: 'master_to_player',
+            masterId,
+            masterName: m.name || null,
+            playerId: userObj.id,
+            amount: 0,
+            note: `Admin assigned existing user ${userObj.name || ''} to this master`,
+            createdAt: serverTimestamp(),
+          });
+        } catch {}
+      }
+      setUsers((prev) => prev.map((u) => (u.id === userObj.id ? { ...u, assignedMasterId: masterId || null } : u)));
+      setAssignMasterFor(null);
+    } catch (err) {
+      console.error('Assign-to-master failed:', err);
+      setError('Could not move user. Check console.');
+    }
+  };
+
   // Build a per-user "latest activity" timestamp from the user doc's
   // lastActiveAt PLUS their most recent top-up / withdrawal createdAt.
   // This way users whose activity predates the lastActiveAt field
@@ -1176,6 +1218,17 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
                           Master · {user.masterCode || '—'}
                         </span>
                       )}
+                      {user.role !== 'admin' && user.role !== 'master' && (
+                        <button
+                          onClick={() => setAssignMasterFor(user)}
+                          className={`font-bold py-1 px-3 rounded text-xs ${user.assignedMasterId ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-700'} hover:opacity-80`}
+                          title="Assign this user to a master so their approvals route to them"
+                        >
+                          {user.assignedMasterId
+                            ? `Under: ${(mastersList.find((m) => m.id === user.assignedMasterId)?.name || '?').slice(0, 10)}`
+                            : 'No Master'}
+                        </button>
+                      )}
                       <button
                         onClick={() => toggleSuspend(user.id, !isSuspended)}
                         className={`${
@@ -1357,6 +1410,58 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
                 onClick={() => setReferrerModal({ open: false, target: null })}
                 className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold rounded-lg text-sm"
               >Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {assignMasterFor && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-xl shadow-xl">
+            <div className="border-b p-4 flex justify-between items-center">
+              <h3 className="font-bold text-lg">Assign to Master</h3>
+              <button onClick={() => setAssignMasterFor(null)} className="text-gray-500 text-2xl">×</button>
+            </div>
+            <div className="p-4 space-y-3 text-sm">
+              <p>
+                Move <b>{assignMasterFor.name || assignMasterFor.phoneNumber || assignMasterFor.id}</b> under
+                a master. Future deposits, withdrawals, screenshots — sab us master ke panel me jaayenge,
+                admin me nahi.
+              </p>
+              {assignMasterFor.assignedMasterId && (
+                <p className="text-xs text-gray-500">
+                  Currently under: <b>{mastersList.find((m) => m.id === assignMasterFor.assignedMasterId)?.name || '?'}</b>
+                </p>
+              )}
+              <div className="max-h-72 overflow-y-auto border rounded-lg divide-y">
+                {mastersList.length === 0 ? (
+                  <p className="p-3 text-xs text-gray-500 text-center">No masters yet. Create one in Master Management.</p>
+                ) : (
+                  mastersList.map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => assignUserToMaster(assignMasterFor, m.id)}
+                      className={`w-full text-left p-3 hover:bg-blue-50 text-sm ${
+                        assignMasterFor.assignedMasterId === m.id ? 'bg-blue-50' : ''
+                      }`}
+                    >
+                      <div className="font-semibold">{m.name || '—'}</div>
+                      <div className="text-xs text-gray-500">{m.phoneNumber || ''} · {m.masterCode || '—'}</div>
+                    </button>
+                  ))
+                )}
+              </div>
+              {assignMasterFor.assignedMasterId && (
+                <button
+                  onClick={() => assignUserToMaster(assignMasterFor, null)}
+                  className="w-full bg-gray-200 hover:bg-gray-300 rounded-lg py-2 text-sm"
+                >
+                  ✗ Remove from master (move back to admin)
+                </button>
+              )}
+            </div>
+            <div className="border-t p-4 flex justify-end">
+              <button onClick={() => setAssignMasterFor(null)} className="px-4 py-2 bg-gray-200 rounded">Cancel</button>
             </div>
           </div>
         </div>

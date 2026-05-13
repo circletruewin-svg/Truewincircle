@@ -434,7 +434,16 @@ const Withdraw = () => {
                       parsedAmount < 200 ||
                       parsedAmount > winningMoney;
                     const bankInvalid = method === 'bank' && accountsMismatch;
+                    // Surface why the button is disabled so users don't
+                    // sit confused poking a grey button.
+                    let hint = '';
+                    if (!amount) hint = 'Pehle amount enter karo.';
+                    else if (isNaN(parsedAmount) || parsedAmount <= 0) hint = 'Valid amount enter karo.';
+                    else if (parsedAmount < 200) hint = 'Minimum withdrawal ₹200 hai.';
+                    else if (parsedAmount > winningMoney) hint = `Sirf ${winningMoney.toFixed(2)} winning money available — game khelo aur jeeto pehle.`;
+                    else if (bankInvalid) hint = 'Account numbers match nahi kar rahe.';
                     return (
+                      <>
                       <button
                         type="submit"
                         disabled={submitLoading || amountInvalid || bankInvalid}
@@ -442,6 +451,10 @@ const Withdraw = () => {
                       >
                         {submitLoading ? 'Processing...' : 'Request Withdrawal'}
                       </button>
+                      {hint && (
+                        <p className="text-center text-xs text-yellow-300 mt-2">{hint}</p>
+                      )}
+                      </>
                     );
                   })()}
                 </form>

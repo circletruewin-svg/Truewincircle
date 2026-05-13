@@ -242,15 +242,20 @@ export default function Aviator() {
 
   const multColor = phase === "crashed" ? "#ef4444" : phase === "flying" ? "#00ff88" : "#facc15";
 
-  // Slot card — Bet 1 / Bet 2
-  const SlotCard = ({ slot }) => {
+  // Slot card — Bet 1 / Bet 2. Defined as a plain function (NOT a
+  // React component) so that the multiplier ticking 20 times/sec
+  // during flight doesn't unmount + remount the whole subtree on
+  // every render. Component-identity defined inside the parent meant
+  // the CASH OUT button DOM was being destroyed before mobile
+  // taps could register — clicks were getting lost.
+  const renderSlot = (slot) => {
     const b = bets[slot];
     const live = phase === "flying";
     const liveWin = b.placed && !b.cashedOut && live
       ? formatCurrency(parseFloat((b.stake * multiplier).toFixed(2))) : null;
 
     return (
-      <div className="bg-[#12152b] rounded-2xl p-3 border border-white/5">
+      <div key={`slot-${slot}`} className="bg-[#12152b] rounded-2xl p-3 border border-white/5">
         <p className="text-[10px] uppercase tracking-widest text-gray-400 mb-2">Bet {slot + 1}</p>
 
         <div className="flex gap-1.5 mb-2">
@@ -461,8 +466,8 @@ export default function Aviator() {
 
         {/* DUAL BET PANEL */}
         <div className="grid grid-cols-2 gap-2.5">
-          <SlotCard slot={0} />
-          <SlotCard slot={1} />
+          {renderSlot(0)}
+          {renderSlot(1)}
         </div>
 
         <div className="mt-3 text-center text-[10px] uppercase tracking-[0.25em] text-gray-600">
