@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   collection, doc, onSnapshot, query, where, addDoc, setDoc, serverTimestamp,
-  orderBy, limit, getDocs, updateDoc,
+  orderBy, limit, getDocs, updateDoc, runTransaction,
 } from 'firebase/firestore';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
@@ -160,11 +160,166 @@ function PlayersListView({ players, onOpenPlayer }) {
   );
 }
 
+// Helper: atomic transfer between master and player. Used by the
+// Adjust Wallet modal AND the deposit approval flow. Direction is
+// "credit_player" (master → player) or "debit_player" (player → master).
+async function transferBetweenMasterAndPlayer({ masterUid, playerUid, amount, direction, note }) {
+  if (!(amount > 0)) throw new Error('Amount > 0 zaroori hai.');
+  await runTransaction(db, async (tx) => {
+    const masterRef = doc(db, 'users', masterUid);
+    const playerRef = doc(db, 'users', playerUid);
+    const ms = await tx.get(masterRef);
+    const ps = await tx.get(playerRef);
+    if (!ms.exists() || !ps.exists()) throw new Error('Master ya player doc nahi mila.');
+
+    const mBalance = Number(ms.data().balance ?? ms.data().walletBalance ?? 0);
+    const pBalance = Number(ps.data().balance ?? ps.data().walletBalance ?? 0);
+    const pWinning = Number(ps.data().winningMoney ?? 0);
+
+    if (direction === 'credit_player') {
+      if (mBalance < amount) throw new Error(`Master ke paas sirf ₹${mBalance.toFixed(2)} hai.`);
+      const newM = Math.round((mBalance - amount) * 100) / 100;
+      const newP = Math.round((pBalance + amount) * 100) / 100;
+      tx.update(masterRef, { balance: newM, walletBalance: newM });
+      tx.update(playerRef, { balance: newP, walletBalance: newP });
+    } else {
+      // debit_player: pull from balance first, then winningMoney.
+      const playerTotal = pBalance + pWinning;
+      if (playerTotal < amount) throw new Error(`Player ke paas sirf ₹${playerTotal.toFixed(2)} hai.`);
+      let fromBalance = Math.min(pBalance, amount);
+      let fromWinning = amount - fromBalance;
+      const newM = Math.round((mBalance + amount) * 100) / 100;
+      const newPBalance = Math.round((pBalance - fromBalance) * 100) / 100;
+      const newPWinning = Math.round((pWinning - fromWinning) * 100) / 100;
+      tx.update(masterRef, { balance: newM, walletBalance: newM });
+      tx.update(playerRef, { balance: newPBalance, walletBalance: newPBalance, winningMoney: newPWinning });
+    }
+  });
+
+  // Audit row outside the transaction (best-effort; not critical to
+  // the balance change).
+  try {
+    await addDoc(collection(db, 'masterLedger'), {
+      type: direction === 'credit_player' ? 'master_to_player' : 'player_to_master',
+      masterId: masterUid,
+      playerId: playerUid,
+      amount,
+      note: note || null,
+      createdAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn('masterLedger insert failed:', err);
+  }
+}
+
+function AdjustWalletModal({ master, player, onClose }) {
+  const [direction, setDirection] = useState('credit_player'); // credit_player | debit_player
+  const [amount, setAmount] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    const value = Number(amount);
+    if (!value || value <= 0) return toast.error('Amount enter karo.');
+    setBusy(true);
+    try {
+      await transferBetweenMasterAndPlayer({
+        masterUid: master.uid,
+        playerUid: player.id,
+        amount: value,
+        direction,
+        note: note.trim() || null,
+      });
+      toast.success(`${direction === 'credit_player' ? 'Credit' : 'Debit'} of ₹${value} done.`);
+      onClose();
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || 'Operation failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const masterBalance = Number(master.balance ?? master.walletBalance ?? 0);
+  const playerBalance = Number(player.balance ?? player.walletBalance ?? 0);
+  const playerWinning = Number(player.winningMoney ?? 0);
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-end md:items-center justify-center p-4">
+      <div className="w-full max-w-md bg-[#0d1228] border border-white/10 rounded-2xl text-white">
+        <div className="border-b border-white/5 p-4 flex justify-between items-center">
+          <h3 className="font-bold text-lg">Adjust Wallet</h3>
+          <button onClick={onClose} className="text-gray-400 text-2xl">×</button>
+        </div>
+        <div className="p-4 space-y-3">
+          <p className="text-sm text-gray-300">
+            <b>{player.name || 'Player'}</b> · current balance:{' '}
+            <span className="text-emerald-300 font-bold">{formatCurrency(playerBalance)}</span>
+            {playerWinning > 0 && <> + winning <span className="text-yellow-300">{formatCurrency(playerWinning)}</span></>}
+          </p>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setDirection('credit_player')}
+              className={`py-3 rounded-xl font-bold text-sm ${direction === 'credit_player' ? 'bg-emerald-600 text-white' : 'bg-white/5 text-gray-300'}`}
+            >+ Credit Player</button>
+            <button
+              onClick={() => setDirection('debit_player')}
+              className={`py-3 rounded-xl font-bold text-sm ${direction === 'debit_player' ? 'bg-rose-600 text-white' : 'bg-white/5 text-gray-300'}`}
+            >− Debit Player</button>
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Amount (₹)</label>
+            <input
+              type="number"
+              min="1"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="w-full bg-[#070b1e] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white"
+              placeholder="0"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Reason / note (optional)</label>
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Cash deposit, refund, etc."
+              className="w-full bg-[#070b1e] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white"
+            />
+          </div>
+
+          <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-amber-200">
+            {direction === 'credit_player' ? (
+              <>Tumhare points <b>{formatCurrency(masterBalance)}</b> me se <b>₹{Number(amount) || 0}</b> kat ke player ke wallet me jaayenge.</>
+            ) : (
+              <>Player ke wallet se <b>₹{Number(amount) || 0}</b> kat ke tumhare points <b>{formatCurrency(masterBalance)}</b> me wapas aayenge.</>
+            )}
+          </div>
+        </div>
+        <div className="border-t border-white/5 p-4 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 bg-white/10 text-white rounded">Cancel</button>
+          <button
+            onClick={submit}
+            disabled={busy || !amount}
+            className={`px-4 py-2 text-white font-bold rounded disabled:opacity-40 ${direction === 'credit_player' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-rose-600 hover:bg-rose-500'}`}
+          >
+            {busy ? 'Saving…' : `${direction === 'credit_player' ? '+ Credit' : '− Debit'} ₹${amount || 0}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Player drill-down — opened from My Players. Shows balance + recent
 // activity across the games + payments. All reads are scoped to that
 // player's userId so Firestore rules pass (master is allowed to read
 // their own players).
-function PlayerDetailView({ player, onBack }) {
+function PlayerDetailView({ player, master, onBack }) {
   const [bets, setBets] = useState([]);
   const [deposits, setDeposits] = useState([]);
   const [withdrawals, setWithdrawals] = useState([]);
@@ -212,6 +367,8 @@ function PlayerDetailView({ player, onBack }) {
   const balance = Number(player.balance ?? player.walletBalance ?? 0);
   const winning = Number(player.winningMoney ?? 0);
 
+  const [adjustOpen, setAdjustOpen] = useState(false);
+
   return (
     <div className="p-4 md:p-6 space-y-3">
       <button onClick={onBack} className="inline-flex items-center gap-1 text-sm bg-white/10 hover:bg-white/15 rounded-full px-3 py-1.5">
@@ -219,8 +376,18 @@ function PlayerDetailView({ player, onBack }) {
       </button>
 
       <div className="rounded-2xl bg-[#0d1228] border border-white/5 p-4">
-        <h2 className="text-lg font-bold text-white">{player.name || '—'}</h2>
-        <p className="text-xs text-gray-400">{player.phoneNumber || (player.isOffline ? 'Offline player' : '—')}</p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-white">{player.name || '—'}</h2>
+            <p className="text-xs text-gray-400">{player.phoneNumber || (player.isOffline ? 'Offline player' : '—')}</p>
+          </div>
+          <button
+            onClick={() => setAdjustOpen(true)}
+            className="bg-yellow-400 hover:bg-yellow-300 text-black font-black rounded-xl px-4 py-2 text-sm"
+          >
+            Adjust Wallet
+          </button>
+        </div>
         <div className="grid grid-cols-2 gap-3 mt-3">
           <div className="rounded-xl bg-emerald-900/30 border border-emerald-700/30 p-3">
             <p className="text-[10px] uppercase tracking-widest text-emerald-300">Balance</p>
@@ -232,6 +399,10 @@ function PlayerDetailView({ player, onBack }) {
           </div>
         </div>
       </div>
+
+      {adjustOpen && master?.uid && (
+        <AdjustWalletModal master={master} player={player} onClose={() => setAdjustOpen(false)} />
+      )}
 
       <div className="rounded-2xl bg-[#0d1228] border border-white/5">
         <p className="px-4 py-2.5 border-b border-white/5 text-[11px] uppercase tracking-widest text-gray-400 font-bold">Recent bets</p>
@@ -684,7 +855,357 @@ function Placeholder({ title }) {
   return (
     <div className="p-6 text-sm text-gray-400">
       <h2 className="text-lg font-bold text-white mb-2">{title}</h2>
-      Phase 2 me ye section live ho jayega. Abhi sirf foundation lock kar raha hu.
+      Coming soon.
+    </div>
+  );
+}
+
+// Build a Map of playerId → player doc so the approval rows can show
+// name + phone without a per-row Firestore round-trip.
+function buildPlayerMap(players) {
+  const map = new Map();
+  for (const p of players) map.set(p.id, p);
+  return map;
+}
+
+const fmtTimeStamp = (ts) => {
+  const d = ts?.toDate?.();
+  return d ? d.toLocaleString('en-IN') : '—';
+};
+
+// ─────────────────────────────────────────────────────────────────
+// Deposit Approvals — pending top-ups from this master's players.
+// Approving: atomic credit_player transfer; reject: status change only.
+// ─────────────────────────────────────────────────────────────────
+function DepositApprovalsView({ master, players }) {
+  const [items, setItems] = useState([]);
+  const [filter, setFilter] = useState('pending'); // pending | all
+  const [busyId, setBusyId] = useState(null);
+  const playerMap = useMemo(() => buildPlayerMap(players), [players]);
+  const playerIds = useMemo(() => players.map((p) => p.id), [players]);
+  const masterBalance = Number(master?.balance ?? master?.walletBalance ?? 0);
+
+  // Firestore `in` queries max out at 30. If a master has more
+  // players we chunk; for now we cap the visible feed at the first
+  // 30 (most masters won't hit this).
+  useEffect(() => {
+    if (!playerIds.length) { setItems([]); return undefined; }
+    const ids = playerIds.slice(0, 30);
+    const q = query(collection(db, 'top-ups'), where('userId', 'in', ids));
+    return onSnapshot(q, (snap) => {
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      rows.sort((a, b) => {
+        const ta = a.createdAt?.toDate?.()?.getTime() || 0;
+        const tb = b.createdAt?.toDate?.()?.getTime() || 0;
+        return tb - ta;
+      });
+      setItems(rows);
+    }, () => setItems([]));
+  }, [playerIds.join(',')]);
+
+  const visible = useMemo(() => (
+    filter === 'pending' ? items.filter((i) => i.status === 'pending') : items
+  ), [items, filter]);
+
+  const approve = async (tu) => {
+    const player = playerMap.get(tu.userId);
+    if (!player) return toast.error('Player record nahi mila.');
+    const amount = Number(tu.amount || 0);
+    if (!(amount > 0)) return toast.error('Amount invalid.');
+    if (amount > masterBalance) {
+      return toast.error(`Tumhare paas sirf ${formatCurrency(masterBalance)} hain — admin se top-up lo.`);
+    }
+    if (!window.confirm(`Approve ${formatCurrency(amount)} deposit for ${player.name || 'player'}?\nTumhare points ${formatCurrency(masterBalance)} se ${formatCurrency(masterBalance - amount)} ho jayenge.`)) return;
+
+    setBusyId(tu.id);
+    try {
+      await transferBetweenMasterAndPlayer({
+        masterUid: master.uid,
+        playerUid: tu.userId,
+        amount,
+        direction: 'credit_player',
+        note: `Deposit approval · top-up ${tu.id}`,
+      });
+      await updateDoc(doc(db, 'top-ups', tu.id), { status: 'approved' });
+      toast.success(`Approved · ${formatCurrency(amount)} credited.`);
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || 'Approve fail.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const reject = async (tu) => {
+    const reason = window.prompt('Reject reason (optional):', '');
+    if (reason === null) return; // user cancelled
+    setBusyId(tu.id);
+    try {
+      const payload = { status: 'rejected' };
+      if (reason.trim()) payload.adminComment = reason.trim();
+      await updateDoc(doc(db, 'top-ups', tu.id), payload);
+      toast.info('Rejected.');
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || 'Reject fail.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="p-4 md:p-6 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-white">Deposit Approvals</h2>
+        <div className="text-xs text-gray-400">My points: <span className="text-yellow-300 font-bold">{formatCurrency(masterBalance)}</span></div>
+      </div>
+      <p className="text-xs text-gray-400">
+        Tumhare players ne paise transfer kar diye (UPI etc), screenshot upload kiya — yahan se approve karoge to <b>tumhare points kat ke unke wallet me jaayenge</b>.
+      </p>
+
+      <div className="flex gap-2">
+        <button onClick={() => setFilter('pending')} className={`text-xs px-3 py-1.5 rounded-full font-bold ${filter === 'pending' ? 'bg-yellow-400 text-black' : 'bg-white/10 text-gray-300'}`}>Pending</button>
+        <button onClick={() => setFilter('all')}     className={`text-xs px-3 py-1.5 rounded-full font-bold ${filter === 'all' ? 'bg-yellow-400 text-black' : 'bg-white/10 text-gray-300'}`}>All</button>
+      </div>
+
+      {visible.length === 0 ? (
+        <div className="rounded-2xl border border-white/10 p-6 text-center text-sm text-gray-400 bg-[#0d1228]">
+          {filter === 'pending' ? 'Koi pending deposit nahi.' : 'Abhi tak koi deposit request nahi.'}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {visible.map((tu) => {
+            const p = playerMap.get(tu.userId) || {};
+            const amount = Number(tu.amount || 0);
+            const isPending = tu.status === 'pending';
+            return (
+              <div key={tu.id} className="rounded-2xl border border-white/5 bg-[#0d1228] p-3">
+                <div className="flex justify-between items-start gap-3">
+                  <div>
+                    <p className="font-bold text-white text-sm">{p.name || '—'}</p>
+                    <p className="text-[11px] text-gray-400">{p.phoneNumber || '—'}</p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">{fmtTimeStamp(tu.createdAt)}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-emerald-300 font-black text-lg">{formatCurrency(amount)}</p>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+                      tu.status === 'approved' ? 'bg-emerald-500/20 text-emerald-300' :
+                      tu.status === 'rejected' ? 'bg-rose-500/20 text-rose-300' :
+                      'bg-amber-500/20 text-amber-300'
+                    }`}>{tu.status || 'pending'}</span>
+                  </div>
+                </div>
+                {tu.screenshot && (
+                  <a href={tu.screenshot} target="_blank" rel="noreferrer" className="block mt-2 text-[11px] text-blue-300 underline">View screenshot</a>
+                )}
+                {tu.utr && <p className="text-[11px] text-gray-400 mt-1">UTR: <span className="font-mono">{tu.utr}</span></p>}
+                {tu.adminComment && <p className="text-[11px] text-rose-300 mt-1">Reject reason: {tu.adminComment}</p>}
+
+                {isPending && (
+                  <div className="grid grid-cols-2 gap-2 mt-3">
+                    <button
+                      onClick={() => approve(tu)}
+                      disabled={busyId === tu.id || amount > masterBalance}
+                      className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 rounded-lg py-2 text-sm font-bold"
+                    >
+                      {busyId === tu.id ? '…' : amount > masterBalance ? `Need ${formatCurrency(amount - masterBalance)} more` : '✓ Approve'}
+                    </button>
+                    <button
+                      onClick={() => reject(tu)}
+                      disabled={busyId === tu.id}
+                      className="bg-rose-600 hover:bg-rose-500 disabled:opacity-30 rounded-lg py-2 text-sm font-bold"
+                    >
+                      ✗ Reject
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {playerIds.length > 30 && (
+        <p className="text-[11px] text-amber-300">Note: 30 se zyada players hain — sirf pehle 30 ke deposits dikha rahe hain abhi.</p>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Withdrawal Approvals — master pays cash externally and clicks
+// "Approved". On reject, the winning balance is refunded.
+// ─────────────────────────────────────────────────────────────────
+function WithdrawalApprovalsView({ master, players }) {
+  const [items, setItems] = useState([]);
+  const [filter, setFilter] = useState('pending');
+  const [busyId, setBusyId] = useState(null);
+  const playerMap = useMemo(() => buildPlayerMap(players), [players]);
+  const playerIds = useMemo(() => players.map((p) => p.id), [players]);
+
+  useEffect(() => {
+    if (!playerIds.length) { setItems([]); return undefined; }
+    const ids = playerIds.slice(0, 30);
+    const q = query(collection(db, 'withdrawals'), where('userId', 'in', ids));
+    return onSnapshot(q, (snap) => {
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      rows.sort((a, b) => {
+        const ta = a.createdAt?.toDate?.()?.getTime() || 0;
+        const tb = b.createdAt?.toDate?.()?.getTime() || 0;
+        return tb - ta;
+      });
+      setItems(rows);
+    }, () => setItems([]));
+  }, [playerIds.join(',')]);
+
+  const visible = useMemo(() => (
+    filter === 'pending' ? items.filter((i) => i.status === 'pending') : items
+  ), [items, filter]);
+
+  // Approve = master pays cash externally; system just records the
+  // status change. No balance moves on this side (the user's winning
+  // money was already deducted when they raised the withdrawal).
+  const approve = async (w) => {
+    if (!window.confirm(`Confirm karte ho ki tumne ${formatCurrency(w.amount || 0)} cash ${playerMap.get(w.userId)?.name || 'player'} ko de diye?`)) return;
+    setBusyId(w.id);
+    try {
+      await updateDoc(doc(db, 'withdrawals', w.id), { status: 'approved' });
+      toast.success('Marked as paid.');
+    } catch (err) {
+      toast.error(err.message || 'Approve fail.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Reject = refund the amount to the player's winningMoney AND
+  // because that movement is a credit to the player, we also need
+  // to debit the master's pool by the same amount. Symmetry keeps
+  // the rules satisfied and the audit log honest.
+  const reject = async (w) => {
+    const reason = window.prompt('Reject reason (optional):', '');
+    if (reason === null) return;
+    const amount = Number(w.amount || 0);
+    if (!(amount > 0)) {
+      toast.error('Amount invalid — cannot refund.');
+      return;
+    }
+    setBusyId(w.id);
+    try {
+      await runTransaction(db, async (tx) => {
+        const wdRef = doc(db, 'withdrawals', w.id);
+        const masterRef = doc(db, 'users', master.uid);
+        const playerRef = doc(db, 'users', w.userId);
+        const wdSnap = await tx.get(wdRef);
+        const mSnap = await tx.get(masterRef);
+        const pSnap = await tx.get(playerRef);
+        if (!wdSnap.exists()) throw new Error('Withdrawal nahi mila.');
+        if (wdSnap.data().status !== 'pending') throw new Error('Pehle hi process ho chuka.');
+
+        // Master debits, player gets the amount back into winningMoney.
+        const mBal = Number(mSnap.data().balance ?? 0);
+        if (mBal < amount) throw new Error(`Refund ke liye master ke paas sirf ${formatCurrency(mBal)} hai.`);
+        const newM = Math.round((mBal - amount) * 100) / 100;
+        const pWin = Number(pSnap.data().winningMoney ?? 0);
+        const newPW = Math.round((pWin + amount) * 100) / 100;
+
+        tx.update(masterRef, { balance: newM, walletBalance: newM });
+        tx.update(playerRef, { winningMoney: newPW });
+
+        const payload = { status: 'rejected' };
+        if (reason.trim()) payload.adminComment = reason.trim();
+        tx.update(wdRef, payload);
+      });
+
+      try {
+        await addDoc(collection(db, 'masterLedger'), {
+          type: 'withdrawal_reject',
+          masterId: master.uid,
+          playerId: w.userId,
+          amount,
+          note: `Withdrawal rejected · refunded to player`,
+          createdAt: serverTimestamp(),
+        });
+      } catch {}
+
+      toast.info('Rejected · amount refunded to player winnings.');
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || 'Reject fail.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="p-4 md:p-6 space-y-3">
+      <h2 className="text-lg font-bold text-white">Withdrawal Approvals</h2>
+      <p className="text-xs text-gray-400">
+        Player ne winning paise withdraw karne maange. Tum cash ya UPI se unhe pay karo (apne taraf se), phir <b>Approve</b> dabake "paid" mark kar do. Reject karoge to player ko paise wapas mil jayenge (tumhare points se kat ke).
+      </p>
+
+      <div className="flex gap-2">
+        <button onClick={() => setFilter('pending')} className={`text-xs px-3 py-1.5 rounded-full font-bold ${filter === 'pending' ? 'bg-yellow-400 text-black' : 'bg-white/10 text-gray-300'}`}>Pending</button>
+        <button onClick={() => setFilter('all')}     className={`text-xs px-3 py-1.5 rounded-full font-bold ${filter === 'all' ? 'bg-yellow-400 text-black' : 'bg-white/10 text-gray-300'}`}>All</button>
+      </div>
+
+      {visible.length === 0 ? (
+        <div className="rounded-2xl border border-white/10 p-6 text-center text-sm text-gray-400 bg-[#0d1228]">
+          {filter === 'pending' ? 'Koi pending withdrawal nahi.' : 'Abhi tak koi withdrawal nahi.'}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {visible.map((w) => {
+            const p = playerMap.get(w.userId) || {};
+            const amount = Number(w.amount || 0);
+            const isPending = w.status === 'pending';
+            return (
+              <div key={w.id} className="rounded-2xl border border-white/5 bg-[#0d1228] p-3">
+                <div className="flex justify-between items-start gap-3">
+                  <div>
+                    <p className="font-bold text-white text-sm">{p.name || '—'}</p>
+                    <p className="text-[11px] text-gray-400">{p.phoneNumber || '—'}</p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">{fmtTimeStamp(w.createdAt)}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-yellow-300 font-black text-lg">{formatCurrency(amount)}</p>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+                      w.status === 'approved' ? 'bg-emerald-500/20 text-emerald-300' :
+                      w.status === 'rejected' ? 'bg-rose-500/20 text-rose-300' :
+                      'bg-amber-500/20 text-amber-300'
+                    }`}>{w.status || 'pending'}</span>
+                  </div>
+                </div>
+                {(w.upi || w.bankAccount || w.accountNumber || w.ifsc) && (
+                  <div className="mt-2 text-[11px] text-gray-300 space-y-0.5">
+                    {w.upi && <p>UPI: <span className="font-mono">{w.upi}</span></p>}
+                    {w.accountNumber && <p>A/C: <span className="font-mono">{w.accountNumber}</span></p>}
+                    {w.ifsc && <p>IFSC: <span className="font-mono">{w.ifsc}</span></p>}
+                  </div>
+                )}
+                {w.adminComment && <p className="text-[11px] text-rose-300 mt-1">Reason: {w.adminComment}</p>}
+
+                {isPending && (
+                  <div className="grid grid-cols-2 gap-2 mt-3">
+                    <button
+                      onClick={() => approve(w)}
+                      disabled={busyId === w.id}
+                      className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 rounded-lg py-2 text-sm font-bold"
+                    >{busyId === w.id ? '…' : '✓ Paid · Approve'}</button>
+                    <button
+                      onClick={() => reject(w)}
+                      disabled={busyId === w.id}
+                      className="bg-rose-600 hover:bg-rose-500 disabled:opacity-30 rounded-lg py-2 text-sm font-bold"
+                    >✗ Reject · Refund</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {playerIds.length > 30 && (
+        <p className="text-[11px] text-amber-300">Note: 30 se zyada players hain — sirf pehle 30 ke withdrawals dikha rahe hain abhi.</p>
+      )}
     </div>
   );
 }
@@ -730,7 +1251,7 @@ export default function MasterDashboard() {
     // Player drill-down hijacks the content area when set, regardless
     // of which sidebar section is currently active.
     if (openPlayer) {
-      return <PlayerDetailView player={openPlayer} onBack={() => setOpenPlayer(null)} />;
+      return <PlayerDetailView player={openPlayer} master={master} onBack={() => setOpenPlayer(null)} />;
     }
     switch (activeTab) {
       case 'dashboard': return <DashboardView master={master} playerCount={players.length} onJump={switchTab} />;
@@ -738,8 +1259,8 @@ export default function MasterDashboard() {
       case 'addPlayer': return <AddPlayerView masterUid={user?.uid} onCreated={() => switchTab('players')} />;
       case 'activity':  return <ActivityView masterUid={user?.uid} />;
       case 'qr':        return <PaymentQRView master={master} />;
-      case 'deposits':  return <Placeholder title="Deposit Approvals" />;
-      case 'withdraws': return <Placeholder title="Withdrawal Approvals" />;
+      case 'deposits':  return <DepositApprovalsView master={master} players={players} />;
+      case 'withdraws': return <WithdrawalApprovalsView master={master} players={players} />;
       case 'link':      return <LinkView master={master} />;
       default:          return <DashboardView master={master} playerCount={players.length} onJump={switchTab} />;
     }

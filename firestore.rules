@@ -22,6 +22,27 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(targetUid)).data.assignedMasterId == request.auth.uid;
     }
 
+    // Atomic check used when a master adjusts their player's wallet.
+    // The master's own balance + winningMoney must change by the
+    // exact inverse of the player's balance + winningMoney change.
+    // This means: crediting a player by ₹100 must debit the master
+    // by ₹100 in the SAME transaction; debiting a player credits
+    // the master. Prevents masters from minting points out of thin
+    // air the way admin can.
+    function masterMatchesPlayerDelta() {
+      let masterBefore = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      let masterAfter  = getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      let mB = (masterBefore.balance is number ? masterBefore.balance : 0)
+             + (masterBefore.winningMoney is number ? masterBefore.winningMoney : 0);
+      let mA = (masterAfter.balance is number ? masterAfter.balance : 0)
+             + (masterAfter.winningMoney is number ? masterAfter.winningMoney : 0);
+      let pB = (resource.data.balance is number ? resource.data.balance : 0)
+             + (resource.data.winningMoney is number ? resource.data.winningMoney : 0);
+      let pA = (request.resource.data.balance is number ? request.resource.data.balance : 0)
+             + (request.resource.data.winningMoney is number ? request.resource.data.winningMoney : 0);
+      return (pA - pB) + (mA - mB) == 0;
+    }
+
     // Rules for the results collection
     match /results/{resultId} {
       allow read: if true;
@@ -58,7 +79,15 @@ service cloud.firestore {
            request.resource.data.get('suspended', false) == resource.data.get('suspended', false) &&
            request.resource.data.get('masterCode', '') == resource.data.get('masterCode', '') &&
            request.resource.data.get('assignedMasterId', '') == resource.data.get('assignedMasterId', ''))
-        ))
+        )) ||
+        // Master adjusting their player's wallet — only allowed in an
+        // atomic transaction that moves the master's own balance by
+        // the exact inverse amount (zero-sum). role / assignedMasterId
+        // / masterCode / suspended can't be touched.
+        (isMaster() &&
+         resource.data.get('assignedMasterId', '') == request.auth.uid &&
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'assignedMasterId', 'masterCode', 'suspended']) &&
+         masterMatchesPlayerDelta())
       );
 
       // Per-user notifications subcollection.
@@ -80,13 +109,19 @@ service cloud.firestore {
     }
 
     // Master point ledger — every admin↔master and master↔player
-    // balance adjustment lands here for audit. Admin-only writes
-    // through the admin panel; masters get read access to their own
-    // entries in Phase 2 (so they can show their own history).
+    // balance adjustment lands here for audit. Admin writes anything;
+    // masters can read + log their own player-side adjustments.
     match /masterLedger/{txId} {
-      allow read:   if isAdmin() ||
+      allow read: if isAdmin() ||
         (isMaster() && resource.data.masterId == request.auth.uid);
-      allow create, update, delete: if isAdmin();
+      // Master can only insert rows where masterId == self and the
+      // type is one of the player-side operations. They can't fake
+      // an admin top-up.
+      allow create: if isAdmin() ||
+        (isMaster() &&
+         request.resource.data.masterId == request.auth.uid &&
+         request.resource.data.type in ['master_to_player', 'player_to_master', 'deposit_approval', 'withdrawal_approval', 'withdrawal_reject']);
+      allow update, delete: if isAdmin();
     }
 
     // Pre-staged user accounts. Admin creates a /pendingUsers/{phone}
@@ -256,7 +291,13 @@ service cloud.firestore {
         isAdmin() ||
         (isMaster() && get(/databases/$(database)/documents/users/$(resource.data.userId)).data.get('assignedMasterId', '') == request.auth.uid)
       );
-      allow update: if isAdmin();
+      // Admin always; master only for their player + only when the
+      // doc was pending and the next status is approved/rejected.
+      allow update: if isAdmin() ||
+        (isMaster() &&
+         resource.data.status == 'pending' &&
+         get(/databases/$(database)/documents/users/$(resource.data.userId)).data.get('assignedMasterId', '') == request.auth.uid &&
+         request.resource.data.status in ['approved', 'rejected']);
     }
 
     // Rules for top-up (deposit) requests
@@ -267,7 +308,11 @@ service cloud.firestore {
         isAdmin() ||
         (isMaster() && get(/databases/$(database)/documents/users/$(resource.data.userId)).data.get('assignedMasterId', '') == request.auth.uid)
       );
-      allow update: if isAdmin();
+      allow update: if isAdmin() ||
+        (isMaster() &&
+         resource.data.status == 'pending' &&
+         get(/databases/$(database)/documents/users/$(resource.data.userId)).data.get('assignedMasterId', '') == request.auth.uid &&
+         request.resource.data.status in ['approved', 'rejected']);
       allow delete: if isAdmin();
     }
 
