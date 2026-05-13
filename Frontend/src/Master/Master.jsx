@@ -7,7 +7,7 @@ import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'fire
 import {
   Users, LayoutDashboard, Link as LinkIcon, CreditCard, DollarSign,
   LogOut, Menu, X, Copy, ChevronLeft, UserPlus, History, ArrowLeft,
-  QrCode,
+  QrCode, BarChart3,
 } from 'lucide-react';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -17,6 +17,7 @@ import { formatCurrency } from '../utils/formatMoney';
 import { buildMasterReferralLink } from '../utils/master';
 import { getUserFunds } from '../utils/userFunds';
 import { playChime } from '../utils/gameSfx';
+import { markets as ALL_MARKETS } from '../marketData';
 
 // ─────────────────────────────────────────────────────────────────
 // Phase 1 master panel — now with:
@@ -34,6 +35,7 @@ const SECTIONS = [
   { id: 'addPlayer', label: 'Add Player',        icon: UserPlus,        short: 'Add'     },
   { id: 'deposits',  label: 'Deposit Approvals', icon: CreditCard,      short: 'Deposit' },
   { id: 'withdraws', label: 'Withdrawal Approvals', icon: DollarSign,   short: 'Withdraw'},
+  { id: 'marketBets',label: 'Market Bets',       icon: BarChart3,       short: 'Bets'    },
   { id: 'qr',        label: 'My Payment QR',     icon: QrCode,          short: 'QR'      },
   { id: 'activity',  label: 'My Activity',       icon: History,         short: 'Log'     },
   { id: 'link',      label: 'My Referral Link',  icon: LinkIcon,        short: 'Link'    },
@@ -680,6 +682,235 @@ function ActivityView({ masterUid }) {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Market Bets — per-market, per-number risk view scoped to this
+// master's players. Mirrors the admin "Win Game Bets" / Haruf
+// summary but only counts bets from userId in master.players.
+// ─────────────────────────────────────────────────────────────────
+const HARUF_PAYOUT_MULT = 90;
+
+// Today in IST yyyy-mm-dd so the default date picker matches the
+// gambling-day boundary the user expects (markets are IST-anchored).
+const istToday = () => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(new Date());
+
+const istDateOfTimestamp = (ts) => {
+  const d = ts?.toDate?.();
+  if (!d) return '';
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
+};
+
+function MarketBetsView({ players }) {
+  const [market, setMarket] = useState(ALL_MARKETS[0]?.name || 'GALI');
+  const [date, setDate] = useState(istToday());
+  const [bets, setBets] = useState([]);
+
+  const playerIds = useMemo(() => players.map((p) => p.id).slice(0, 30), [players]);
+  const playerMap = useMemo(() => buildPlayerMap(players), [players]);
+
+  useEffect(() => {
+    if (!playerIds.length || !market) { setBets([]); return undefined; }
+    // userId in [...]  + marketName == ... — Firestore supports the
+    // composite IF userId is a single in-clause (which it is here).
+    const q = query(
+      collection(db, 'harufBets'),
+      where('userId', 'in', playerIds),
+      where('marketName', '==', market),
+    );
+    return onSnapshot(q, (snap) => {
+      setBets(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    }, () => setBets([]));
+  }, [playerIds.join(','), market]);
+
+  // Filter to selected IST date.
+  const dayBets = useMemo(
+    () => bets.filter((b) => istDateOfTimestamp(b.timestamp) === date),
+    [bets, date],
+  );
+
+  // Aggregate amount and bet count per number.
+  const { perNumber, total, betCount, byPlayer } = useMemo(() => {
+    const pn = {};
+    const bp = new Map(); // playerId → { total, bets[] }
+    let t = 0;
+    for (const b of dayBets) {
+      const n = b.selectedNumber;
+      const amt = Number(b.betAmount || 0);
+      pn[n] = pn[n] || { amount: 0, count: 0 };
+      pn[n].amount += amt;
+      pn[n].count += 1;
+      t += amt;
+      const pe = bp.get(b.userId) || { total: 0, bets: [] };
+      pe.total += amt;
+      pe.bets.push(b);
+      bp.set(b.userId, pe);
+    }
+    return { perNumber: pn, total: t, betCount: dayBets.length, byPlayer: bp };
+  }, [dayBets]);
+
+  // Top 5 most-bet numbers — biggest risk.
+  const topNumbers = useMemo(
+    () => Object.entries(perNumber)
+      .sort((a, b) => b[1].amount - a[1].amount)
+      .slice(0, 5)
+      .map(([n, info]) => ({ n, ...info })),
+    [perNumber],
+  );
+
+  // Risk = if any of these numbers opens, master pays out amount × 90
+  // less the amount they already collected from losing bets. Worst-
+  // case is total payout on the biggest number.
+  const worstCase = useMemo(() => {
+    if (topNumbers.length === 0) return { num: null, payout: 0, net: 0 };
+    const top = topNumbers[0];
+    const payout = top.amount * HARUF_PAYOUT_MULT;
+    const net = payout - total; // master ki taraf se net loss (others lose, that one wins)
+    return { num: top.n, payout, net };
+  }, [topNumbers, total]);
+
+  return (
+    <div className="p-4 md:p-6 space-y-4">
+      <h2 className="text-lg font-bold text-white">Market Bets · Risk view</h2>
+      <p className="text-xs text-gray-400">
+        Tumhare players ne kis market me kis number pe kitna lagaya hai. Jis number pe sabse zyada paisa lagega, agar vo khulta hai to tumhe sabse zyada chukana padega (₹90 per ₹1 bet).
+      </p>
+
+      {/* Filters */}
+      <div className="rounded-2xl border border-white/5 bg-[#0d1228] p-3 grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Market</label>
+          <select
+            value={market}
+            onChange={(e) => setMarket(e.target.value)}
+            className="w-full bg-[#070b1e] border border-white/10 rounded-lg px-2 py-2 text-sm text-white"
+          >
+            {ALL_MARKETS.map((m) => (
+              <option key={m.name} value={m.name}>{m.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Date (IST)</label>
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="w-full bg-[#070b1e] border border-white/10 rounded-lg px-2 py-2 text-sm text-white"
+          />
+        </div>
+      </div>
+
+      {/* Top stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <div className="rounded-xl bg-gradient-to-br from-emerald-600 to-emerald-800 p-3">
+          <p className="text-[10px] uppercase tracking-widest text-emerald-200">Total Bet</p>
+          <p className="text-xl font-black text-white mt-0.5">{formatCurrency(total)}</p>
+        </div>
+        <div className="rounded-xl bg-gradient-to-br from-blue-600 to-blue-800 p-3">
+          <p className="text-[10px] uppercase tracking-widest text-blue-200">Bet Count</p>
+          <p className="text-xl font-black text-white mt-0.5">{betCount}</p>
+        </div>
+        <div className="rounded-xl bg-gradient-to-br from-amber-600 to-amber-800 p-3">
+          <p className="text-[10px] uppercase tracking-widest text-amber-200">Top Number</p>
+          <p className="text-xl font-black text-white mt-0.5">
+            {worstCase.num != null ? String(worstCase.num).padStart(2, '0') : '—'}
+          </p>
+        </div>
+        <div className="rounded-xl bg-gradient-to-br from-rose-600 to-rose-800 p-3">
+          <p className="text-[10px] uppercase tracking-widest text-rose-200">Worst-case Net</p>
+          <p className="text-xl font-black text-white mt-0.5">
+            {worstCase.net > 0 ? `-${formatCurrency(worstCase.net)}` : '—'}
+          </p>
+        </div>
+      </div>
+
+      {/* Top 5 list */}
+      {topNumbers.length > 0 && (
+        <div className="rounded-2xl border border-white/5 bg-[#0d1228] p-3">
+          <p className="text-[11px] uppercase tracking-widest text-amber-300 font-bold mb-2">🔥 Risk numbers (top 5)</p>
+          <ul className="space-y-1.5">
+            {topNumbers.map((t) => {
+              const payout = t.amount * HARUF_PAYOUT_MULT;
+              return (
+                <li key={t.n} className="flex justify-between items-center bg-[#070b1e] rounded-lg px-3 py-2 text-xs">
+                  <div className="flex items-center gap-3">
+                    <span className="w-8 h-8 rounded-full bg-rose-600 text-white font-black flex items-center justify-center">
+                      {String(t.n).padStart(2, '0')}
+                    </span>
+                    <div>
+                      <p className="text-white font-semibold">{formatCurrency(t.amount)} · {t.count} bets</p>
+                      <p className="text-[10px] text-rose-300">If opens → pay {formatCurrency(payout)}</p>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {/* Number grid 00-99 */}
+      <div className="rounded-2xl border border-white/5 bg-[#0d1228] p-3">
+        <p className="text-[11px] uppercase tracking-widest text-gray-400 font-bold mb-2">All numbers (00-99)</p>
+        <div className="grid grid-cols-10 gap-1">
+          {Array.from({ length: 100 }, (_, i) => {
+            const info = perNumber[i] || { amount: 0, count: 0 };
+            const heat = info.amount;
+            const cls =
+              heat === 0 ? 'bg-zinc-800/40 text-zinc-500' :
+              heat <= 5 ? 'bg-emerald-700/40 text-emerald-200' :
+              heat <= 20 ? 'bg-amber-600/40 text-amber-200' :
+              heat <= 50 ? 'bg-orange-600/60 text-white' :
+              'bg-rose-600 text-white';
+            return (
+              <div key={i} className={`rounded-md p-1 text-center ${cls}`}>
+                <p className="text-[10px] font-bold">{String(i).padStart(2, '0')}</p>
+                {heat > 0 && <p className="text-[9px] opacity-90">₹{heat}</p>}
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-[10px] text-gray-500 mt-2">Hot colours = zyada bet. Agar vo number open hua to maximum payout.</p>
+      </div>
+
+      {/* Per-player breakdown */}
+      {byPlayer.size > 0 && (
+        <div className="rounded-2xl border border-white/5 bg-[#0d1228] overflow-hidden">
+          <p className="px-4 py-2.5 border-b border-white/5 text-[11px] uppercase tracking-widest text-gray-400 font-bold">By player</p>
+          <ul className="divide-y divide-white/5">
+            {Array.from(byPlayer.entries())
+              .sort((a, b) => b[1].total - a[1].total)
+              .map(([uid, info]) => {
+                const p = playerMap.get(uid) || {};
+                return (
+                  <li key={uid} className="px-4 py-2 text-xs flex justify-between items-center">
+                    <div>
+                      <p className="text-white font-semibold">{p.name || '—'}</p>
+                      <p className="text-[10px] text-gray-500">{p.phoneNumber || ''} · {info.bets.length} bets</p>
+                    </div>
+                    <p className="text-emerald-300 font-bold">{formatCurrency(info.total)}</p>
+                  </li>
+                );
+              })}
+          </ul>
+        </div>
+      )}
+
+      {playerIds.length === 0 && (
+        <div className="text-center text-sm text-gray-400 py-8">Tumhare paas abhi koi player nahi hai.</div>
+      )}
+      {playerIds.length > 0 && dayBets.length === 0 && (
+        <div className="text-center text-sm text-gray-400 py-8">
+          {market} me {date} pe koi bet nahi laga abhi tak.
         </div>
       )}
     </div>
@@ -1374,9 +1605,10 @@ export default function MasterDashboard() {
       case 'players':   return <PlayersListView players={players} onOpenPlayer={(p) => setOpenPlayer(p)} />;
       case 'addPlayer': return <AddPlayerView masterUid={user?.uid} onCreated={() => switchTab('players')} />;
       case 'activity':  return <ActivityView masterUid={user?.uid} />;
-      case 'qr':        return <PaymentQRView master={master} />;
-      case 'deposits':  return <DepositApprovalsView master={master} players={players} />;
-      case 'withdraws': return <WithdrawalApprovalsView master={master} players={players} />;
+      case 'qr':         return <PaymentQRView master={master} />;
+      case 'deposits':   return <DepositApprovalsView master={master} players={players} />;
+      case 'withdraws':  return <WithdrawalApprovalsView master={master} players={players} />;
+      case 'marketBets': return <MarketBetsView players={players} />;
       case 'link':      return <LinkView master={master} />;
       default:          return <DashboardView master={master} playerCount={players.length} onJump={switchTab} />;
     }
