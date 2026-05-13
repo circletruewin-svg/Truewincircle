@@ -26,10 +26,11 @@ service firebase.storage {
       allow write: if request.auth != null && request.auth.uid == uid;
     }
 
-    // Deposit / payment screenshots. User who's uploading can write
-    // under their own UID folder; anyone signed-in can read so admin
-    // + the player's master can review the proof.
-    match /payment_screenshots/{uid}/{file=**} {
+    // Deposit / payment screenshots that a user uploads from
+    // PaymentConfirmation.jsx. Path is paymentProofs/{uid}/...
+    // The owner can write, anyone signed-in can read so admin +
+    // the player's master can review the proof.
+    match /paymentProofs/{uid}/{file=**} {
       allow read: if request.auth != null;
       allow write: if request.auth != null && request.auth.uid == uid;
     }
