@@ -36,6 +36,7 @@ import Commissions from './components/Commissions';
 import DailyReport from './components/DailyReport';
 import HarufLimits from './components/HarufLimits';
 import MasterManagement from './components/MasterManagement';
+import AdminCommissionSummary from './components/AdminCommissionSummary';
 
 // Component Imports
 import AllUsers from './components/AllUsers';
@@ -736,7 +737,12 @@ const AdminDashboard = () => {
     };
 
     switch (activeTab) {
-      case 'dashboard':   return <DashboardView stats={stats} />;
+      case 'dashboard':   return (
+        <>
+          <DashboardView stats={stats} />
+          <AdminCommissionSummary userMap={truewinUserMap} />
+        </>
+      );
       case 'allUsers':    return <AllUsers allPayments={allPayments} allWithdrawals={allWithdrawals} />;
       case 'referrals':   return <ReferralComponent />;
       case 'barcodes':    return <BarCodeUpdate />;
