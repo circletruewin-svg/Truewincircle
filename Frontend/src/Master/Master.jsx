@@ -59,8 +59,18 @@ function DashboardView({ master, playerCount, onJump }) {
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         <StatCard label="My Points"    value={formatCurrency(balance)} accent="from-yellow-600 to-amber-700" />
         <StatCard label="My Players"   value={playerCount}             accent="from-emerald-600 to-emerald-800" />
-        <StatCard label="Today's Flow" value="—"                       accent="from-fuchsia-600 to-fuchsia-800" />
+        <StatCard
+          label={Number(master.commissionPercent) > 0 ? `Admin share (${master.commissionPercent}%)` : "Admin share"}
+          value={Number(master.commissionPercent) > 0 ? `${master.commissionPercent}%` : "0%"}
+          accent={Number(master.commissionPercent) > 0 ? "from-blue-600 to-blue-800" : "from-fuchsia-600 to-fuchsia-800"}
+        />
       </div>
+
+      {Number(master.commissionPercent) > 0 && (
+        <div className="rounded-2xl border border-blue-400/20 bg-blue-500/5 p-3 text-xs text-blue-100">
+          <b>Note:</b> Tumhare players ke net P&amp;L (bets − wins) me se <b>{master.commissionPercent}%</b> admin ka share hai. Baki tumhara profit.
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2.5">
         <button onClick={() => onJump('addPlayer')} className="rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3 px-3 text-left">

@@ -390,14 +390,102 @@ function TopUpModal({ master, onClose, onDone }) {
   );
 }
 
+// Set the admin's profit-sharing percentage on a master. 0 = pure
+// reseller (admin gets nothing extra); >0 = admin takes that
+// percentage of the master's players' net winnings/losses. The
+// admin's dashboard then surfaces this as commission earned.
+function CommissionModal({ master, onClose }) {
+  const [pct, setPct] = useState(String(master.commissionPercent ?? 0));
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    const n = Number(pct);
+    if (!Number.isFinite(n) || n < 0 || n > 100) {
+      return toast.error('0 se 100 ke beech ka number daalo.');
+    }
+    setBusy(true);
+    try {
+      await updateDoc(doc(db, 'users', master.id), {
+        commissionPercent: Math.round(n * 100) / 100,
+      });
+      await addDoc(collection(db, 'masterLedger'), {
+        type: 'admin_to_master',
+        masterId: master.id,
+        masterName: master.name || null,
+        pending: false,
+        amount: 0,
+        note: `Commission % set to ${n}`,
+        createdAt: serverTimestamp(),
+      });
+      toast.success(`Commission set to ${n}%`);
+      onClose();
+    } catch (err) {
+      toast.error('Save failed: ' + (err.message || err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white rounded-xl shadow-xl">
+        <div className="border-b p-4 flex justify-between items-center">
+          <h3 className="font-bold text-lg">Set commission %</h3>
+          <button onClick={onClose} className="text-gray-500 text-2xl">×</button>
+        </div>
+        <div className="p-4 space-y-3 text-sm">
+          <p>
+            Master <b>{master.name || '—'}</b> ke players ke net P&L me se admin ka kitna percent share hoga?
+          </p>
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
+            <p className="font-bold mb-1">Example</p>
+            Master ne 100 points liye. Player jeeta 100. <b>{pct || 0}%</b> admin ko milega = ₹{((Number(pct) || 0)).toFixed(2)}<br />
+            Master ke paas {((100 - (Number(pct) || 0))).toFixed(2)} bachenge.
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Percentage (0-100)</label>
+            <input
+              type="number"
+              min="0" max="100" step="0.5"
+              value={pct}
+              onChange={(e) => setPct(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+            <p className="text-[11px] text-gray-500 mt-1">
+              0 = pure reseller (admin ka koi hissa nahi)
+            </p>
+          </div>
+
+          <div className="grid grid-cols-4 gap-2 text-xs">
+            {[0, 20, 30, 40, 50].map((v) => (
+              <button key={v} onClick={() => setPct(String(v))} className="bg-gray-100 hover:bg-gray-200 rounded-lg py-1.5">
+                {v}%
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="border-t p-4 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded">Cancel</button>
+          <button onClick={submit} disabled={busy} className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-40">
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Drill-down detail view for one master: their info card + all their
 // players + their masterLedger history. Opened from the Master
 // Management list when admin clicks a row.
 // ─────────────────────────────────────────────────────────────────
-function MasterDetail({ master, onBack, onTopUp }) {
+function MasterDetail({ master, onBack, onTopUp, onSetCommission }) {
   const [players, setPlayers] = useState([]);
   const [ledger, setLedger] = useState([]);
+  const [harufBets, setHarufBets] = useState([]);
+  const [aviatorBets, setAviatorBets] = useState([]);
+  const [sportsBets, setSportsBets] = useState([]);
 
   useEffect(() => {
     const pq = query(collection(db, 'users'), where('assignedMasterId', '==', master.id));
@@ -406,11 +494,57 @@ function MasterDetail({ master, onBack, onTopUp }) {
     }, () => setPlayers([]));
   }, [master.id]);
 
+  const playerIds = useMemo(() => players.map((p) => p.id).slice(0, 30), [players]);
+
+  // Subscribe to game bets for master's players (today, IST).
+  // Filtered client-side by date to keep query simple.
+  useEffect(() => {
+    if (!playerIds.length) { setHarufBets([]); setAviatorBets([]); setSportsBets([]); return undefined; }
+    const qH = query(collection(db, 'harufBets'),   where('userId', 'in', playerIds));
+    const qA = query(collection(db, 'aviatorBets'), where('userId', 'in', playerIds));
+    const qS = query(collection(db, 'sportsBets'),  where('userId', 'in', playerIds));
+    const u1 = onSnapshot(qH, (s) => setHarufBets(s.docs.map((d) => ({ id: d.id, ...d.data() }))), () => {});
+    const u2 = onSnapshot(qA, (s) => setAviatorBets(s.docs.map((d) => ({ id: d.id, ...d.data() }))), () => {});
+    const u3 = onSnapshot(qS, (s) => setSportsBets(s.docs.map((d) => ({ id: d.id, ...d.data() }))), () => {});
+    return () => { u1(); u2(); u3(); };
+  }, [playerIds.join(',')]);
+
+  const todayIST = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+
+  const isToday = (ts) => {
+    const d = ts?.toDate?.();
+    if (!d) return false;
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(d) === todayIST;
+  };
+
+  // Aggregate today's bets across game families.
+  const todayStats = useMemo(() => {
+    let bet = 0, won = 0, count = 0;
+    const considerBet = (b) => {
+      // Some collections use `timestamp`, others `createdAt`.
+      const ts = b.timestamp || b.createdAt;
+      if (!isToday(ts)) return;
+      bet += Number(b.betAmount || 0);
+      won += Number(b.winAmount || 0);
+      count += 1;
+    };
+    harufBets.forEach(considerBet);
+    aviatorBets.forEach(considerBet);
+    sportsBets.forEach(considerBet);
+    const net = bet - won;            // master's net profit BEFORE admin cut
+    const pct = Number(master.commissionPercent) || 0;
+    const adminCut = net > 0 ? Math.round(net * (pct / 100) * 100) / 100 : 0;
+    return { bet, won, count, net, pct, adminCut };
+  }, [harufBets, aviatorBets, sportsBets, todayIST, master.commissionPercent]);
+
   useEffect(() => {
     const lq = query(
       collection(db, 'masterLedger'),
       where('masterId', '==', master.id),
-      // No orderBy — that would need an index. Sort client-side.
     );
     return onSnapshot(lq, (snap) => {
       const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -444,7 +578,7 @@ function MasterDetail({ master, onBack, onTopUp }) {
       </div>
 
       {/* Master card */}
-      <div className="bg-white rounded-xl shadow border p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+      <div className="bg-white rounded-xl shadow border p-4 grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
         <div>
           <p className="text-[10px] uppercase text-gray-500">Phone</p>
           <p className="font-mono font-semibold">{master.phoneNumber || master.id}</p>
@@ -458,6 +592,12 @@ function MasterDetail({ master, onBack, onTopUp }) {
           <p className="font-bold text-emerald-700">{formatCurrency(master.balance ?? master.walletBalance ?? 0)}</p>
         </div>
         <div>
+          <p className="text-[10px] uppercase text-gray-500">Admin %</p>
+          <p className={`font-bold ${Number(master.commissionPercent) > 0 ? 'text-blue-700' : 'text-gray-500'}`}>
+            {Number(master.commissionPercent) > 0 ? `${master.commissionPercent}%` : 'Pure reseller (0%)'}
+          </p>
+        </div>
+        <div>
           <p className="text-[10px] uppercase text-gray-500">Status</p>
           <p className="font-bold">
             {master.pending ? <span className="text-amber-700">PENDING OTP</span>
@@ -465,7 +605,7 @@ function MasterDetail({ master, onBack, onTopUp }) {
           </p>
         </div>
 
-        <div className="col-span-2 md:col-span-4 flex justify-end gap-2 pt-2">
+        <div className="col-span-2 md:col-span-5 flex justify-end gap-2 pt-2 flex-wrap">
           {master.masterCode && (
             <button
               onClick={() => navigator.clipboard.writeText(buildMasterReferralLink(master.masterCode)).then(() => toast.success('Link copied'))}
@@ -473,10 +613,53 @@ function MasterDetail({ master, onBack, onTopUp }) {
             >Copy share link</button>
           )}
           <button
+            onClick={() => onSetCommission(master)}
+            className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded font-bold"
+          >Set Admin %</button>
+          <button
             onClick={() => onTopUp(master)}
             className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded font-bold"
           >+ / − Master Points</button>
         </div>
+      </div>
+
+      {/* Today's activity — only fully meaningful when commission % is set */}
+      <div className="bg-white rounded-xl shadow border">
+        <div className="border-b px-4 py-3 flex justify-between items-center">
+          <h3 className="font-bold">Today's player activity (IST)</h3>
+          <span className="text-xs text-gray-500">{todayIST}</span>
+        </div>
+        <div className="p-4 grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+          <div>
+            <p className="text-[10px] uppercase text-gray-500">Total Bets</p>
+            <p className="font-bold text-gray-800">{todayStats.count}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-gray-500">Bet Amount</p>
+            <p className="font-bold text-blue-700">{formatCurrency(todayStats.bet)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-gray-500">Paid Out (Wins)</p>
+            <p className="font-bold text-rose-700">{formatCurrency(todayStats.won)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-gray-500">Net (bet − won)</p>
+            <p className={`font-bold ${todayStats.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+              {formatCurrency(todayStats.net)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-gray-500">Admin's cut @ {todayStats.pct}%</p>
+            {todayStats.pct > 0 ? (
+              <p className="font-bold text-blue-700">{formatCurrency(todayStats.adminCut)}</p>
+            ) : (
+              <p className="font-bold text-gray-400 text-xs">Pure reseller — kuchh nahi</p>
+            )}
+          </div>
+        </div>
+        <p className="text-[11px] text-gray-500 px-4 pb-3">
+          Source: Haruf + Aviator + Cricket bets (today IST). Pending bets bet me count hote hain, settle hone pe won update hota hai.
+        </p>
       </div>
 
       {/* Players list */}
@@ -570,6 +753,7 @@ export default function MasterManagement() {
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [topUpFor, setTopUpFor] = useState(null);
+  const [commissionFor, setCommissionFor] = useState(null);
   const [search, setSearch] = useState('');
   const [detailMasterId, setDetailMasterId] = useState(null);
 
@@ -647,6 +831,26 @@ export default function MasterManagement() {
     } catch { toast.error('Copy failed'); }
   };
 
+  // Aggregate stats across all masters — shown at top of the list.
+  const aggregate = useMemo(() => {
+    let totalPoints = 0;
+    let totalPlayers = 0;
+    let withCommission = 0;
+    for (const m of activeMasters) {
+      totalPoints += Number(m.balance ?? m.walletBalance ?? 0);
+      totalPlayers += (playerCounts[m.id] || 0);
+      if (Number(m.commissionPercent) > 0) withCommission++;
+    }
+    return {
+      total: activeMasters.length + pendingMasters.length,
+      active: activeMasters.length,
+      pending: pendingMasters.length,
+      totalPoints,
+      totalPlayers,
+      withCommission,
+    };
+  }, [activeMasters, pendingMasters, playerCounts]);
+
   // Drill-down view takes precedence when a master row is clicked.
   const detailMaster = useMemo(
     () => masters.find((m) => m.id === detailMasterId) || null,
@@ -659,9 +863,13 @@ export default function MasterManagement() {
           master={detailMaster}
           onBack={() => setDetailMasterId(null)}
           onTopUp={(m) => setTopUpFor(m)}
+          onSetCommission={(m) => setCommissionFor(m)}
         />
         {topUpFor && (
           <TopUpModal master={topUpFor} onClose={() => setTopUpFor(null)} onDone={() => {}} />
+        )}
+        {commissionFor && (
+          <CommissionModal master={commissionFor} onClose={() => setCommissionFor(null)} />
         )}
       </>
     );
@@ -680,6 +888,32 @@ export default function MasterManagement() {
         >
           + Create master
         </button>
+      </div>
+
+      {/* Aggregate stats */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+        <div className="bg-white rounded-xl border p-3">
+          <p className="text-[10px] uppercase text-gray-500">Total Masters</p>
+          <p className="text-2xl font-bold">{aggregate.total}</p>
+          <p className="text-[11px] text-gray-500">{aggregate.active} active · {aggregate.pending} pending</p>
+        </div>
+        <div className="bg-white rounded-xl border p-3">
+          <p className="text-[10px] uppercase text-gray-500">Total Points Held</p>
+          <p className="text-2xl font-bold text-emerald-700">{formatCurrency(aggregate.totalPoints)}</p>
+        </div>
+        <div className="bg-white rounded-xl border p-3">
+          <p className="text-[10px] uppercase text-gray-500">Total Players</p>
+          <p className="text-2xl font-bold text-blue-700">{aggregate.totalPlayers}</p>
+        </div>
+        <div className="bg-white rounded-xl border p-3">
+          <p className="text-[10px] uppercase text-gray-500">With Commission</p>
+          <p className="text-2xl font-bold text-amber-700">{aggregate.withCommission}</p>
+          <p className="text-[11px] text-gray-500">{aggregate.active - aggregate.withCommission} pure resellers</p>
+        </div>
+        <div className="bg-white rounded-xl border p-3">
+          <p className="text-[10px] uppercase text-gray-500">Pending OTP</p>
+          <p className="text-2xl font-bold text-rose-700">{aggregate.pending}</p>
+        </div>
       </div>
 
       <div className="mb-3">
@@ -709,6 +943,7 @@ export default function MasterManagement() {
                 <th className="p-3 text-left">Code</th>
                 <th className="p-3 text-right">Points</th>
                 <th className="p-3 text-center">Players</th>
+                <th className="p-3 text-center">Admin %</th>
                 <th className="p-3 text-center">Status</th>
                 <th className="p-3 text-right">Actions</th>
               </tr>
@@ -742,6 +977,11 @@ export default function MasterManagement() {
                   <td className="p-3 text-center text-sm">
                     {m.pending ? <span className="text-gray-400">—</span> : (playerCounts[m.id] || 0)}
                   </td>
+                  <td className="p-3 text-center text-sm">
+                    {Number(m.commissionPercent) > 0
+                      ? <span className="bg-blue-100 text-blue-700 font-bold px-2 py-0.5 rounded-full text-[11px]">{m.commissionPercent}%</span>
+                      : <span className="text-gray-400 text-[11px]">0%</span>}
+                  </td>
                   <td className="p-3 text-center">
                     {m.pending
                       ? <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">PENDING OTP</span>
@@ -754,6 +994,13 @@ export default function MasterManagement() {
                         className="text-xs bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded"
                         title="Copy share link"
                       >Link</button>
+                    )}
+                    {!m.pending && (
+                      <button
+                        onClick={() => setCommissionFor(m)}
+                        className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded"
+                        title="Set admin's commission percent on this master's player P&L"
+                      >Set %</button>
                     )}
                     <button
                       onClick={() => setTopUpFor(m)}
@@ -782,6 +1029,9 @@ export default function MasterManagement() {
       )}
       {topUpFor && (
         <TopUpModal master={topUpFor} onClose={() => setTopUpFor(null)} onDone={() => {}} />
+      )}
+      {commissionFor && (
+        <CommissionModal master={commissionFor} onClose={() => setCommissionFor(null)} />
       )}
     </div>
   );
