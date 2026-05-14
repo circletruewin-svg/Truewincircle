@@ -32,6 +32,12 @@ const Table = () => {
   const [selectedMarket, setSelectedMarket] = useState(marketNames[0]);
   const [newResult, setNewResult] = useState('');
   const [resultDate, setResultDate] = useState(() => ymdInIst(new Date()));
+  // Cross-midnight markets like DISAWAR run from afternoon one day
+  // till ~3 AM the next, so "today's session" actually starts on
+  // yesterday's calendar date. Admin picks the session-start date
+  // separately from the result date so all the right bets get pulled
+  // into settlement.
+  const [sessionFromDate, setSessionFromDate] = useState(() => ymdInIst(new Date()));
   const [currentYesterdayResult, setCurrentYesterdayResult] = useState('..');
   const [currentTodayResult, setCurrentTodayResult] = useState('..');
   const [loading, setLoading] = useState(false);
@@ -143,13 +149,23 @@ const Table = () => {
       toast.error("Please pick the result's date.");
       return;
     }
+    if (!sessionFromDate) {
+      toast.error("Please pick the session start date.");
+      return;
+    }
+    if (sessionFromDate > resultDate) {
+      toast.error("Session start date cannot be after the result date.");
+      return;
+    }
 
     setSubmitting(true);
     try {
-      // Save the result with the chosen IST date so it shows up on the
-      // right calendar row, even when admin is back-filling a previous
-      // day's number.
-      const [sessionStart, sessionEnd] = istDayRange(resultDate);
+      // Cross-midnight markets need the session window to span from
+      // the start-date 00:00 IST through the result-date 23:59 IST.
+      // For normal markets the two dates are the same and the window
+      // reduces to a single IST day.
+      const [sessionStart] = istDayRange(sessionFromDate);
+      const [, sessionEnd] = istDayRange(resultDate);
       const paddedNumber = parseInt(newResult).toString().padStart(2, '0');
 
       await addDoc(collection(db, "results"), {
@@ -299,7 +315,22 @@ const Table = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
           <div>
-            <label htmlFor="resultDate" className="block text-sm font-medium text-gray-700">Result for date (IST)</label>
+            <label htmlFor="sessionFromDate" className="block text-sm font-medium text-gray-700">Session start date (IST)</label>
+            <input
+              type="date"
+              id="sessionFromDate"
+              value={sessionFromDate}
+              onChange={(e) => setSessionFromDate(e.target.value)}
+              max={ymdInIst(new Date())}
+              className="mt-1 block w-full pl-3 pr-3 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+            />
+            <p className="text-[11px] text-gray-500 mt-1">
+              Disawar / Faridabad etc jo 12 AM ke baad bhi chalti hain — From = <b>kal</b>, To = <b>aaj</b>. Normal markets jo midnight ke pehle band ho jati hain — dono <b>same</b> date.
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="resultDate" className="block text-sm font-medium text-gray-700">Result date — session end (IST)</label>
             <input
               type="date"
               id="resultDate"
@@ -309,8 +340,7 @@ const Table = () => {
               className="mt-1 block w-full pl-3 pr-3 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
             />
             <p className="text-[11px] text-gray-500 mt-1">
-              Default aaj. Past date pick karke bhi result bhar sakte ho — sirf
-              us din ki pending bets settle hongi.
+              Default aaj. Past date pick karke back-fill bhi kar sakte ho.
             </p>
           </div>
           <div>
