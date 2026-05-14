@@ -4,6 +4,7 @@ import { collection, query, where, orderBy, limit, getDocs, addDoc, serverTimest
 import { toast } from 'react-toastify';
 import { markets } from '../../marketData';
 import Loader from '../../components/Loader';
+import { parseTimeStringToMinutes } from '../../utils/dateHelpers';
 
 const marketNames = markets.map(m => m.name);
 
@@ -139,6 +140,30 @@ const Table = () => {
         fetchTimings();
     }
   }, [selectedMarket]);
+
+  // Whenever the market or result date changes, auto-set the session
+  // start. For cross-midnight markets (close time-of-day earlier than
+  // open time-of-day, e.g. Disawar 12 PM → 3 AM next day), the
+  // session starts on the PREVIOUS calendar day. Admin can still
+  // override the field manually if needed.
+  useEffect(() => {
+    if (!selectedMarket || !resultDate) return;
+    const openMin = parseTimeStringToMinutes(openTime);
+    const closeMin = parseTimeStringToMinutes(closeTime);
+    if (openMin == null || closeMin == null) {
+      setSessionFromDate(resultDate);
+      return;
+    }
+    const crossesMidnight = closeMin < openMin;
+    if (crossesMidnight) {
+      // resultDate - 1 day, in IST.
+      const [y, m, d] = resultDate.split('-').map(Number);
+      const yestMs = Date.UTC(y, m - 1, d) - 24 * 60 * 60 * 1000;
+      setSessionFromDate(ymdInIst(new Date(yestMs)));
+    } else {
+      setSessionFromDate(resultDate);
+    }
+  }, [selectedMarket, resultDate, openTime, closeTime]);
 
   const handleUpdateResult = async () => {
     if (!newResult || isNaN(parseInt(newResult)) || parseInt(newResult) < 0 || parseInt(newResult) > 99) {
@@ -466,21 +491,32 @@ const Table = () => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
-          <div>
-            <label htmlFor="sessionFromDate" className="block text-sm font-medium text-gray-700">Session start date (IST)</label>
-            <input
-              type="date"
-              id="sessionFromDate"
-              value={sessionFromDate}
-              onChange={(e) => setSessionFromDate(e.target.value)}
-              max={ymdInIst(new Date())}
-              className="mt-1 block w-full pl-3 pr-3 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-            />
-            <p className="text-[11px] text-gray-500 mt-1">
-              Disawar / Faridabad etc jo 12 AM ke baad bhi chalti hain — From = <b>kal</b>, To = <b>aaj</b>. Normal markets jo midnight ke pehle band ho jati hain — dono <b>same</b> date.
-            </p>
-          </div>
+        {(() => {
+          const openMin = parseTimeStringToMinutes(openTime);
+          const closeMin = parseTimeStringToMinutes(closeTime);
+          const crossesMidnight = openMin != null && closeMin != null && closeMin < openMin;
+          return (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
+              <div>
+                <label htmlFor="sessionFromDate" className="block text-sm font-medium text-gray-700">Session start date (IST)</label>
+                <input
+                  type="date"
+                  id="sessionFromDate"
+                  value={sessionFromDate}
+                  onChange={(e) => setSessionFromDate(e.target.value)}
+                  max={ymdInIst(new Date())}
+                  className="mt-1 block w-full pl-3 pr-3 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  {crossesMidnight ? (
+                    <span className="text-amber-700">
+                      ⚙️ Auto-detected: <b>{selectedMarket}</b> crosses midnight ({openTime}–{closeTime}). Session start kal pe set kar di hai.
+                    </span>
+                  ) : (
+                    <>Normal day market — session start = result date. Disawar etc me previous day auto-pick hota hai.</>
+                  )}
+                </p>
+              </div>
 
           <div>
             <label htmlFor="resultDate" className="block text-sm font-medium text-gray-700">Result date — session end (IST)</label>
@@ -510,6 +546,8 @@ const Table = () => {
             />
           </div>
         </div>
+            );
+          })()}
 
         <button
           onClick={handleUpdateResult}
