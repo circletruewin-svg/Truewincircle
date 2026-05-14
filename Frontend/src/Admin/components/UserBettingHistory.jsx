@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "../../firebase";
 import Loader from "../../components/Loader";
 import { formatCurrency } from "../../utils/formatMoney";
@@ -8,32 +9,42 @@ import { fetchUserHistoryRecords, summarizeUserHistory } from "../../utils/userH
 const UserBettingHistory = ({ userIdentity, userId }) => {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
 
+  const targetIdentity = userIdentity || userId;
+
+  const fetchAllBetHistory = useCallback(async () => {
+    if (!targetIdentity) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const gameRecords = await fetchUserHistoryRecords(db, targetIdentity);
+      setHistory(
+        [...gameRecords].sort(
+          (a, b) => (toDateValue(b.createdAt)?.getTime() || 0) - (toDateValue(a.createdAt)?.getTime() || 0)
+        )
+      );
+    } catch (error) {
+      console.error("Error fetching bet history:", error);
+    } finally {
+      setLoading(false);
+    }
+  }, [targetIdentity]);
+
+  useEffect(() => { fetchAllBetHistory(); }, [fetchAllBetHistory, refreshKey]);
+
+  // Live tail on harufBets for THIS user so the moment a market is
+  // settled / a new bet placed, the panel re-fetches the full bet
+  // feed and the row's status flips from pending → win/loss without
+  // anybody clicking Refresh.
   useEffect(() => {
-    const fetchAllBetHistory = async () => {
-      const targetIdentity = userIdentity || userId;
-      if (!targetIdentity) {
-        setLoading(false);
-        return;
-      }
-
-      setLoading(true);
-      try {
-        const gameRecords = await fetchUserHistoryRecords(db, targetIdentity);
-        setHistory(
-          [...gameRecords].sort(
-            (a, b) => (toDateValue(b.createdAt)?.getTime() || 0) - (toDateValue(a.createdAt)?.getTime() || 0)
-          )
-        );
-      } catch (error) {
-        console.error("Error fetching bet history:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchAllBetHistory();
-  }, [userIdentity, userId]);
+    const uid = typeof targetIdentity === 'string' ? targetIdentity : targetIdentity?.uid;
+    if (!uid) return undefined;
+    const q = query(collection(db, "harufBets"), where("userId", "==", uid));
+    return onSnapshot(q, () => setRefreshKey((k) => k + 1), () => {});
+  }, [targetIdentity]);
 
   if (loading) {
     return <div className="flex justify-center items-center p-8"><Loader /></div>;
@@ -43,7 +54,13 @@ const UserBettingHistory = ({ userIdentity, userId }) => {
 
   return (
     <div className="bg-gray-50 p-4 md:p-6 rounded-lg shadow-lg mt-6">
-      <h2 className="text-2xl font-bold text-gray-800 mb-4">Betting History</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-2xl font-bold text-gray-800">Betting History</h2>
+        <button
+          onClick={() => setRefreshKey((k) => k + 1)}
+          className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold px-3 py-1.5 rounded"
+        >🔄 Refresh</button>
+      </div>
 
       <div className="grid grid-cols-2 gap-4 mb-4">
         <div className="bg-green-100 p-4 rounded-lg">
