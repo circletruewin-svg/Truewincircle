@@ -525,11 +525,12 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission }) {
   const todayStats = useMemo(() => {
     let bet = 0, won = 0, count = 0;
     const considerBet = (b) => {
-      // Some collections use `timestamp`, others `createdAt`.
+      // Some collections use `timestamp`, others `createdAt`; haruf
+      // stores the payout as `winnings`, every other game as `winAmount`.
       const ts = b.timestamp || b.createdAt;
       if (!isToday(ts)) return;
       bet += Number(b.betAmount || 0);
-      won += Number(b.winAmount || 0);
+      won += Number(b.winAmount ?? b.winnings ?? 0);
       count += 1;
     };
     harufBets.forEach(considerBet);

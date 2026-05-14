@@ -329,17 +329,26 @@ function AdjustWalletModal({ master, player, onClose }) {
 }
 
 // Map a bet doc from one of the game-history collections to a human-
-// readable {title, sub, status} so the player drill-down can show
-// "GALI · Number 04 · Pending" instead of the bare collection name.
+// readable {title, sub, status, winAmount} so the player drill-down
+// can show "GALI · Number 04 · Won · +₹360" instead of the bare
+// collection name. Each game uses slightly different field names
+// (haruf uses status:"win"/"loss" + winnings; aviator uses won bool;
+// etc.) so we normalise here.
 function describeBet(b) {
   switch (b.src) {
     case 'harufBets': {
+      // Haruf settlement (Table.jsx) writes status as 'win' / 'loss'
+      // and the payout into the `winnings` field. Normalise so the
+      // shared status pills work for them too.
       const market = (b.marketName || 'Market').toUpperCase();
       const num = b.selectedNumber != null ? String(b.selectedNumber).padStart(2, '0') : '?';
+      const raw = b.status || 'pending';
+      const status = raw === 'win' ? 'won' : raw === 'loss' ? 'lost' : raw;
       return {
         title: `${market} · ${num}`,
         sub: 'Haruf',
-        status: b.status || 'pending',
+        status,
+        winAmount: Number(b.winnings ?? b.winAmount ?? 0),
       };
     }
     case 'sportsBets': {
@@ -349,6 +358,7 @@ function describeBet(b) {
         title: b.selectionLabel || `${teamA} vs ${teamB}`,
         sub: `Cricket · ${(b.betType || '').replace('Batsman', ' Batsman')}`,
         status: b.status || 'pending',
+        winAmount: Number(b.winAmount || 0),
       };
     }
     case 'aviatorBets':
@@ -358,16 +368,18 @@ function describeBet(b) {
           : `Crashed @ ${Number(b.crashPoint || 0).toFixed(2)}x`,
         sub: 'Aviator',
         status: b.won === true ? 'won' : 'lost',
+        winAmount: Number(b.winAmount || 0),
       };
-    case 'colorBets':       return { title: `Color · ${b.selection || ''}`, sub: 'Color',     status: b.won === true ? 'won' : b.won === false ? 'lost' : 'pending' };
-    case 'diceBets':        return { title: `Dice · ${b.selection || ''}`,  sub: 'Dice',      status: b.won === true ? 'won' : b.won === false ? 'lost' : 'pending' };
-    case 'lucky7History':   return { title: `Lucky 7 · ${b.bet || ''}`,     sub: 'Lucky 7',   status: b.won === true ? 'won' : 'lost' };
-    case 'rouletteHistory': return { title: `Roulette · ${b.label || b.number || ''}`, sub: 'Roulette', status: b.won === true ? 'won' : 'lost' };
+    case 'colorBets':       return { title: `Color · ${b.selection || ''}`, sub: 'Color',     status: b.won === true ? 'won' : b.won === false ? 'lost' : 'pending', winAmount: Number(b.winAmount || 0) };
+    case 'diceBets':        return { title: `Dice · ${b.selection || ''}`,  sub: 'Dice',      status: b.won === true ? 'won' : b.won === false ? 'lost' : 'pending', winAmount: Number(b.winAmount || 0) };
+    case 'lucky7History':   return { title: `Lucky 7 · ${b.bet || ''}`,     sub: 'Lucky 7',   status: b.won === true ? 'won' : 'lost', winAmount: Number(b.winAmount || 0) };
+    case 'rouletteHistory': return { title: `Roulette · ${b.label || b.number || ''}`, sub: 'Roulette', status: b.won === true ? 'won' : 'lost', winAmount: Number(b.winAmount || 0) };
     default:
       return {
         title: b.src.replace(/History|Bets/g, ''),
         sub: '',
         status: b.status || (b.won === true ? 'won' : b.won === false ? 'lost' : 'pending'),
+        winAmount: Number(b.winAmount || 0),
       };
   }
 }
@@ -486,7 +498,7 @@ function PlayerDetailView({ player, master, onBack }) {
                     <p className="text-gray-300">₹{Number(b.betAmount || 0).toFixed(0)}</p>
                     <span className={`inline-block text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full mt-0.5 ${BET_STATUS_BADGE[d.status] || BET_STATUS_BADGE.pending}`}>
                       {d.status}
-                      {d.status === 'won' && b.winAmount > 0 && ` · +₹${Number(b.winAmount).toFixed(0)}`}
+                      {d.status === 'won' && d.winAmount > 0 && ` · +₹${Number(d.winAmount).toFixed(0)}`}
                     </span>
                   </div>
                 </li>

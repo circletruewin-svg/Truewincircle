@@ -176,7 +176,9 @@ export default function AdminCommissionSummary({ userMap }) {
       const row = mid && byId.get(mid);
       if (!row) return;
       row.bet += Number(bet.betAmount || 0);
-      row.won += Number(bet.winAmount || 0);
+      // Haruf saves the payout as `winnings`; every other game as
+      // `winAmount`. Fall back so both count.
+      row.won += Number(bet.winAmount ?? bet.winnings ?? 0);
     };
     haruf.forEach(tally);
     aviator.forEach(tally);
