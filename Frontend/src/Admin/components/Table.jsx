@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase';
-import { collection, query, where, orderBy, limit, getDocs, addDoc, serverTimestamp, doc, setDoc, getDoc, runTransaction, Timestamp } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, getDocs, addDoc, serverTimestamp, doc, setDoc, getDoc, runTransaction, writeBatch, deleteDoc, updateDoc, Timestamp } from 'firebase/firestore';
 import { toast } from 'react-toastify';
 import { markets } from '../../marketData';
 import Loader from '../../components/Loader';
@@ -166,16 +166,24 @@ const Table = () => {
       // reduces to a single IST day.
       const [sessionStart] = istDayRange(sessionFromDate);
       const [, sessionEnd] = istDayRange(resultDate);
+      // The "date" field on the result doc is what the calendar / day
+      // tabs read — it must be the RESULT date (when the number is
+      // declared), NOT the session-start date. Storing sessionStart
+      // here was the bug that pushed Disawar's result onto the
+      // previous-day cell.
+      const [resultDayStart] = istDayRange(resultDate);
       const paddedNumber = parseInt(newResult).toString().padStart(2, '0');
 
       await addDoc(collection(db, "results"), {
         marketName: selectedMarket,
         number: paddedNumber,
-        date: Timestamp.fromDate(sessionStart),
+        date: Timestamp.fromDate(resultDayStart),
+        sessionStart: Timestamp.fromDate(sessionStart),
+        sessionEnd:   Timestamp.fromDate(sessionEnd),
       });
       toast.success(`Result for ${selectedMarket} (${resultDate}) updated successfully!`);
-      // Pass the IST day window — settlement only touches bets placed
-      // on that calendar day so back-filling May 3 doesn't accidentally
+      // Pass the IST window — settlement only touches bets placed
+      // inside it so back-filling a past day doesn't accidentally
       // settle today's bets that haven't been resulted yet.
       await processMarketWinners(selectedMarket, paddedNumber, sessionStart, sessionEnd);
       setNewResult('');
@@ -277,6 +285,151 @@ const Table = () => {
     } catch (e) {
         console.error(`Transaction failed for processing ${marketName} winners: `, e);
         toast.error(`Failed to process bets for ${marketName}. Please check logs.`);
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────
+  // Reverse a previously-applied result: every win/loss-status bet
+  // inside the result's session window goes back to "pending", and
+  // any winnings already credited to a user's winningMoney are
+  // debited. Used by edit + delete on past results.
+  //
+  // The result doc carries sessionStart + sessionEnd for results
+  // written by the new flow; for older docs we fall back to the
+  // doc's `date` field treated as a 24-hour IST window.
+  // ─────────────────────────────────────────────────────────────────
+  const reverseSettlement = async (resultDoc) => {
+    let start = resultDoc.sessionStart?.toDate?.();
+    let end   = resultDoc.sessionEnd?.toDate?.();
+    if (!start || !end) {
+      // Legacy result without explicit session — assume single IST
+      // day matching the doc's `date`.
+      const d = resultDoc.date?.toDate?.();
+      if (!d) throw new Error('Result has no usable date.');
+      const ymd = ymdInIst(d);
+      [start, end] = istDayRange(ymd);
+    }
+
+    // Find every bet on this market/session that was already settled.
+    const settledQ = query(
+      collection(db, 'harufBets'),
+      where('marketName', '==', resultDoc.marketName),
+      where('betType', '==', 'Haruf'),
+    );
+    const snap = await getDocs(settledQ);
+    const inSession = snap.docs.filter((d) => {
+      const data = d.data();
+      const ts = data.timestamp?.toDate?.();
+      if (!ts) return false;
+      if (ts < start || ts > end) return false;
+      return data.status === 'win' || data.status === 'loss';
+    });
+
+    if (inSession.length === 0) return { reversed: 0, debited: 0 };
+
+    // Aggregate winnings to debit per user.
+    const userDebits = new Map();
+    for (const d of inSession) {
+      const data = d.data();
+      if (data.status === 'win') {
+        const w = Number(data.winnings || data.winAmount || 0);
+        if (w > 0) userDebits.set(data.userId, (userDebits.get(data.userId) || 0) + w);
+      }
+    }
+
+    // 1) Reset every bet's status to 'pending', clear winnings.
+    //    writeBatch caps at ~500 ops — chunk to be safe.
+    const refs = inSession.map((d) => d.ref);
+    while (refs.length) {
+      const chunk = refs.splice(0, 400);
+      const batch = writeBatch(db);
+      chunk.forEach((ref) => batch.update(ref, { status: 'pending', winnings: 0 }));
+      await batch.commit();
+    }
+
+    // 2) Debit each user's winningMoney by the amount that was credited.
+    //    One transaction per user so concurrent bets don't race.
+    for (const [userId, amount] of userDebits) {
+      try {
+        await runTransaction(db, async (tx) => {
+          const uRef = doc(db, 'users', userId);
+          const uSnap = await tx.get(uRef);
+          if (!uSnap.exists()) return;
+          const current = Number(uSnap.data().winningMoney || 0);
+          const next = Math.max(0, Math.round((current - amount) * 100) / 100);
+          tx.update(uRef, { winningMoney: next });
+        });
+      } catch (e) {
+        console.error('Failed to debit user', userId, e);
+      }
+    }
+
+    return { reversed: inSession.length, debited: userDebits.size };
+  };
+
+  // Delete a past result doc + reverse its settlement.
+  const handleDeleteResult = async (resultDoc) => {
+    const dateLabel = resultDoc.date?.toDate?.()?.toLocaleDateString('en-IN') || '?';
+    if (!window.confirm(
+      `Delete result?\n\nMarket: ${resultDoc.marketName}\nDate: ${dateLabel}\nNumber: ${resultDoc.number}\n\n` +
+      `Iss session ki saari settled bets pending ho jayengi aur winners ke winningMoney se amount kat jayegi. Sure?`,
+    )) return;
+    setSubmitting(true);
+    try {
+      const out = await reverseSettlement(resultDoc);
+      await deleteDoc(doc(db, 'results', resultDoc.id));
+      toast.success(`Result deleted. ${out.reversed} bets reset, ${out.debited} users debited.`);
+      fetchResultsAndHistory(selectedMarket);
+    } catch (e) {
+      console.error('Delete result failed:', e);
+      toast.error('Delete failed: ' + (e.message || e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Change a past result's number: reverse old, update doc, re-settle.
+  const handleEditResult = async (resultDoc) => {
+    const newNum = window.prompt(
+      `Edit result for ${resultDoc.marketName} (${resultDoc.date?.toDate?.()?.toLocaleDateString('en-IN') || '?'}).\n\n` +
+      `Old number: ${resultDoc.number}\nEnter new number (0–99):`,
+      String(resultDoc.number || ''),
+    );
+    if (newNum === null) return;
+    const parsed = parseInt(newNum, 10);
+    if (Number.isNaN(parsed) || parsed < 0 || parsed > 99) {
+      return toast.error('Number 0-99 ke beech hona chahiye.');
+    }
+    const paddedNew = String(parsed).padStart(2, '0');
+    if (paddedNew === resultDoc.number) {
+      return toast.info('Same number — kuchh badla nahi.');
+    }
+    if (!window.confirm(
+      `Change number ${resultDoc.number} → ${paddedNew}?\n\n` +
+      `Purani winning bets pending ho jayengi (winnings debit), naya number ke according fir se settle hongi.`,
+    )) return;
+
+    setSubmitting(true);
+    try {
+      // 1) Reverse current settlement.
+      const out = await reverseSettlement(resultDoc);
+      // 2) Update result doc with new number.
+      await updateDoc(doc(db, 'results', resultDoc.id), { number: paddedNew });
+      // 3) Re-run settlement with new number across the same session.
+      let start = resultDoc.sessionStart?.toDate?.();
+      let end = resultDoc.sessionEnd?.toDate?.();
+      if (!start || !end) {
+        const ymd = ymdInIst(resultDoc.date?.toDate?.());
+        [start, end] = istDayRange(ymd);
+      }
+      await processMarketWinners(resultDoc.marketName, paddedNew, start, end);
+      toast.success(`Result updated to ${paddedNew}. Reversed ${out.reversed} bets and re-settled.`);
+      fetchResultsAndHistory(selectedMarket);
+    } catch (e) {
+      console.error('Edit result failed:', e);
+      toast.error('Edit failed: ' + (e.message || e));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -415,11 +568,14 @@ const Table = () => {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Date
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Numbers
+                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Number
+                </th>
+                <th scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
                 </th>
               </tr>
             </thead>
@@ -427,23 +583,41 @@ const Table = () => {
               {history.length > 0 ? (
                 history.map((item) => (
                   <tr key={item.id}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {item.date ? item.date.toDate().toLocaleDateString() : 'No date'}
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                      {item.date ? item.date.toDate().toLocaleDateString('en-IN') : 'No date'}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm font-bold text-gray-900">
                       {item.number}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-right space-x-2">
+                      <button
+                        onClick={() => handleEditResult(item)}
+                        disabled={submitting}
+                        className="text-xs bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded"
+                        title="Change this result's number — re-settles all in-session bets"
+                      >Edit</button>
+                      <button
+                        onClick={() => handleDeleteResult(item)}
+                        disabled={submitting}
+                        className="text-xs bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded"
+                        title="Delete this result — reverses settlement, debits winners"
+                      >Delete</button>
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="2" className="px-6 py-4 text-center text-sm text-gray-500">
+                  <td colSpan="3" className="px-4 py-3 text-center text-sm text-gray-500">
                     {loading ? 'Loading history...' : 'No history found.'}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+          <p className="px-4 py-2 text-[11px] text-gray-500 border-t bg-gray-50">
+            <b>Edit</b>: galat number declare ho gaya tha → number badal do, old winnings cancel + new number ke according re-settle.<br />
+            <b>Delete</b>: result hi remove kar do → saari bets pending pe wapas + winners ke winningMoney se amount debit.
+          </p>
         </div>
       </div>
     </div>
