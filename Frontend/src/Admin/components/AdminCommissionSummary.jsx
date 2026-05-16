@@ -186,7 +186,11 @@ export default function AdminCommissionSummary({ userMap }) {
 
     return rows.map((r) => {
       const net = r.bet - r.won;
-      const cut = net > 0 ? Math.round(net * (r.pct / 100) * 100) / 100 : 0;
+      // Commission is on PLAY (turnover) — the total amount the
+      // master's players bet, NOT net profit. If players bet ₹50
+      // total and the rate is 30%, the master owes ₹15 regardless
+      // of whether those bets won or lost.
+      const cut = Math.round(r.bet * (r.pct / 100) * 100) / 100;
       const paid = Math.round((paidByMaster.get(r.id) || 0) * 100) / 100;
       const pending = Math.max(0, Math.round((cut - paid) * 100) / 100);
       return { ...r, net, cut, paid, pending };
@@ -287,7 +291,9 @@ export default function AdminCommissionSummary({ userMap }) {
         </div>
 
         <p className="px-5 py-3 text-[11px] text-gray-500 border-t bg-gray-50">
-          Sources: Haruf + Aviator + Cricket bets today (IST). Pending bets bet me count hote hain, settle hone pe won update hota hai. Pure-reseller masters (0%) yahan nahi dikhte — unka tumhara koi share nahi.
+          Commission <b>PLAY (total bet) pe</b> hai — jitna players ne lagaya uska {''}
+          % admin ka, win/loss se farak nahi. Sources: Haruf + Aviator + Cricket bets
+          today (IST). Pure-reseller masters (0%) yahan nahi dikhte.
         </p>
       </div>
 

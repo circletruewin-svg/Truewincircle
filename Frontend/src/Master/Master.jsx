@@ -68,7 +68,7 @@ function DashboardView({ master, playerCount, onJump }) {
 
       {Number(master.commissionPercent) > 0 && (
         <div className="rounded-2xl border border-blue-400/20 bg-blue-500/5 p-3 text-xs text-blue-100">
-          <b>Note:</b> Tumhare players ke net P&amp;L (bets − wins) me se <b>{master.commissionPercent}%</b> admin ka share hai. Baki tumhara profit.
+          <b>Note:</b> Tumhare players jitna <b>play</b> (total bet) karenge uska <b>{master.commissionPercent}%</b> admin ko jayega. Win/loss se farak nahi — sirf play pe commission.
         </div>
       )}
 

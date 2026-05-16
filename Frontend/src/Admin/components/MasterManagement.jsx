@@ -435,12 +435,13 @@ function CommissionModal({ master, onClose }) {
         </div>
         <div className="p-4 space-y-3 text-sm">
           <p>
-            Master <b>{master.name || '—'}</b> ke players ke net P&L me se admin ka kitna percent share hoga?
+            Master <b>{master.name || '—'}</b> ke players jitna <b>play</b> (total bet) karenge uska kitna % admin ko jayega? (Point khareedne pe nahi — sirf play pe.)
           </p>
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
             <p className="font-bold mb-1">Example</p>
-            Master ne 100 points liye. Player jeeta 100. <b>{pct || 0}%</b> admin ko milega = ₹{((Number(pct) || 0)).toFixed(2)}<br />
-            Master ke paas {((100 - (Number(pct) || 0))).toFixed(2)} bachenge.
+            Master ne 100 point liye. Uske players ne total <b>₹50 ka play</b> kiya.
+            <b> {pct || 0}%</b> admin ko = ₹{(50 * (Number(pct) || 0) / 100).toFixed(2)}.<br />
+            Win/loss se farak nahi — commission sirf total bet (turnover) pe hai.
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1">Percentage (0-100)</label>
@@ -536,9 +537,10 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission }) {
     harufBets.forEach(considerBet);
     aviatorBets.forEach(considerBet);
     sportsBets.forEach(considerBet);
-    const net = bet - won;            // master's net profit BEFORE admin cut
+    const net = bet - won;            // shown for info only
     const pct = Number(master.commissionPercent) || 0;
-    const adminCut = net > 0 ? Math.round(net * (pct / 100) * 100) / 100 : 0;
+    // Commission is on PLAY (turnover) — total bet × %, not net P&L.
+    const adminCut = Math.round(bet * (pct / 100) * 100) / 100;
     return { bet, won, count, net, pct, adminCut };
   }, [harufBets, aviatorBets, sportsBets, todayIST, master.commissionPercent]);
 
@@ -650,7 +652,7 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission }) {
             </p>
           </div>
           <div>
-            <p className="text-[10px] uppercase text-gray-500">Admin's cut @ {todayStats.pct}%</p>
+            <p className="text-[10px] uppercase text-gray-500">Admin's cut @ {todayStats.pct}% of play</p>
             {todayStats.pct > 0 ? (
               <p className="font-bold text-blue-700">{formatCurrency(todayStats.adminCut)}</p>
             ) : (
@@ -659,7 +661,8 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission }) {
           </div>
         </div>
         <p className="text-[11px] text-gray-500 px-4 pb-3">
-          Source: Haruf + Aviator + Cricket bets (today IST). Pending bets bet me count hote hain, settle hone pe won update hota hai.
+          Commission <b>play (total bet) pe</b> hai — win/loss se farak nahi.
+          Source: Haruf + Aviator + Cricket bets (today IST).
         </p>
       </div>
 
