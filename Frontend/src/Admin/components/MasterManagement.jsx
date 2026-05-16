@@ -751,6 +751,71 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission }) {
   );
 }
 
+// Mark commission collected from a master. Partial payments are
+// fully supported — pending just recomputes as (earned − total paid)
+// so leftover carries forward and future commission stacks on top.
+function MarkPaidModal({ master, pending, onClose }) {
+  const [amount, setAmount] = useState(String(pending > 0 ? pending : 0));
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    const v = Number(amount);
+    if (!Number.isFinite(v) || v <= 0) return toast.error('Valid amount daalo.');
+    setBusy(true);
+    try {
+      await addDoc(collection(db, 'masterLedger'), {
+        type: 'commission_paid',
+        masterId: master.id,
+        masterName: master.name || null,
+        amount: v,
+        note: note.trim() || `Commission received ${new Date().toLocaleDateString('en-IN')}`,
+        createdAt: serverTimestamp(),
+      });
+      toast.success(`${formatCurrency(v)} received from ${master.name || 'master'} recorded.`);
+      onClose();
+    } catch (err) {
+      toast.error('Save fail: ' + (err.message || err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white rounded-xl shadow-xl">
+        <div className="border-b p-4 flex justify-between items-center">
+          <h3 className="font-bold text-lg">Mark commission received</h3>
+          <button onClick={onClose} className="text-gray-500 text-2xl">×</button>
+        </div>
+        <div className="p-4 space-y-3 text-sm">
+          <p><b>{master.name || master.id}</b> ka pending commission: <span className="font-bold text-blue-700">{formatCurrency(pending)}</span></p>
+          <p className="text-xs text-gray-600">
+            Partial bhi de sakte ho. Maan lo ₹100 banta hai, abhi ₹50 le liya → ₹50 enter karo. Baaki ₹50 pending rahega aur aage ka commission usme jud ke chadhega.
+          </p>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Amount received (₹)</label>
+            <input type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base" />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Note (optional)</label>
+            <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
+              placeholder="Cash / UPI / part payment"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+          </div>
+        </div>
+        <div className="border-t p-4 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded">Cancel</button>
+          <button onClick={submit} disabled={busy} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded disabled:opacity-40">
+            {busy ? 'Saving…' : '✓ Record payment'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MasterManagement() {
   const [activeMasters, setActiveMasters] = useState([]);
   const [pendingMasters, setPendingMasters] = useState([]);
@@ -758,8 +823,25 @@ export default function MasterManagement() {
   const [createOpen, setCreateOpen] = useState(false);
   const [topUpFor, setTopUpFor] = useState(null);
   const [commissionFor, setCommissionFor] = useState(null);
+  const [markPaidFor, setMarkPaidFor] = useState(null);
   const [search, setSearch] = useState('');
   const [detailMasterId, setDetailMasterId] = useState(null);
+
+  // Date range for the commission view. Default = last 30 days so a
+  // fresh site shows everything; admin can widen / narrow freely.
+  const istYmd = (d) => new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
+  const [rangeFrom, setRangeFrom] = useState(() => istYmd(new Date(Date.now() - 30 * 864e5)));
+  const [rangeTo, setRangeTo] = useState(() => istYmd(new Date()));
+  const rangeStart = useMemo(() => {
+    const [y, m, d] = rangeFrom.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d, 0, 0, 0) - 5.5 * 3600e3);
+  }, [rangeFrom]);
+  const rangeEnd = useMemo(() => {
+    const [y, m, d] = rangeTo.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d, 0, 0, 0) - 5.5 * 3600e3 + 864e5 - 1);
+  }, [rangeTo]);
 
   // Active masters: live `users` docs where role == 'master'. These
   // are the masters who have completed their first OTP login.
@@ -781,20 +863,91 @@ export default function MasterManagement() {
     }, () => setPendingMasters([]));
   }, []);
 
-  // Player counts grouped by master uid — one snapshot, derive locally.
-  // Only active masters can have players (signup needs a real user doc).
+  // Player counts grouped by master uid + a userId→masterId map so we
+  // can attribute each bet to the right master.
   const [playerCounts, setPlayerCounts] = useState({});
+  const [userMasterMap, setUserMasterMap] = useState({});
   useEffect(() => {
     const q = query(collection(db, 'users'), where('role', '==', 'user'));
     return onSnapshot(q, (snap) => {
       const counts = {};
+      const map = {};
       snap.docs.forEach((d) => {
         const m = d.data().assignedMasterId;
-        if (m) counts[m] = (counts[m] || 0) + 1;
+        if (m) { counts[m] = (counts[m] || 0) + 1; map[d.id] = m; }
       });
       setPlayerCounts(counts);
+      setUserMasterMap(map);
     }, () => {});
   }, []);
+
+  // Bets in the selected range (turnover basis for commission) +
+  // commission_paid ledger in range. Three game families cover the
+  // bulk of play; query bounded by the range so reads stay sane.
+  const [haruf, setHaruf] = useState([]);
+  const [aviator, setAviator] = useState([]);
+  const [sports, setSports] = useState([]);
+  const [settlements, setSettlements] = useState([]);
+
+  useEffect(() => {
+    const qH = query(collection(db, 'harufBets'),   where('timestamp', '>=', Timestamp.fromDate(rangeStart)));
+    return onSnapshot(qH, (s) => setHaruf(s.docs.map((d) => ({ id: d.id, ...d.data() }))), () => setHaruf([]));
+  }, [rangeStart]);
+  useEffect(() => {
+    const qA = query(collection(db, 'aviatorBets'), where('createdAt', '>=', Timestamp.fromDate(rangeStart)));
+    return onSnapshot(qA, (s) => setAviator(s.docs.map((d) => ({ id: d.id, ...d.data() }))), () => setAviator([]));
+  }, [rangeStart]);
+  useEffect(() => {
+    const qS = query(collection(db, 'sportsBets'),  where('createdAt', '>=', Timestamp.fromDate(rangeStart)));
+    return onSnapshot(qS, (s) => setSports(s.docs.map((d) => ({ id: d.id, ...d.data() }))), () => setSports([]));
+  }, [rangeStart]);
+  useEffect(() => {
+    const qL = query(
+      collection(db, 'masterLedger'),
+      where('type', '==', 'commission_paid'),
+      where('createdAt', '>=', Timestamp.fromDate(rangeStart)),
+    );
+    return onSnapshot(qL, (s) => setSettlements(s.docs.map((d) => ({ id: d.id, ...d.data() }))), () => setSettlements([]));
+  }, [rangeStart]);
+
+  // Per-master commission for the visible range:
+  //   turnover  = sum of player bets in range
+  //   commission= turnover × master.commissionPercent
+  //   paid      = sum of commission_paid in range
+  //   pending   = commission − paid  (carries forward; partials work)
+  const commissionByMaster = useMemo(() => {
+    const res = {};
+    const within = (ts) => {
+      const d = ts?.toDate?.();
+      return d && d >= rangeStart && d <= rangeEnd;
+    };
+    const addBet = (b) => {
+      const mid = userMasterMap[b.userId];
+      if (!mid) return;
+      const ts = b.timestamp || b.createdAt;
+      if (!within(ts)) return;
+      res[mid] = res[mid] || { turnover: 0, paid: 0 };
+      res[mid].turnover += Number(b.betAmount || 0);
+    };
+    haruf.forEach(addBet);
+    aviator.forEach(addBet);
+    sports.forEach(addBet);
+    for (const s of settlements) {
+      if (!within(s.createdAt)) continue;
+      res[s.masterId] = res[s.masterId] || { turnover: 0, paid: 0 };
+      res[s.masterId].paid += Number(s.amount || 0);
+    }
+    return res;
+  }, [haruf, aviator, sports, settlements, userMasterMap, rangeStart, rangeEnd]);
+
+  const masterCommission = (m) => {
+    const c = commissionByMaster[m.id] || { turnover: 0, paid: 0 };
+    const pct = Number(m.commissionPercent) || 0;
+    const earned = Math.round(c.turnover * (pct / 100) * 100) / 100;
+    const paid = Math.round(c.paid * 100) / 100;
+    const pending = Math.round((earned - paid) * 100) / 100;
+    return { turnover: c.turnover, pct, earned, paid, pending };
+  };
 
   // Combined list — pending masters surface at the top so admin sees
   // the ones that need attention first.
@@ -840,10 +993,17 @@ export default function MasterManagement() {
     let totalPoints = 0;
     let totalPlayers = 0;
     let withCommission = 0;
+    let totalEarned = 0;
+    let totalPaid = 0;
+    let totalPending = 0;
     for (const m of activeMasters) {
       totalPoints += Number(m.balance ?? m.walletBalance ?? 0);
       totalPlayers += (playerCounts[m.id] || 0);
       if (Number(m.commissionPercent) > 0) withCommission++;
+      const cm = masterCommission(m);
+      totalEarned += cm.earned;
+      totalPaid += cm.paid;
+      totalPending += cm.pending;
     }
     return {
       total: activeMasters.length + pendingMasters.length,
@@ -852,8 +1012,12 @@ export default function MasterManagement() {
       totalPoints,
       totalPlayers,
       withCommission,
+      totalEarned: Math.round(totalEarned * 100) / 100,
+      totalPaid: Math.round(totalPaid * 100) / 100,
+      totalPending: Math.round(totalPending * 100) / 100,
     };
-  }, [activeMasters, pendingMasters, playerCounts]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMasters, pendingMasters, playerCounts, commissionByMaster]);
 
   // Drill-down view takes precedence when a master row is clicked.
   const detailMaster = useMemo(
@@ -861,6 +1025,7 @@ export default function MasterManagement() {
     [masters, detailMasterId],
   );
   if (detailMaster) {
+    const cm = masterCommission(detailMaster);
     return (
       <>
         <MasterDetail
@@ -874,6 +1039,9 @@ export default function MasterManagement() {
         )}
         {commissionFor && (
           <CommissionModal master={commissionFor} onClose={() => setCommissionFor(null)} />
+        )}
+        {markPaidFor && (
+          <MarkPaidModal master={markPaidFor} pending={cm.pending} onClose={() => setMarkPaidFor(null)} />
         )}
       </>
     );
@@ -894,29 +1062,54 @@ export default function MasterManagement() {
         </button>
       </div>
 
-      {/* Aggregate stats */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-        <div className="bg-white rounded-xl border p-3">
-          <p className="text-[10px] uppercase text-gray-500">Total Masters</p>
-          <p className="text-2xl font-bold">{aggregate.total}</p>
-          <p className="text-[11px] text-gray-500">{aggregate.active} active · {aggregate.pending} pending</p>
+      {/* Date range — drives every commission number below */}
+      <div className="bg-white rounded-xl border p-4 mb-4">
+        <p className="text-sm font-bold text-gray-700 mb-2">📅 Commission period</p>
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-[11px] uppercase text-gray-500 mb-1">From</label>
+            <input type="date" value={rangeFrom} max={rangeTo}
+              onChange={(e) => setRangeFrom(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label className="block text-[11px] uppercase text-gray-500 mb-1">To</label>
+            <input type="date" value={rangeTo} min={rangeFrom} max={istYmd(new Date())}
+              onChange={(e) => setRangeTo(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div className="flex gap-2 text-xs">
+            <button onClick={() => { const t = istYmd(new Date()); setRangeFrom(t); setRangeTo(t); }}
+              className="bg-gray-100 hover:bg-gray-200 rounded-lg px-3 py-2 font-semibold">Today</button>
+            <button onClick={() => { setRangeFrom(istYmd(new Date(Date.now() - 6 * 864e5))); setRangeTo(istYmd(new Date())); }}
+              className="bg-gray-100 hover:bg-gray-200 rounded-lg px-3 py-2 font-semibold">7 days</button>
+            <button onClick={() => { setRangeFrom(istYmd(new Date(Date.now() - 29 * 864e5))); setRangeTo(istYmd(new Date())); }}
+              className="bg-gray-100 hover:bg-gray-200 rounded-lg px-3 py-2 font-semibold">30 days</button>
+          </div>
         </div>
-        <div className="bg-white rounded-xl border p-3">
-          <p className="text-[10px] uppercase text-gray-500">Total Points Held</p>
-          <p className="text-2xl font-bold text-emerald-700">{formatCurrency(aggregate.totalPoints)}</p>
+      </div>
+
+      {/* Big summary — live */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+        <div className="rounded-2xl bg-gradient-to-br from-slate-700 to-slate-900 text-white p-5">
+          <p className="text-xs uppercase tracking-widest text-white/60">Masters</p>
+          <p className="text-3xl font-black mt-1">{aggregate.active}</p>
+          <p className="text-xs text-white/60 mt-1">{aggregate.pending} pending OTP</p>
         </div>
-        <div className="bg-white rounded-xl border p-3">
-          <p className="text-[10px] uppercase text-gray-500">Total Players</p>
-          <p className="text-2xl font-bold text-blue-700">{aggregate.totalPlayers}</p>
+        <div className="rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-800 text-white p-5">
+          <p className="text-xs uppercase tracking-widest text-white/70">Points held</p>
+          <p className="text-3xl font-black mt-1">{formatCurrency(aggregate.totalPoints)}</p>
+          <p className="text-xs text-white/70 mt-1">{aggregate.totalPlayers} players total</p>
         </div>
-        <div className="bg-white rounded-xl border p-3">
-          <p className="text-[10px] uppercase text-gray-500">With Commission</p>
-          <p className="text-2xl font-bold text-amber-700">{aggregate.withCommission}</p>
-          <p className="text-[11px] text-gray-500">{aggregate.active - aggregate.withCommission} pure resellers</p>
+        <div className="rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 text-white p-5">
+          <p className="text-xs uppercase tracking-widest text-white/70">Commission earned</p>
+          <p className="text-3xl font-black mt-1">{formatCurrency(aggregate.totalEarned)}</p>
+          <p className="text-xs text-white/70 mt-1">received {formatCurrency(aggregate.totalPaid)}</p>
         </div>
-        <div className="bg-white rounded-xl border p-3">
-          <p className="text-[10px] uppercase text-gray-500">Pending OTP</p>
-          <p className="text-2xl font-bold text-rose-700">{aggregate.pending}</p>
+        <div className="rounded-2xl bg-gradient-to-br from-rose-600 to-rose-800 text-white p-5">
+          <p className="text-xs uppercase tracking-widest text-white/80">Pending to collect</p>
+          <p className="text-3xl font-black mt-1">{formatCurrency(aggregate.totalPending)}</p>
+          <p className="text-xs text-white/80 mt-1">selected period</p>
         </div>
       </div>
 
@@ -924,8 +1117,8 @@ export default function MasterManagement() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by name, phone or code…"
-          className="w-full md:w-80 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          placeholder="🔍 Search master by name, phone or code…"
+          className="w-full md:w-96 border border-gray-300 rounded-lg px-4 py-2.5 text-sm"
         />
       </div>
 
@@ -938,93 +1131,117 @@ export default function MasterManagement() {
             : 'No masters match this search.'}
         </div>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto">
-          <table className="w-full min-w-[900px]">
-            <thead className="bg-gray-50 border-b">
-              <tr className="text-xs font-semibold text-gray-600">
-                <th className="p-3 text-left">Master</th>
-                <th className="p-3 text-left">Phone</th>
-                <th className="p-3 text-left">Code</th>
-                <th className="p-3 text-right">Points</th>
-                <th className="p-3 text-center">Players</th>
-                <th className="p-3 text-center">Admin %</th>
-                <th className="p-3 text-center">Status</th>
-                <th className="p-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((m) => (
-                <tr
-                  key={`${m.pending ? 'p_' : 'a_'}${m.id}`}
-                  onClick={() => !m.pending && setDetailMasterId(m.id)}
-                  className={`border-b last:border-0 hover:bg-blue-50 ${m.pending ? 'bg-yellow-50/50' : 'cursor-pointer'}`}
-                  title={m.pending ? '' : 'Click to view full master details'}
-                >
-                  <td className="p-3 text-sm font-semibold">
-                    {m.name || '—'}
-                    {!m.pending && <span className="ml-2 text-[10px] text-blue-600">(click row to view details)</span>}
-                  </td>
-                  <td className="p-3 text-xs text-gray-600">{m.phoneNumber || m.id || '—'}</td>
-                  <td className="p-3 text-xs">
-                    {m.masterCode ? (
-                      <button
-                        onClick={(e) => copy(m.masterCode, 'Code', e)}
-                        className="bg-yellow-100 text-yellow-800 font-mono font-bold px-2 py-0.5 rounded"
-                      >
-                        {m.masterCode}
-                      </button>
-                    ) : <span className="text-gray-400">—</span>}
-                  </td>
-                  <td className="p-3 text-right text-sm font-bold text-emerald-700">
-                    {formatCurrency(m.balance ?? m.walletBalance ?? 0)}
-                  </td>
-                  <td className="p-3 text-center text-sm">
-                    {m.pending ? <span className="text-gray-400">—</span> : (playerCounts[m.id] || 0)}
-                  </td>
-                  <td className="p-3 text-center text-sm">
-                    {Number(m.commissionPercent) > 0
-                      ? <span className="bg-blue-100 text-blue-700 font-bold px-2 py-0.5 rounded-full text-[11px]">{m.commissionPercent}%</span>
-                      : <span className="text-gray-400 text-[11px]">0%</span>}
-                  </td>
-                  <td className="p-3 text-center">
+        <div className="grid gap-4 md:grid-cols-2">
+          {filtered.map((m) => {
+            const cm = m.pending ? { turnover: 0, pct: 0, earned: 0, paid: 0, pending: 0 } : masterCommission(m);
+            return (
+              <div
+                key={`${m.pending ? 'p_' : 'a_'}${m.id}`}
+                className={`rounded-2xl border-2 p-4 transition ${
+                  m.pending ? 'bg-amber-50 border-amber-200'
+                            : 'bg-white border-gray-200 hover:border-blue-300 hover:shadow-md'
+                }`}
+              >
+                {/* Header row */}
+                <div className="flex items-start justify-between gap-3">
+                  <div
+                    className={!m.pending ? 'cursor-pointer' : ''}
+                    onClick={() => !m.pending && setDetailMasterId(m.id)}
+                  >
+                    <p className="text-lg font-black text-gray-800">{m.name || '—'}</p>
+                    <p className="text-xs text-gray-500">{m.phoneNumber || m.id || '—'}</p>
+                  </div>
+                  <div className="text-right">
                     {m.pending
-                      ? <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">PENDING OTP</span>
-                      : <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">ACTIVE</span>}
-                  </td>
-                  <td className="p-3 text-right space-x-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      ? <span className="text-[10px] bg-amber-200 text-amber-800 px-2 py-1 rounded-full font-bold">PENDING OTP</span>
+                      : <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full font-bold">● ACTIVE</span>}
                     {m.masterCode && (
                       <button
-                        onClick={(e) => copy(buildMasterReferralLink(m.masterCode), 'Link', e)}
-                        className="text-xs bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded"
-                        title="Copy share link"
-                      >Link</button>
+                        onClick={(e) => copy(m.masterCode, 'Code', e)}
+                        className="block mt-1.5 bg-yellow-100 text-yellow-800 font-mono font-bold px-2 py-0.5 rounded text-xs"
+                      >{m.masterCode}</button>
                     )}
-                    {!m.pending && (
-                      <button
-                        onClick={() => setCommissionFor(m)}
-                        className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded"
-                        title="Set admin's commission percent on this master's player P&L"
-                      >Set %</button>
-                    )}
+                  </div>
+                </div>
+
+                {/* Money row */}
+                <div className="grid grid-cols-4 gap-2 mt-4 text-center">
+                  <div className="bg-emerald-50 rounded-lg py-2">
+                    <p className="text-[9px] uppercase text-gray-500">Points</p>
+                    <p className="text-sm font-bold text-emerald-700">{formatCurrency(m.balance ?? m.walletBalance ?? 0)}</p>
+                  </div>
+                  <div className="bg-blue-50 rounded-lg py-2">
+                    <p className="text-[9px] uppercase text-gray-500">Players</p>
+                    <p className="text-sm font-bold text-blue-700">{m.pending ? '—' : (playerCounts[m.id] || 0)}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg py-2">
+                    <p className="text-[9px] uppercase text-gray-500">Admin %</p>
+                    <p className="text-sm font-bold text-gray-700">{cm.pct}%</p>
+                  </div>
+                  <div className="bg-indigo-50 rounded-lg py-2">
+                    <p className="text-[9px] uppercase text-gray-500">Play</p>
+                    <p className="text-sm font-bold text-indigo-700">{formatCurrency(cm.turnover)}</p>
+                  </div>
+                </div>
+
+                {/* Commission strip */}
+                {!m.pending && cm.pct > 0 && (
+                  <div className="mt-3 rounded-xl bg-gradient-to-r from-blue-50 to-rose-50 border border-blue-100 p-3 flex items-center justify-between">
+                    <div className="text-xs">
+                      <span className="text-gray-600">Earned </span>
+                      <span className="font-bold text-blue-700">{formatCurrency(cm.earned)}</span>
+                      <span className="text-gray-400"> · paid </span>
+                      <span className="font-bold text-emerald-700">{formatCurrency(cm.paid)}</span>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[9px] uppercase text-gray-500">Pending</p>
+                      <p className={`text-lg font-black ${cm.pending > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                        {formatCurrency(cm.pending)}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {!m.pending && (
                     <button
-                      onClick={() => setTopUpFor(m)}
-                      className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-1 rounded"
-                    >+ / − Points</button>
-                    {m.pending && (
-                      <button
-                        onClick={() => cancelPending(m)}
-                        className="text-xs bg-rose-500 hover:bg-rose-700 text-white px-2 py-1 rounded"
-                        title="Cancel pending master"
-                      >Cancel</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="text-[11px] text-gray-500 px-4 py-2 border-t bg-gray-50">
-            <b>PENDING OTP</b> = master ne abhi tak pehli baar login nahi kiya. Unhe phone share karke OTP karwao — automatically <b>ACTIVE</b> ho jayenge.
-          </p>
+                      onClick={() => setDetailMasterId(m.id)}
+                      className="flex-1 min-w-[80px] text-xs bg-slate-700 hover:bg-slate-800 text-white font-bold py-2 rounded-lg"
+                    >View</button>
+                  )}
+                  {!m.pending && cm.pending > 0 && (
+                    <button
+                      onClick={() => setMarkPaidFor(m)}
+                      className="flex-1 min-w-[90px] text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-lg"
+                    >Mark Paid</button>
+                  )}
+                  {!m.pending && (
+                    <button
+                      onClick={() => setCommissionFor(m)}
+                      className="flex-1 min-w-[70px] text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg"
+                    >Set %</button>
+                  )}
+                  <button
+                    onClick={() => setTopUpFor(m)}
+                    className="flex-1 min-w-[90px] text-xs bg-amber-500 hover:bg-amber-600 text-white font-bold py-2 rounded-lg"
+                  >+/− Points</button>
+                  {m.masterCode && (
+                    <button
+                      onClick={(e) => copy(buildMasterReferralLink(m.masterCode), 'Link', e)}
+                      className="flex-1 min-w-[60px] text-xs bg-gray-200 hover:bg-gray-300 font-bold py-2 rounded-lg"
+                    >Link</button>
+                  )}
+                  {m.pending && (
+                    <button
+                      onClick={() => cancelPending(m)}
+                      className="flex-1 min-w-[70px] text-xs bg-rose-500 hover:bg-rose-700 text-white font-bold py-2 rounded-lg"
+                    >Cancel</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -1036,6 +1253,13 @@ export default function MasterManagement() {
       )}
       {commissionFor && (
         <CommissionModal master={commissionFor} onClose={() => setCommissionFor(null)} />
+      )}
+      {markPaidFor && (
+        <MarkPaidModal
+          master={markPaidFor}
+          pending={masterCommission(markPaidFor).pending}
+          onClose={() => setMarkPaidFor(null)}
+        />
       )}
     </div>
   );
