@@ -86,6 +86,17 @@ function CreateMasterModal({ onClose, onCreated }) {
     setBusy(true);
     try {
       const existing = await findExistingUserByPhone(e164);
+      // A user who already belongs to a master can NOT be promoted —
+      // doing so would silently sever their master link. Admin must
+      // first detach them (AllUsers → Assign to Master → Remove).
+      if (existing && existing.data().assignedMasterId) {
+        toast.error(
+          'Ye user pehle se ek master ke under hai. Pehle AllUsers me ja kar ' +
+          '"Assign to Master → Remove from master" karo, tabhi master bana paoge.',
+          { autoClose: 7000 },
+        );
+        return;
+      }
       const code = await pickUnusedMasterCode();
       setPendingCode(code);
       if (existing) {
@@ -106,6 +117,10 @@ function CreateMasterModal({ onClose, onCreated }) {
   // Step 2a (existing user) → flip role to master + sum balances.
   const confirmExisting = async () => {
     if (!resolved) return;
+    if (resolved.data.assignedMasterId) {
+      toast.error('Ye user ek master ke under hai — pehle use us master se hatao.');
+      return;
+    }
     setBusy(true);
     try {
       const existingBalance = Number(resolved.data.balance ?? resolved.data.walletBalance ?? 0);
