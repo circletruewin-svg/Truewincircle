@@ -1058,8 +1058,8 @@ export default function MasterManagement() {
         const ids = playersByMaster[m.id] || [];
         if (ids.length === 0) continue;
         // eslint-disable-next-line no-await-in-loop
-        const credited = await reconcileMasterPlayEarnings(db, m, ids);
-        total += credited || 0;
+        const res = await reconcileMasterPlayEarnings(db, m, ids);
+        total += (res && res.credited) || 0;
       }
       if (!silent) {
         toast.success(total > 0

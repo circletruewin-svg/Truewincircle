@@ -703,6 +703,34 @@ function EarningsView({ master, players }) {
 
   const earned = turnover == null ? null : Math.round(turnover * (pct / 100) * 100) / 100;
 
+  // Manual sync — also the fastest way to diagnose. Surfaces the
+  // exact result / error instead of swallowing it like the
+  // background 30s reconcile does.
+  const [syncBusy, setSyncBusy] = useState(false);
+  const syncNow = async () => {
+    if (playerIds.length === 0) {
+      toast.error('Tumhare under koi player nahi (ya player assigned nahi). Admin se check karwao.');
+      return;
+    }
+    setSyncBusy(true);
+    try {
+      const res = await reconcileMasterPlayEarnings(
+        db, { id: master.uid, ...master }, playerIds,
+      );
+      if (res.credited > 0) {
+        toast.success(`₹${res.credited} tumhare points me add ho gaye! (Total play ₹${res.turnover}, ${res.pct}%)`);
+      } else {
+        toast.info(`Total play ₹${res.turnover}. Naya kuch add nahi — sab pehle hi credit ho chuka hai.`);
+      }
+      load();
+    } catch (err) {
+      console.error('Sync failed:', err);
+      toast.error('Sync fail: ' + (err?.code || err?.message || 'unknown — admin ko batao'));
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
   return (
     <div className="p-4 md:p-6 space-y-4">
       <h2 className="text-lg font-bold text-white">My Earnings</h2>
@@ -751,9 +779,18 @@ function EarningsView({ master, players }) {
         </div>
       </div>
 
+      <button
+        onClick={syncNow}
+        disabled={syncBusy}
+        className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-black rounded-xl py-3"
+      >
+        {syncBusy ? 'Syncing…' : '💰 Sync earnings to my wallet now'}
+      </button>
+
       <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/5 p-3 text-xs text-emerald-100">
-        Ye points tumhare wallet me auto credit hote rehte hain (live). Withdraw nahi hote — sirf
-        apne players ko aage de sakte ho. Admin ka apna commission % isse alag hai.
+        Ye points tumhare wallet me auto credit hote rehte hain (har 30s, live). Withdraw nahi
+        hote — sirf apne players ko aage de sakte ho. Admin ka apna commission % isse alag hai.
+        Agar turant chahiye to upar "Sync now" daba do.
       </div>
     </div>
   );

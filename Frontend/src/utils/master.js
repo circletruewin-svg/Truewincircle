@@ -133,7 +133,8 @@ export async function reconcileMasterPlayEarnings(db, master, playerIds) {
       });
     } catch { /* ledger is best-effort */ }
   }
-  return credited;
+  // Return rich result so callers can show a clear toast / diagnose.
+  return { turnover, credited, pct };
 }
 
 // Unique short code stamped on every master account, used in the
