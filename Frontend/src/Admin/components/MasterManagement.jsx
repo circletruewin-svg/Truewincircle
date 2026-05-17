@@ -1074,12 +1074,18 @@ export default function MasterManagement() {
     }
   };
 
+  // Auto-reconcile on first data + then every 20s while the tab is
+  // open, so masters' earnings keep crediting live even when no
+  // master has their own panel open. Fully automatic, no button.
   useEffect(() => {
-    if (reconciledRef.current) return;
-    if (activeMasters.length === 0) return;
-    if (Object.keys(userMasterMap).length === 0) return;
-    reconciledRef.current = true;
-    runReconcile(true); // silent on auto-run
+    if (activeMasters.length === 0) return undefined;
+    if (Object.keys(userMasterMap).length === 0) return undefined;
+    if (!reconciledRef.current) {
+      reconciledRef.current = true;
+      runReconcile(true);
+    }
+    const id = setInterval(() => runReconcile(true), 20000);
+    return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeMasters, userMasterMap]);
 

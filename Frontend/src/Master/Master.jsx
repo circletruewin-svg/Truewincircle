@@ -681,62 +681,45 @@ function EarningsView({ master, players }) {
     return { start, end };
   }, [fromYmd, toYmd]);
 
+  const [lastSync, setLastSync] = useState(null);
+
+  // One cycle = recompute the displayed turnover AND silently run the
+  // reconcile so the wallet credits itself. No button anywhere — this
+  // just keeps running every 12s while the tab is open.
   const load = useCallback(async () => {
     if (playerIds.length === 0) { setTurnover(0); return; }
     setBusy(true);
     try {
       const t = await sumPlayerTurnover(db, playerIds, range.start, range.end);
       setTurnover(t);
+      // Silent auto-credit. Errors are intentionally swallowed here
+      // (the master can't act on them) — admin panel surfaces issues.
+      try {
+        await reconcileMasterPlayEarnings(db, { id: master.uid, ...master }, playerIds);
+        setLastSync(new Date());
+      } catch { /* next cycle retries */ }
     } catch {
       setTurnover(0);
     } finally {
       setBusy(false);
     }
-  }, [playerIds, range.start, range.end]);
+  }, [playerIds, range.start, range.end, master]);
 
   useEffect(() => { load(); }, [load]);
-  // Keep it live — refresh every 25s while this tab is open.
+  // Fully automatic + live — every 12s, no refresh, no button.
   useEffect(() => {
-    const id = setInterval(load, 25000);
+    const id = setInterval(load, 12000);
     return () => clearInterval(id);
   }, [load]);
 
   const earned = turnover == null ? null : Math.round(turnover * (pct / 100) * 100) / 100;
-
-  // Manual sync — also the fastest way to diagnose. Surfaces the
-  // exact result / error instead of swallowing it like the
-  // background 30s reconcile does.
-  const [syncBusy, setSyncBusy] = useState(false);
-  const syncNow = async () => {
-    if (playerIds.length === 0) {
-      toast.error('Tumhare under koi player nahi (ya player assigned nahi). Admin se check karwao.');
-      return;
-    }
-    setSyncBusy(true);
-    try {
-      const res = await reconcileMasterPlayEarnings(
-        db, { id: master.uid, ...master }, playerIds,
-      );
-      if (res.credited > 0) {
-        toast.success(`₹${res.credited} tumhare points me add ho gaye! (Total play ₹${res.turnover}, ${res.pct}%)`);
-      } else {
-        toast.info(`Total play ₹${res.turnover}. Naya kuch add nahi — sab pehle hi credit ho chuka hai.`);
-      }
-      load();
-    } catch (err) {
-      console.error('Sync failed:', err);
-      toast.error('Sync fail: ' + (err?.code || err?.message || 'unknown — admin ko batao'));
-    } finally {
-      setSyncBusy(false);
-    }
-  };
 
   return (
     <div className="p-4 md:p-6 space-y-4">
       <h2 className="text-lg font-bold text-white">My Earnings</h2>
       <p className="text-xs text-gray-400">
         Tumhare players jitna <b>play</b> karte hain uska <b>{pct}%</b> tumhare points me
-        auto add hota hai. Niche kisi bhi date range ka hisaab dekho. (Live — har 25s update.)
+        auto add hota hai. Niche kisi bhi date range ka hisaab dekho. (Live — automatic, har 12s.)
       </p>
 
       <div className="rounded-2xl bg-[#0d1228] border border-white/5 p-3 grid grid-cols-2 gap-2">
@@ -779,19 +762,22 @@ function EarningsView({ master, players }) {
         </div>
       </div>
 
-      <button
-        onClick={syncNow}
-        disabled={syncBusy}
-        className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-black rounded-xl py-3"
-      >
-        {syncBusy ? 'Syncing…' : '💰 Sync earnings to my wallet now'}
-      </button>
-
-      <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/5 p-3 text-xs text-emerald-100">
-        Ye points tumhare wallet me auto credit hote rehte hain (har 30s, live). Withdraw nahi
-        hote — sirf apne players ko aage de sakte ho. Admin ka apna commission % isse alag hai.
-        Agar turant chahiye to upar "Sync now" daba do.
+      <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/5 p-3 text-xs text-emerald-100 flex items-center justify-between gap-3">
+        <span>
+          Ye points tumhare wallet me <b>automatically</b> add hote rehte hain — har 12 second,
+          bina kuchh kiye. Withdraw nahi hote, sirf apne players ko aage de sakte ho.
+        </span>
+        <span className="shrink-0 flex items-center gap-1.5 text-emerald-300">
+          <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+          {busy ? 'syncing…' : lastSync ? 'live' : '…'}
+        </span>
       </div>
+      {playerIds.length === 0 && (
+        <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3 text-xs text-rose-200">
+          Tumhare under koi player linked nahi hai — isliye earning 0 hai. Admin se bolo
+          tumhare players ko tumse assign kare (All Users → player → master assign).
+        </div>
+      )}
     </div>
   );
 }
@@ -1715,7 +1701,7 @@ export default function MasterDashboard() {
       finally { reconcileBusy.current = false; }
     };
     tick();
-    const id = setInterval(tick, 30000);
+    const id = setInterval(tick, 15000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, players.length, master.playEarnPercent]);
