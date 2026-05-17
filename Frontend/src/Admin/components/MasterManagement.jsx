@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection, onSnapshot, query, where, doc, getDoc, getDocs, setDoc,
   serverTimestamp, runTransaction, addDoc, limit, updateDoc, deleteDoc,
@@ -7,7 +7,10 @@ import {
 import { db } from '../../firebase';
 import { toast } from 'react-toastify';
 import { formatCurrency } from '../../utils/formatMoney';
-import { buildMasterReferralLink, generateMasterCode } from '../../utils/master';
+import {
+  buildMasterReferralLink, generateMasterCode,
+  reconcileMasterPlayEarnings, DEFAULT_MASTER_EARN_PCT,
+} from '../../utils/master';
 
 // ─────────────────────────────────────────────────────────────────
 // Admin's "Master Management" tab — sits alongside All Users and is
@@ -752,6 +755,72 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission }) {
   );
 }
 
+// Set the master's auto-earn % — what share of their players' total
+// play gets auto-credited into the master's points pool. Separate
+// from the admin commission %. Default 10%.
+function EarnPctModal({ master, onClose }) {
+  const [pct, setPct] = useState(String(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT));
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    const n = Number(pct);
+    if (!Number.isFinite(n) || n < 0 || n > 100) return toast.error('0–100 ke beech daalo.');
+    setBusy(true);
+    try {
+      await updateDoc(doc(db, 'users', master.id), {
+        playEarnPercent: Math.round(n * 100) / 100,
+      });
+      toast.success(`Master earn % set to ${n}%`);
+      onClose();
+    } catch (err) {
+      toast.error('Save fail: ' + (err.message || err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white rounded-xl shadow-xl">
+        <div className="border-b p-4 flex justify-between items-center">
+          <h3 className="font-bold text-lg">Master auto-earn %</h3>
+          <button onClick={onClose} className="text-gray-500 text-2xl">×</button>
+        </div>
+        <div className="p-4 space-y-3 text-sm">
+          <p>
+            <b>{master.name || '—'}</b> ke players jitna <b>play</b> karenge uska
+            kitna % automatically <b>master ke points me</b> add ho jaye?
+          </p>
+          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-900">
+            Example: players ne ₹1000 ka play kiya, earn % = <b>{pct || 0}%</b> →
+            master ke points me <b>₹{((Number(pct) || 0) * 10).toFixed(2)}</b> auto add.
+            Ye points master withdraw nahi kar sakta — sirf aage players ko de sakta hai.
+            (Admin ka apna commission % isse alag hai.)
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Earn % (0–100)</label>
+            <input type="number" min="0" max="100" step="0.5" value={pct}
+              onChange={(e) => setPct(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base" />
+          </div>
+          <div className="grid grid-cols-5 gap-2 text-xs">
+            {[0, 5, 10, 15, 20].map((v) => (
+              <button key={v} onClick={() => setPct(String(v))}
+                className="bg-gray-100 hover:bg-gray-200 rounded-lg py-1.5">{v}%</button>
+            ))}
+          </div>
+        </div>
+        <div className="border-t p-4 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded">Cancel</button>
+          <button onClick={submit} disabled={busy} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded disabled:opacity-40">
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Mark commission collected from a master. Partial payments are
 // fully supported — pending just recomputes as (earned − total paid)
 // so leftover carries forward and future commission stacks on top.
@@ -824,7 +893,10 @@ export default function MasterManagement() {
   const [createOpen, setCreateOpen] = useState(false);
   const [topUpFor, setTopUpFor] = useState(null);
   const [commissionFor, setCommissionFor] = useState(null);
+  const [earnPctFor, setEarnPctFor] = useState(null);
   const [markPaidFor, setMarkPaidFor] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const reconciledRef = useRef(false);
   const [search, setSearch] = useState('');
   const [detailMasterId, setDetailMasterId] = useState(null);
 
@@ -950,6 +1022,55 @@ export default function MasterManagement() {
     return { turnover: c.turnover, pct, earned, paid, pending };
   };
 
+  // masterId → [playerIds], inverted from userMasterMap.
+  const playersByMaster = useMemo(() => {
+    const m = {};
+    for (const [uid, mid] of Object.entries(userMasterMap)) {
+      (m[mid] = m[mid] || []).push(uid);
+    }
+    return m;
+  }, [userMasterMap]);
+
+  // Auto play-earning reconcile. Runs once per mount when masters +
+  // player map are ready (admin opening this tab IS the trigger), and
+  // can be re-run on demand with the "Sync earnings" button. The
+  // helper is idempotent — only ever credits NEW play, never double.
+  const runReconcile = async (silent) => {
+    if (syncing) return;
+    setSyncing(true);
+    let total = 0;
+    try {
+      for (const m of activeMasters) {
+        const pct = Number(m.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT);
+        if (pct <= 0) continue;
+        const ids = playersByMaster[m.id] || [];
+        if (ids.length === 0) continue;
+        // eslint-disable-next-line no-await-in-loop
+        const credited = await reconcileMasterPlayEarnings(db, m, ids);
+        total += credited || 0;
+      }
+      if (!silent) {
+        toast.success(total > 0
+          ? `Earnings synced — ${formatCurrency(total)} credited across masters.`
+          : 'Earnings already up to date.');
+      }
+    } catch (err) {
+      console.error('Reconcile failed:', err);
+      if (!silent) toast.error('Sync failed: ' + (err.message || err));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (reconciledRef.current) return;
+    if (activeMasters.length === 0) return;
+    if (Object.keys(userMasterMap).length === 0) return;
+    reconciledRef.current = true;
+    runReconcile(true); // silent on auto-run
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMasters, userMasterMap]);
+
   // Combined list — pending masters surface at the top so admin sees
   // the ones that need attention first.
   const masters = useMemo(
@@ -1041,6 +1162,9 @@ export default function MasterManagement() {
         {commissionFor && (
           <CommissionModal master={commissionFor} onClose={() => setCommissionFor(null)} />
         )}
+        {earnPctFor && (
+          <EarnPctModal master={earnPctFor} onClose={() => setEarnPctFor(null)} />
+        )}
         {markPaidFor && (
           <MarkPaidModal master={markPaidFor} pending={cm.pending} onClose={() => setMarkPaidFor(null)} />
         )}
@@ -1055,12 +1179,22 @@ export default function MasterManagement() {
           <h2 className="text-2xl font-bold text-gray-800">👥 Master Management</h2>
           <p className="text-sm text-gray-600">Resellers / agents who handle their own players.</p>
         </div>
-        <button
-          onClick={() => setCreateOpen(true)}
-          className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded"
-        >
-          + Create master
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => runReconcile(false)}
+            disabled={syncing}
+            className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded"
+            title="Recompute every master's auto play-earnings now"
+          >
+            {syncing ? 'Syncing…' : '🔄 Sync earnings'}
+          </button>
+          <button
+            onClick={() => setCreateOpen(true)}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded"
+          >
+            + Create master
+          </button>
+        </div>
       </div>
 
       {/* Date range — drives every commission number below */}
@@ -1179,10 +1313,14 @@ export default function MasterManagement() {
                     <p className="text-[9px] uppercase text-gray-500">Admin %</p>
                     <p className="text-sm font-bold text-gray-700">{cm.pct}%</p>
                   </div>
-                  <div className="bg-indigo-50 rounded-lg py-2">
-                    <p className="text-[9px] uppercase text-gray-500">Play</p>
-                    <p className="text-sm font-bold text-indigo-700">{formatCurrency(cm.turnover)}</p>
+                  <div className="bg-emerald-50 rounded-lg py-2">
+                    <p className="text-[9px] uppercase text-gray-500">Earn %</p>
+                    <p className="text-sm font-bold text-emerald-700">{Number(m.playEarnPercent ?? 10)}%</p>
                   </div>
+                </div>
+                <div className="mt-2 bg-indigo-50 rounded-lg py-2 text-center">
+                  <p className="text-[9px] uppercase text-gray-500">Total Play (period)</p>
+                  <p className="text-sm font-bold text-indigo-700">{formatCurrency(cm.turnover)}</p>
                 </div>
 
                 {/* Commission strip */}
@@ -1221,7 +1359,15 @@ export default function MasterManagement() {
                     <button
                       onClick={() => setCommissionFor(m)}
                       className="flex-1 min-w-[70px] text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg"
-                    >Set %</button>
+                      title="Admin's commission % collected FROM this master"
+                    >Admin %</button>
+                  )}
+                  {!m.pending && (
+                    <button
+                      onClick={() => setEarnPctFor(m)}
+                      className="flex-1 min-w-[70px] text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-lg"
+                      title="Master's auto-earn % of player play, credited to their points"
+                    >Earn %</button>
                   )}
                   <button
                     onClick={() => setTopUpFor(m)}
@@ -1254,6 +1400,9 @@ export default function MasterManagement() {
       )}
       {commissionFor && (
         <CommissionModal master={commissionFor} onClose={() => setCommissionFor(null)} />
+      )}
+      {earnPctFor && (
+        <EarnPctModal master={earnPctFor} onClose={() => setEarnPctFor(null)} />
       )}
       {markPaidFor && (
         <MarkPaidModal
