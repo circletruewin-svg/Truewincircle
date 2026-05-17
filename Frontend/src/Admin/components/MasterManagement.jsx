@@ -1198,15 +1198,11 @@ export default function MasterManagement() {
           <h2 className="text-2xl font-bold text-gray-800">👥 Master Management</h2>
           <p className="text-sm text-gray-600">Resellers / agents who handle their own players.</p>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => runReconcile(false)}
-            disabled={syncing}
-            className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded"
-            title="Recompute every master's auto play-earnings now"
-          >
-            {syncing ? 'Syncing…' : '🔄 Sync earnings'}
-          </button>
+        <div className="flex items-center gap-3">
+          <span className="hidden sm:flex items-center gap-1.5 text-xs text-emerald-600 font-semibold">
+            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+            {syncing ? 'syncing…' : 'auto-syncing live'}
+          </span>
           <button
             onClick={() => setCreateOpen(true)}
             className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded"
