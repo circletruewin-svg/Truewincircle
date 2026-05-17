@@ -578,6 +578,28 @@ function AddPlayerView({ masterUid, onCreated }) {
 
     setBusy(true);
     try {
+      // Guard against duplicates — same phone creating two player
+      // docs (double-tap, or "create again" after a few minutes).
+      // Skip the check only when no phone was entered (truly offline
+      // walk-in players with no number on file).
+      if (cleanPhone) {
+        const e164 = '+91' + cleanPhone;
+        const dupQ = query(
+          collection(db, 'users'),
+          where('phoneNumber', '==', e164),
+          limit(1),
+        );
+        const dup = await getDocs(dupQ);
+        if (!dup.empty) {
+          const d = dup.docs[0].data();
+          setBusy(false);
+          toast.error(
+            `Is phone (${e164}) se player pehle se hai: "${d.name || '—'}". Dobara mat banao.`,
+          );
+          return;
+        }
+      }
+
       const offlineUid = `offline-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       await setDoc(doc(db, 'users', offlineUid), {
         name: trimmedName,
