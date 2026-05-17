@@ -992,21 +992,79 @@ export default function MasterManagement() {
     [masterReqs],
   );
 
-  // Approve a master request: deposit → credit master points,
-  // withdrawal → debit. Atomic, logged to masterLedger.
+  // Decide a master request.
+  //   deposit  approve → credit master points
+  //   withdraw approve → points ALREADY deducted at request time
+  //                      (req.debited), so do NOT deduct again —
+  //                      just mark approved (admin paid the cash out).
+  //   withdraw reject  → REFUND the points back to the master.
+  //   deposit  reject  → nothing to refund (no debit happened).
+  // Atomic, logged to masterLedger.
   const decideMasterReq = async (req, action) => {
     setReqBusy(req.id);
     try {
-      if (action === 'rejected') {
-        const reason = window.prompt('Reject reason (optional):', '') ?? '';
-        await updateDoc(doc(db, 'masterRequests', req.id), {
-          status: 'rejected', adminComment: reason.trim() || null,
-        });
-        toast.info('Request rejected.');
-        return;
-      }
       const amount = Number(req.amount || 0);
       if (!(amount > 0)) { toast.error('Invalid amount.'); return; }
+      const isWithdraw = req.type === 'withdrawal';
+      const wasDebited = req.debited === true; // new immediate-deduct flow
+
+      if (action === 'rejected') {
+        const reason = window.prompt('Reject reason (optional):', '') ?? '';
+        if (isWithdraw && wasDebited) {
+          // Refund the points we held when the request was placed.
+          await runTransaction(db, async (tx) => {
+            const mRef = doc(db, 'users', req.masterId);
+            const rRef = doc(db, 'masterRequests', req.id);
+            const mSnap = await tx.get(mRef);
+            const rSnap = await tx.get(rRef);
+            if (!mSnap.exists()) throw new Error('Master not found.');
+            if (!rSnap.exists() || rSnap.data().status !== 'pending') throw new Error('Already processed.');
+            const cur = Number(mSnap.data().balance ?? mSnap.data().walletBalance ?? 0);
+            const nb = Math.round((cur + amount) * 100) / 100;
+            tx.update(mRef, { balance: nb, walletBalance: nb });
+            tx.update(rRef, { status: 'rejected', adminComment: reason.trim() || null });
+          });
+          await addDoc(collection(db, 'masterLedger'), {
+            type: 'master_withdraw_refund',
+            masterId: req.masterId,
+            masterName: req.masterName || null,
+            amount,
+            note: 'Withdrawal request rejected — points refunded',
+            createdAt: serverTimestamp(),
+          });
+          toast.info(`Rejected — ${formatCurrency(amount)} points wapas master ko refund kar diye.`);
+        } else {
+          await updateDoc(doc(db, 'masterRequests', req.id), {
+            status: 'rejected', adminComment: reason.trim() || null,
+          });
+          toast.info('Request rejected.');
+        }
+        return;
+      }
+
+      // action === 'approved'
+      if (isWithdraw && wasDebited) {
+        // Points already deducted at request time. Just close it out.
+        await runTransaction(db, async (tx) => {
+          const rRef = doc(db, 'masterRequests', req.id);
+          const rSnap = await tx.get(rRef);
+          if (!rSnap.exists() || rSnap.data().status !== 'pending') throw new Error('Already processed.');
+          tx.update(rRef, { status: 'approved' });
+        });
+        await addDoc(collection(db, 'masterLedger'), {
+          type: 'master_to_admin',
+          masterId: req.masterId,
+          masterName: req.masterName || null,
+          amount,
+          note: 'Master withdrawal request approved (points pre-deducted)',
+          createdAt: serverTimestamp(),
+        });
+        toast.success(`Withdrawal approved — ${formatCurrency(amount)} cash out karo.`);
+        return;
+      }
+
+      // deposit approve (or legacy withdrawal without pre-deduct):
+      // adjust master balance now.
       await runTransaction(db, async (tx) => {
         const mRef = doc(db, 'users', req.masterId);
         const rRef = doc(db, 'masterRequests', req.id);

@@ -852,6 +852,9 @@ function AdminRequestsView({ master }) {
     };
 
     if (type === 'withdrawal') {
+      if (v < 200) {
+        return toast.error('Minimum ₹200 ka withdrawal request daal sakte ho.');
+      }
       if (v > withdrawable) {
         return toast.error(`Sirf ${formatCurrency(withdrawable)} withdraw ho sakta hai. Earned points (${formatCurrency(earnedLocked)}) locked hain — vo sirf players ko de sakte ho.`);
       }
@@ -876,11 +879,45 @@ function AdminRequestsView({ master }) {
 
     setBusy(true);
     try {
-      await addDoc(collection(db, 'masterRequests'), payload);
-      toast.success(`${type === 'deposit' ? 'Deposit' : 'Withdrawal'} request bhej di — admin approve karega.`);
+      if (type === 'withdrawal') {
+        // Deduct master points IMMEDIATELY at request time (admin
+        // approve ka wait nahi). Reject pe wapas refund hota hai.
+        // Atomic: re-read master doc, re-check withdrawable on fresh
+        // data, debit, and create the request in one transaction.
+        await runTransaction(db, async (tx) => {
+          const mRef = doc(db, 'users', master.uid);
+          const mSnap = await tx.get(mRef);
+          if (!mSnap.exists()) throw new Error('Master account missing.');
+          const data = mSnap.data();
+          const bal = Number(data.balance ?? data.walletBalance ?? 0);
+          const lockedEarned = Number(data.lifetimeEarned || 0);
+          const freshWithdrawable = Math.max(0, Math.round((bal - lockedEarned) * 100) / 100);
+          if (v > freshWithdrawable) {
+            throw new Error(`Sirf ${formatCurrency(freshWithdrawable)} withdraw ho sakta hai.`);
+          }
+          const nb = Math.round((bal - v) * 100) / 100;
+          tx.update(mRef, { balance: nb, walletBalance: nb });
+          const reqRef = doc(collection(db, 'masterRequests'));
+          tx.set(reqRef, { ...payload, debited: true });
+        });
+        try {
+          await addDoc(collection(db, 'masterLedger'), {
+            type: 'master_withdraw_request',
+            masterId: master.uid,
+            masterName: master.name || null,
+            amount: v,
+            note: 'Withdrawal request — points turant deduct',
+            createdAt: serverTimestamp(),
+          });
+        } catch { /* ledger best-effort */ }
+        toast.success(`Withdrawal request bhej di — ${formatCurrency(v)} points abhi deduct ho gaye. Admin approve karega.`);
+      } else {
+        await addDoc(collection(db, 'masterRequests'), payload);
+        toast.success('Deposit request bhej di — admin approve karega.');
+      }
       setAmount(''); setNote(''); setUpiId(''); setAccNo(''); setAccNo2(''); setIfsc(''); setBankName('');
     } catch (err) {
-      toast.error('Request fail: ' + (err?.code || err?.message || err));
+      toast.error('Request fail: ' + (err?.message || err?.code || err));
     } finally {
       setBusy(false);
     }
