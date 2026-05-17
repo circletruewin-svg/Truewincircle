@@ -1352,6 +1352,22 @@ export default function MasterManagement() {
                     {formatCurrency(r.amount)} · {r.createdAt?.toDate?.()?.toLocaleString('en-IN') || '—'}
                     {r.note ? ` · ${r.note}` : ''}
                   </p>
+                  {r.type === 'withdrawal' && (
+                    <div className="mt-1.5 inline-block rounded-lg bg-yellow-50 border border-yellow-200 px-3 py-1.5 text-[11px] text-gray-700">
+                      <span className="font-bold text-yellow-800 uppercase mr-1">
+                        {r.payMethod === 'bank' ? 'Bank' : 'UPI'} — yahan pay karo:
+                      </span>
+                      {r.payMethod === 'bank' ? (
+                        <>
+                          A/C <b className="select-all">{r.accountNumber || '—'}</b>
+                          {' · '}IFSC <b className="select-all">{r.ifscCode || '—'}</b>
+                          {' · '}{r.bankName || '—'}
+                        </>
+                      ) : (
+                        <>UPI <b className="select-all">{r.upiId || '—'}</b></>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <button

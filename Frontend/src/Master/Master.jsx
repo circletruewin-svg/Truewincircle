@@ -815,6 +815,13 @@ function AdminRequestsView({ master }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [reqs, setReqs] = useState([]);
+  // Withdrawal payout details (mirrors the player Withdraw flow).
+  const [payMethod, setPayMethod] = useState('upi'); // upi | bank
+  const [upiId, setUpiId] = useState('');
+  const [accNo, setAccNo] = useState('');
+  const [accNo2, setAccNo2] = useState('');
+  const [ifsc, setIfsc] = useState('');
+  const [bankName, setBankName] = useState('');
 
   const balance = Number(master?.balance ?? master?.walletBalance ?? 0);
   const earnedLocked = Number(master?.lifetimeEarned || 0);
@@ -833,22 +840,45 @@ function AdminRequestsView({ master }) {
   const submit = async () => {
     const v = Number(amount);
     if (!Number.isFinite(v) || v <= 0) return toast.error('Valid amount daalo.');
-    if (type === 'withdrawal' && v > withdrawable) {
-      return toast.error(`Sirf ${formatCurrency(withdrawable)} withdraw ho sakta hai. Earned points (${formatCurrency(earnedLocked)}) locked hain — vo sirf players ko de sakte ho.`);
+
+    let payload = {
+      masterId: master.uid,
+      masterName: master.name || null,
+      type,
+      amount: v,
+      note: note.trim() || null,
+      status: 'pending',
+      createdAt: serverTimestamp(),
+    };
+
+    if (type === 'withdrawal') {
+      if (v > withdrawable) {
+        return toast.error(`Sirf ${formatCurrency(withdrawable)} withdraw ho sakta hai. Earned points (${formatCurrency(earnedLocked)}) locked hain — vo sirf players ko de sakte ho.`);
+      }
+      // Collect payout details so admin knows where to pay.
+      if (payMethod === 'upi') {
+        const id = upiId.trim();
+        if (!/^[\w.-]+@[\w.-]+$/.test(id)) return toast.error('Valid UPI ID daalo (e.g. name@bank).');
+        payload = { ...payload, payMethod: 'upi', upiId: id };
+      } else {
+        const a1 = accNo.replace(/\s/g, '');
+        const a2 = accNo2.replace(/\s/g, '');
+        if (!a1 || a1.length < 6) return toast.error('Valid account number daalo.');
+        if (a1 !== a2) return toast.error('Account number dono baar same nahi hai.');
+        if (!/^[A-Za-z]{4}0[A-Za-z0-9]{6}$/.test(ifsc.trim())) return toast.error('Valid IFSC daalo.');
+        if (!bankName.trim()) return toast.error('Bank name daalo.');
+        payload = {
+          ...payload, payMethod: 'bank',
+          accountNumber: a1, ifscCode: ifsc.trim().toUpperCase(), bankName: bankName.trim(),
+        };
+      }
     }
+
     setBusy(true);
     try {
-      await addDoc(collection(db, 'masterRequests'), {
-        masterId: master.uid,
-        masterName: master.name || null,
-        type,
-        amount: v,
-        note: note.trim() || null,
-        status: 'pending',
-        createdAt: serverTimestamp(),
-      });
+      await addDoc(collection(db, 'masterRequests'), payload);
       toast.success(`${type === 'deposit' ? 'Deposit' : 'Withdrawal'} request bhej di — admin approve karega.`);
-      setAmount(''); setNote('');
+      setAmount(''); setNote(''); setUpiId(''); setAccNo(''); setAccNo2(''); setIfsc(''); setBankName('');
     } catch (err) {
       toast.error('Request fail: ' + (err?.code || err?.message || err));
     } finally {
@@ -901,6 +931,52 @@ function AdminRequestsView({ master }) {
             </p>
           )}
         </div>
+
+        {type === 'withdrawal' && (
+          <div className="rounded-xl border border-white/10 bg-[#070b1e] p-3 space-y-3">
+            <p className="text-[11px] uppercase tracking-widest text-yellow-400 font-bold">Payment details — admin yahan pay karega</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setPayMethod('upi')}
+                className={`py-2 rounded-lg text-sm font-bold ${payMethod === 'upi' ? 'bg-yellow-400 text-black' : 'bg-white/5 text-gray-300'}`}>UPI</button>
+              <button type="button" onClick={() => setPayMethod('bank')}
+                className={`py-2 rounded-lg text-sm font-bold ${payMethod === 'bank' ? 'bg-yellow-400 text-black' : 'bg-white/5 text-gray-300'}`}>Bank</button>
+            </div>
+            {payMethod === 'upi' ? (
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">UPI ID</label>
+                <input value={upiId} onChange={(e) => setUpiId(e.target.value)} placeholder="name@bank"
+                  className="w-full bg-[#0d1228] border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white" />
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Account number</label>
+                  <input value={accNo} onChange={(e) => setAccNo(e.target.value.replace(/\D/g, ''))} inputMode="numeric"
+                    className="w-full bg-[#0d1228] border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white" />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Confirm account number</label>
+                  <input value={accNo2} onChange={(e) => setAccNo2(e.target.value.replace(/\D/g, ''))} inputMode="numeric"
+                    className={`w-full bg-[#0d1228] border rounded-lg px-3 py-2.5 text-sm text-white ${accNo2 && accNo2 !== accNo ? 'border-rose-500' : 'border-white/10'}`} />
+                  {accNo2 && accNo2 !== accNo && <p className="text-[11px] text-rose-300 mt-1">Account number match nahi kar raha.</p>}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">IFSC</label>
+                    <input value={ifsc} onChange={(e) => setIfsc(e.target.value.toUpperCase())} placeholder="ABCD0123456"
+                      className="w-full bg-[#0d1228] border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Bank name</label>
+                    <input value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="SBI"
+                      className="w-full bg-[#0d1228] border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white" />
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         <div>
           <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Note (optional)</label>
           <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
