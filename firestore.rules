@@ -39,6 +39,13 @@ service cloud.firestore {
         // Master can read their own players. Same query the master
         // panel uses (where assignedMasterId == my uid) is allowed.
         (isMaster() && resource.data.get('assignedMasterId', '') == request.auth.uid) ||
+        // A just-signed-in user may look up an account that an admin /
+        // master pre-created on THEIR OWN verified phone number, so the
+        // OTP flow can "claim" it and log them straight in instead of
+        // forcing a fresh signup. Scoped strictly to the caller's own
+        // phone token — they can't read anyone else's row this way.
+        (request.auth.token.phone_number != null &&
+         resource.data.get('phoneNumber', '') == request.auth.token.phone_number) ||
         // Anonymous-but-authenticated visitors need a 1-row lookup of
         // a master by code at signup time so the link can be honoured.
         // We only allow that exact shape: querying users with

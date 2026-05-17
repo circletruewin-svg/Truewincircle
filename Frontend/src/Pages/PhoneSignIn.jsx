@@ -3,7 +3,7 @@ import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
 import { useNavigate, Link } from "react-router-dom";
 import { toast } from "react-toastify";
 import { auth, db } from "../firebase";
-import { doc, getDoc, setDoc, deleteDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, deleteDoc, collection, query, where, getDocs, limit } from "firebase/firestore";
 import useAuthStore from "../store/authStore";
 import PhoneInput from "react-phone-input-2";
 import "react-phone-input-2/lib/style.css";
@@ -128,14 +128,14 @@ const PhoneSignIn = () => {
       } else if (err.code === "auth/captcha-check-failed") {
         toast.error("Firebase phone login blocked: truewincircle.in aur www.truewincircle.in ko Firebase Auth Authorized Domains me add karna hoga.");
       } else if (err.code === "auth/too-many-requests") {
-        // Firebase rate-limits the device/IP for ~30-60 minutes when too
-        // many OTPs are requested in a short window. We can't bypass it
-        // — the only option is to wait, switch network, or try a
-        // different number. Lock the resend button hard so the user
-        // doesn't keep tapping and making it worse.
-        setResendCooldown(15 * 60); // 15-minute lockout in the UI
-        toast.error("Bahut baar OTP try ho gayi. 15-30 min ruko, ya doosra mobile network try karo. Sirf is device pe block hai.", {
-          autoClose: 8000,
+        // Firebase rate-limits the device/IP when too many OTPs go out
+        // in a short window. We do NOT add our own long lockout on top
+        // (that just felt like an ever-growing ban). A short normal
+        // resend wait + a calm note is enough — the user can retry,
+        // switch network, or use a Firebase test number.
+        setResendCooldown(RESEND_COOLDOWN_SECONDS);
+        toast.info("Thodi der me dobara try karein (ya doosra network).", {
+          autoClose: 4000,
         });
       } else {
         toast.error(err.message || "An error occurred while sending OTP.");
@@ -210,9 +210,58 @@ const PhoneSignIn = () => {
           if (stagedRole === 'master') navigate('/master');
           else navigate('/');
         } else {
-          toast.info("Aapka account nahi hai. Pehle signup karein.");
-          await auth.signOut();
-          navigate("/testphonesignup");
+          // No user doc and no admin pre-stage. Maybe a master/admin
+          // created this account "offline" with this exact phone — in
+          // that case the person is already registered and should just
+          // LOG IN (not be bounced to signup). Find any account on this
+          // phone and claim it into the new auth uid.
+          let claimed = null;
+          try {
+            const byPhone = query(
+              collection(db, "users"),
+              where("phoneNumber", "==", user.phoneNumber),
+              limit(1),
+            );
+            const cs = await getDocs(byPhone);
+            if (!cs.empty) claimed = { id: cs.docs[0].id, ...cs.docs[0].data() };
+          } catch (claimErr) {
+            console.warn("Phone-claim lookup failed (non-fatal):", claimErr);
+          }
+
+          if (claimed && claimed.id !== user.uid) {
+            const stagedRole = claimed.role === 'master' || claimed.role === 'admin'
+              ? claimed.role
+              : 'user';
+            const claimedData = {
+              phoneNumber: user.phoneNumber,
+              name: String(claimed.name || '').trim(),
+              role: stagedRole,
+              balance: Number(claimed.balance ?? claimed.walletBalance ?? 0) || 0,
+              winningMoney: Number(claimed.winningMoney) || 0,
+              assignedMasterId: claimed.assignedMasterId || null,
+              referredBy: claimed.referredBy || null,
+              appName: "truewin",
+              createdAt: claimed.createdAt || new Date(),
+              referralBonusAwarded: claimed.referralBonusAwarded ?? false,
+              claimedFrom: claimed.id,
+            };
+            if (claimed.masterCode) claimedData.masterCode = claimed.masterCode;
+            if (claimed.referralCode) claimedData.referralCode = claimed.referralCode;
+            await setDoc(userRef, claimedData, { merge: true });
+            // Best-effort: drop the old offline ghost so it doesn't
+            // show twice. Normal users can't delete it under rules —
+            // that's fine, the master/admin lists also de-dupe by phone.
+            try { await deleteDoc(doc(db, "users", claimed.id)); }
+            catch (delErr) { console.warn("Ghost cleanup skipped (de-duped in lists):", delErr); }
+            login(buildSessionUser(user, claimedData));
+            toast.success(`Welcome ${claimedData.name || ''}!`);
+            if (stagedRole === 'master') navigate('/master');
+            else navigate('/');
+          } else {
+            toast.info("Aapka account nahi hai. Pehle signup karein.");
+            await auth.signOut();
+            navigate("/testphonesignup");
+          }
         }
       }
     } catch (err) {

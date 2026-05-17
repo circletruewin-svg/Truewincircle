@@ -643,7 +643,21 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
     const unsubscribe = onSnapshot(
       usersQuery,
       (snapshot) => {
-        const usersList = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const rawUsers = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        // De-dupe by phone: an offline (admin/master-created) account
+        // and the real account born when that number logs in via OTP
+        // can briefly co-exist (the offline "ghost" can't always be
+        // auto-deleted). Show only the real one.
+        const byPhone = new Map();
+        const noPhone = [];
+        for (const u of rawUsers) {
+          const ph = u.phoneNumber || '';
+          if (!ph) { noPhone.push(u); continue; }
+          const prev = byPhone.get(ph);
+          if (!prev) { byPhone.set(ph, u); continue; }
+          byPhone.set(ph, prev.isOffline && !u.isOffline ? u : prev);
+        }
+        const usersList = [...byPhone.values(), ...noPhone];
         // Final sort happens in the filteredUsers useMemo below — it
         // takes the raw list and combines lastActiveAt with the latest
         // top-up / withdrawal timestamps so activity from before

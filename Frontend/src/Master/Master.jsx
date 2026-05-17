@@ -1014,12 +1014,6 @@ function AdminRequestsView({ master }) {
           </div>
         )}
 
-        <div>
-          <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Note (optional)</label>
-          <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
-            placeholder={type === 'deposit' ? 'Maine admin ko UPI/cash diya...' : 'Settle / return reason...'}
-            className="w-full bg-[#070b1e] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white" />
-        </div>
         <button onClick={submit} disabled={busy}
           className="w-full bg-yellow-400 hover:bg-yellow-300 disabled:opacity-40 text-black font-black rounded-xl py-3">
           {busy ? 'Sending…' : 'Send request to admin'}
@@ -1957,7 +1951,22 @@ export default function MasterDashboard() {
     if (!user?.uid) return undefined;
     const q = query(collection(db, 'users'), where('assignedMasterId', '==', user.uid));
     return onSnapshot(q, (snap) => {
-      setPlayers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const raw = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      // De-dupe by phone: once an offline (master-created) player logs
+      // in via OTP, a real account is born on the same number while the
+      // old offline "ghost" may linger (a normal user can't delete it
+      // under rules). Show only the real one.
+      const byPhone = new Map();
+      const noPhone = [];
+      for (const p of raw) {
+        const ph = p.phoneNumber || '';
+        if (!ph) { noPhone.push(p); continue; }
+        const prev = byPhone.get(ph);
+        if (!prev) { byPhone.set(ph, p); continue; }
+        // Prefer the non-offline (real, logged-in) account.
+        byPhone.set(ph, prev.isOffline && !p.isOffline ? p : prev);
+      }
+      setPlayers([...byPhone.values(), ...noPhone]);
     }, () => setPlayers([]));
   }, [user?.uid]);
 

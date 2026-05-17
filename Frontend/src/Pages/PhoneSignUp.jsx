@@ -141,10 +141,11 @@ const PhoneSignUp = () => {
       } else if (err.code === "auth/captcha-check-failed") {
         toast.error("Firebase phone login blocked: truewincircle.in aur www.truewincircle.in ko Firebase Auth Authorized Domains me add karna hoga.");
       } else if (err.code === "auth/too-many-requests") {
-        // Firebase rate-limits the device/IP — only fix is to wait.
-        setResendCooldown(15 * 60); // 15-minute UI lockout
-        toast.error("Bahut baar OTP try ho gayi. 15-30 min ruko, ya doosra mobile network try karo. Sirf is device pe block hai.", {
-          autoClose: 8000,
+        // No extra long self-lockout on top of Firebase's own limit —
+        // just a short normal resend wait and a calm note.
+        setResendCooldown(RESEND_COOLDOWN_SECONDS);
+        toast.info("Thodi der me dobara try karein (ya doosra network).", {
+          autoClose: 4000,
         });
       } else {
         toast.error(err.message || "An error occurred while sending OTP.");
@@ -234,6 +235,34 @@ const PhoneSignUp = () => {
         console.warn("Pending user lookup failed:", preErr);
       }
 
+      // Also honour an account a master/admin pre-created "offline"
+      // with this exact phone — created-with-number means "already
+      // registered", so carry its balance / master link forward
+      // instead of starting blank.
+      let preMasterId = assignedMasterId;
+      if (!preName && !preBalance && !preWinning) {
+        try {
+          const byPhone = query(
+            collection(db, "users"),
+            where("phoneNumber", "==", user.phoneNumber),
+            limit(1),
+          );
+          const os = await getDocs(byPhone);
+          if (!os.empty) {
+            const od = os.docs[0].data();
+            preName = String(od.name || '').trim();
+            preBalance = Number(od.balance ?? od.walletBalance ?? 0) || 0;
+            preWinning = Number(od.winningMoney) || 0;
+            preReferrer = od.referredBy || preReferrer;
+            if (od.assignedMasterId) preMasterId = od.assignedMasterId;
+            try { await deleteDoc(doc(db, "users", os.docs[0].id)); }
+            catch (delErr) { console.warn("Ghost cleanup skipped (de-duped in lists):", delErr); }
+          }
+        } catch (offErr) {
+          console.warn("Offline-account claim lookup failed:", offErr);
+        }
+      }
+
       await setDoc(
         userDocRef,
         {
@@ -248,7 +277,7 @@ const PhoneSignUp = () => {
           // Master link routing — if non-null, this user belongs to that
           // master. The admin panel still sees them (with a master tag),
           // but the master alone can credit / approve / etc.
-          assignedMasterId: assignedMasterId || null,
+          assignedMasterId: preMasterId || null,
           balance: preBalance,
           winningMoney: preWinning,
           appName: "truewin",
