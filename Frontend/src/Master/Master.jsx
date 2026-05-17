@@ -14,7 +14,7 @@ import 'react-toastify/dist/ReactToastify.css';
 import { db, auth, app } from '../firebase';
 import useAuthStore from '../store/authStore';
 import { formatCurrency } from '../utils/formatMoney';
-import { buildMasterReferralLink, sumPlayerTurnover, reconcileMasterPlayEarnings, masterWithdrawable, DEFAULT_MASTER_EARN_PCT } from '../utils/master';
+import { buildMasterReferralLink, generateMasterCode, sumPlayerTurnover, reconcileMasterPlayEarnings, masterWithdrawable, DEFAULT_MASTER_EARN_PCT } from '../utils/master';
 import { getUserFunds } from '../utils/userFunds';
 import { playChime } from '../utils/gameSfx';
 import { markets as ALL_MARKETS } from '../marketData';
@@ -1940,10 +1940,46 @@ export default function MasterDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [openPlayer, setOpenPlayer] = useState(null);
 
+  // Self-heal: if someone is made a master directly in Firebase
+  // (role flipped to 'master' by hand, no admin-panel flow), they
+  // land here with no masterCode → no referral link. Mint a unique
+  // code + clear any stale "under a master" link automatically, the
+  // first time their panel loads. One-shot guarded so the snapshot
+  // re-firing doesn't retry.
+  const codeHealRef = useRef(false);
   useEffect(() => {
     if (!user?.uid) return undefined;
-    return onSnapshot(doc(db, 'users', user.uid), (snap) => {
-      if (snap.exists()) setMaster({ uid: snap.id, ...snap.data() });
+    return onSnapshot(doc(db, 'users', user.uid), async (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      setMaster({ uid: snap.id, ...data });
+
+      if (
+        data.role === 'master' &&
+        !data.masterCode &&
+        !codeHealRef.current
+      ) {
+        codeHealRef.current = true;
+        try {
+          let code = '';
+          for (let i = 0; i < 6; i++) {
+            const c = generateMasterCode();
+            const dup = await getDocs(
+              query(collection(db, 'users'), where('masterCode', '==', c), limit(1)),
+            );
+            if (dup.empty) { code = c; break; }
+          }
+          if (!code) { codeHealRef.current = false; return; }
+          await updateDoc(doc(db, 'users', user.uid), {
+            masterCode: code,
+            assignedMasterId: null,
+          });
+          toast.success(`Master code ban gaya: ${code}. Ab apna link share kar sakte ho.`);
+        } catch (err) {
+          console.warn('Auto master-code mint failed:', err);
+          codeHealRef.current = false;
+        }
+      }
     });
   }, [user?.uid]);
 
