@@ -1622,13 +1622,21 @@ function WithdrawalApprovalsView({ master, players }) {
                     }`}>{w.status || 'pending'}</span>
                   </div>
                 </div>
-                {(w.upi || w.bankAccount || w.accountNumber || w.ifsc) && (
-                  <div className="mt-2 text-[11px] text-gray-300 space-y-0.5">
-                    {w.upi && <p>UPI: <span className="font-mono">{w.upi}</span></p>}
-                    {w.accountNumber && <p>A/C: <span className="font-mono">{w.accountNumber}</span></p>}
-                    {w.ifsc && <p>IFSC: <span className="font-mono">{w.ifsc}</span></p>}
-                  </div>
-                )}
+                <div className="mt-2 rounded-lg bg-[#070b1e] border border-white/10 p-2.5 text-[11px] text-gray-200 space-y-1">
+                  <p className="text-[10px] uppercase tracking-widest text-yellow-400 font-bold">
+                    {w.method === 'bank' ? 'Bank transfer' : 'UPI'} — yahan pay karo
+                  </p>
+                  {w.method === 'upi' ? (
+                    <p>UPI ID: <span className="font-mono text-emerald-300 select-all">{w.upiId || '—'}</span></p>
+                  ) : (
+                    <>
+                      <p>A/C Name: <span className="font-semibold">{w.name || '—'}</span></p>
+                      <p>A/C No: <span className="font-mono text-emerald-300 select-all">{w.accountNumber || '—'}</span></p>
+                      <p>IFSC: <span className="font-mono text-emerald-300 select-all">{w.ifscCode || '—'}</span></p>
+                      <p>Bank: <span className="font-semibold">{w.bankName || '—'}</span></p>
+                    </>
+                  )}
+                </div>
                 {w.adminComment && <p className="text-[11px] text-rose-300 mt-1">Reason: {w.adminComment}</p>}
 
                 {isPending && (
