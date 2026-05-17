@@ -41,23 +41,33 @@ export async function sumPlayerTurnover(db, playerIds, start, end) {
   if (!playerIds || playerIds.length === 0) return 0;
   const chunks = [];
   for (let i = 0; i < playerIds.length; i += 30) chunks.push(playerIds.slice(i, i + 30));
-  let total = 0;
+
+  // Fire every (collection × chunk) query in parallel instead of
+  // sequentially — turns ~18 round-trips-in-series into one batch so
+  // the earnings views feel instant.
+  const tasks = [];
   for (const chunk of chunks) {
     for (const src of TURNOVER_SOURCES) {
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        const snap = await getDocs(query(collection(db, src.col), where('userId', 'in', chunk)));
-        snap.forEach((d) => {
-          const data = d.data();
-          if (start && end) {
-            const t = data[src.ts]?.toDate?.();
-            if (!t || t < start || t > end) return;
-          }
-          total += Number(data[src.amt] || 0);
-        });
-      } catch { /* empty / missing index — skip */ }
+      tasks.push(
+        getDocs(query(collection(db, src.col), where('userId', 'in', chunk)))
+          .then((snap) => {
+            let s = 0;
+            snap.forEach((d) => {
+              const data = d.data();
+              if (start && end) {
+                const t = data[src.ts]?.toDate?.();
+                if (!t || t < start || t > end) return;
+              }
+              s += Number(data[src.amt] || 0);
+            });
+            return s;
+          })
+          .catch(() => 0),
+      );
     }
   }
+  const results = await Promise.all(tasks);
+  const total = results.reduce((a, b) => a + b, 0);
   return Math.round(total * 100) / 100;
 }
 

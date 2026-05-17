@@ -9,7 +9,7 @@ import { toast } from 'react-toastify';
 import { formatCurrency } from '../../utils/formatMoney';
 import {
   buildMasterReferralLink, generateMasterCode,
-  reconcileMasterPlayEarnings, DEFAULT_MASTER_EARN_PCT,
+  reconcileMasterPlayEarnings, sumPlayerTurnover, DEFAULT_MASTER_EARN_PCT,
 } from '../../utils/master';
 
 // ─────────────────────────────────────────────────────────────────
@@ -485,7 +485,7 @@ function CommissionModal({ master, onClose }) {
 // players + their masterLedger history. Opened from the Master
 // Management list when admin clicks a row.
 // ─────────────────────────────────────────────────────────────────
-function MasterDetail({ master, onBack, onTopUp, onSetCommission }) {
+function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
   const [players, setPlayers] = useState([]);
   const [ledger, setLedger] = useState([]);
   const [harufBets, setHarufBets] = useState([]);
@@ -577,96 +577,108 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission }) {
     return d ? d.toLocaleString('en-IN') : '—';
   };
 
+  // ── Earnings (all games) for a selectable date range, default today
+  const istYmd = (d) => new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
+  const [eFrom, setEFrom] = useState(() => istYmd(new Date()));
+  const [eTo, setETo] = useState(() => istYmd(new Date()));
+  const [ePlay, setEPlay] = useState(null);
+  const [eBusy, setEBusy] = useState(false);
+  const earnPct = Number(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT);
+  const adminPct = Number(master.commissionPercent) || 0;
+  const ePlayerIds = useMemo(() => players.map((p) => p.id), [players]);
+
+  const loadEarnings = async () => {
+    if (ePlayerIds.length === 0) { setEPlay(0); return; }
+    setEBusy(true);
+    try {
+      const [fy, fm, fd] = eFrom.split('-').map(Number);
+      const [ty, tm, td] = eTo.split('-').map(Number);
+      const start = new Date(Date.UTC(fy, fm - 1, fd, 0, 0, 0) - 5.5 * 3600e3);
+      const end = new Date(Date.UTC(ty, tm - 1, td, 0, 0, 0) - 5.5 * 3600e3 + 864e5 - 1);
+      const t = await sumPlayerTurnover(db, ePlayerIds, start, end);
+      setEPlay(t);
+    } catch { setEPlay(0); } finally { setEBusy(false); }
+  };
+  useEffect(() => {
+    loadEarnings();
+    const id = setInterval(loadEarnings, 30000); // live-ish
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eFrom, eTo, ePlayerIds.length]);
+
+  const eEarned = ePlay == null ? null : Math.round(ePlay * (earnPct / 100) * 100) / 100;
+  const eAdminCut = ePlay == null ? null : Math.round(ePlay * (adminPct / 100) * 100) / 100;
+  const Stat = ({ label, value, tone }) => (
+    <div className={`rounded-2xl p-5 text-white bg-gradient-to-br ${tone}`}>
+      <p className="text-[11px] uppercase tracking-widest text-white/70">{label}</p>
+      <p className="text-2xl md:text-3xl font-black mt-1">{value}</p>
+    </div>
+  );
+
   return (
-    <div className="p-4 md:p-6 space-y-4">
-      <div className="flex items-center gap-3 mb-2">
-        <button onClick={onBack} className="text-sm bg-gray-200 hover:bg-gray-300 px-3 py-1.5 rounded">← Back to list</button>
-        <h2 className="text-xl font-bold text-gray-800">Master · {master.name || '—'}</h2>
-      </div>
-
-      {/* Master card */}
-      <div className="bg-white rounded-xl shadow border p-4 grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+    <div className="p-4 md:p-6 space-y-5">
+      <div className="flex items-center gap-3">
+        <button onClick={onBack} className="text-sm bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-lg font-bold">← Back</button>
         <div>
-          <p className="text-[10px] uppercase text-gray-500">Phone</p>
-          <p className="font-mono font-semibold">{master.phoneNumber || master.id}</p>
-        </div>
-        <div>
-          <p className="text-[10px] uppercase text-gray-500">Code</p>
-          <p className="font-mono font-bold text-amber-700">{master.masterCode || '—'}</p>
-        </div>
-        <div>
-          <p className="text-[10px] uppercase text-gray-500">Master Points</p>
-          <p className="font-bold text-emerald-700">{formatCurrency(master.balance ?? master.walletBalance ?? 0)}</p>
-        </div>
-        <div>
-          <p className="text-[10px] uppercase text-gray-500">Admin %</p>
-          <p className={`font-bold ${Number(master.commissionPercent) > 0 ? 'text-blue-700' : 'text-gray-500'}`}>
-            {Number(master.commissionPercent) > 0 ? `${master.commissionPercent}%` : 'Pure reseller (0%)'}
-          </p>
-        </div>
-        <div>
-          <p className="text-[10px] uppercase text-gray-500">Status</p>
-          <p className="font-bold">
-            {master.pending ? <span className="text-amber-700">PENDING OTP</span>
-                            : <span className="text-emerald-700">ACTIVE</span>}
-          </p>
-        </div>
-
-        <div className="col-span-2 md:col-span-5 flex justify-end gap-2 pt-2 flex-wrap">
-          {master.masterCode && (
-            <button
-              onClick={() => navigator.clipboard.writeText(buildMasterReferralLink(master.masterCode)).then(() => toast.success('Link copied'))}
-              className="text-xs bg-gray-200 hover:bg-gray-300 px-3 py-1.5 rounded"
-            >Copy share link</button>
-          )}
-          <button
-            onClick={() => onSetCommission(master)}
-            className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded font-bold"
-          >Set Admin %</button>
-          <button
-            onClick={() => onTopUp(master)}
-            className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded font-bold"
-          >+ / − Master Points</button>
+          <h2 className="text-2xl font-black text-gray-800">{master.name || '—'}</h2>
+          <p className="text-xs text-gray-500">{master.phoneNumber || master.id} · code {master.masterCode || '—'}</p>
         </div>
       </div>
 
-      {/* Today's activity — only fully meaningful when commission % is set */}
-      <div className="bg-white rounded-xl shadow border">
-        <div className="border-b px-4 py-3 flex justify-between items-center">
-          <h3 className="font-bold">Today's player activity (IST)</h3>
-          <span className="text-xs text-gray-500">{todayIST}</span>
+      {/* Big info cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Stat label="Master Points" value={formatCurrency(master.balance ?? master.walletBalance ?? 0)} tone="from-emerald-600 to-emerald-800" />
+        <Stat label="Players" value={players.length} tone="from-blue-600 to-blue-800" />
+        <Stat label={`Earn % (master)`} value={`${earnPct}%`} tone="from-indigo-600 to-indigo-800" />
+        <Stat label={`Admin % (commission)`} value={`${adminPct}%`} tone="from-slate-600 to-slate-800" />
+      </div>
+
+      {/* Quick actions */}
+      <div className="flex flex-wrap gap-2">
+        <button onClick={() => onSetCommission(master)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold">Set Admin %</button>
+        <button onClick={() => onSetEarn?.(master)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold">Set Earn %</button>
+        <button onClick={() => onTopUp(master)} className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-bold">+ / − Points</button>
+        {master.masterCode && (
+          <button
+            onClick={() => navigator.clipboard.writeText(buildMasterReferralLink(master.masterCode)).then(() => toast.success('Link copied'))}
+            className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-lg text-sm font-bold"
+          >Copy share link</button>
+        )}
+      </div>
+
+      {/* Earnings — date range, big, live */}
+      <div className="bg-white rounded-2xl shadow border p-4 md:p-5">
+        <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
+          <div>
+            <h3 className="text-lg font-black text-gray-800">💵 Earnings</h3>
+            <p className="text-xs text-gray-500">Master ko {earnPct}% milta hai play ka. Admin ko {adminPct}% commission.</p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <label className="block text-[10px] uppercase text-gray-500 mb-1">From</label>
+              <input type="date" value={eFrom} max={eTo} onChange={(e) => setEFrom(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase text-gray-500 mb-1">To</label>
+              <input type="date" value={eTo} min={eFrom} max={istYmd(new Date())} onChange={(e) => setETo(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <button onClick={() => { const t = istYmd(new Date()); setEFrom(t); setETo(t); }}
+              className="bg-gray-100 hover:bg-gray-200 rounded-lg px-3 py-2 text-xs font-bold">Today</button>
+            <button onClick={loadEarnings}
+              className="bg-yellow-400 hover:bg-yellow-500 rounded-lg px-3 py-2 text-xs font-bold">{eBusy ? '…' : '🔄'}</button>
+          </div>
         </div>
-        <div className="p-4 grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
-          <div>
-            <p className="text-[10px] uppercase text-gray-500">Total Bets</p>
-            <p className="font-bold text-gray-800">{todayStats.count}</p>
-          </div>
-          <div>
-            <p className="text-[10px] uppercase text-gray-500">Bet Amount</p>
-            <p className="font-bold text-blue-700">{formatCurrency(todayStats.bet)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] uppercase text-gray-500">Paid Out (Wins)</p>
-            <p className="font-bold text-rose-700">{formatCurrency(todayStats.won)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] uppercase text-gray-500">Net (bet − won)</p>
-            <p className={`font-bold ${todayStats.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-              {formatCurrency(todayStats.net)}
-            </p>
-          </div>
-          <div>
-            <p className="text-[10px] uppercase text-gray-500">Admin's cut @ {todayStats.pct}% of play</p>
-            {todayStats.pct > 0 ? (
-              <p className="font-bold text-blue-700">{formatCurrency(todayStats.adminCut)}</p>
-            ) : (
-              <p className="font-bold text-gray-400 text-xs">Pure reseller — kuchh nahi</p>
-            )}
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <Stat label="Total Play (range)" value={ePlay == null ? '…' : formatCurrency(ePlay)} tone="from-indigo-600 to-indigo-800" />
+          <Stat label={`Master earned (${earnPct}%)`} value={eEarned == null ? '…' : formatCurrency(eEarned)} tone="from-emerald-600 to-emerald-800" />
+          <Stat label={`Admin commission (${adminPct}%)`} value={eAdminCut == null ? '…' : formatCurrency(eAdminCut)} tone="from-blue-600 to-blue-800" />
         </div>
-        <p className="text-[11px] text-gray-500 px-4 pb-3">
-          Commission <b>play (total bet) pe</b> hai — win/loss se farak nahi.
-          Source: Haruf + Aviator + Cricket bets (today IST).
+        <p className="text-[11px] text-gray-500 mt-3">
+          Saare games count (Haruf, WinGame, Aviator, Cricket, Color, Dice, casino sab). Live — har 30s update. Master ki earning uske points me auto credit hoti hai.
         </p>
       </div>
 
@@ -1155,6 +1167,7 @@ export default function MasterManagement() {
           onBack={() => setDetailMasterId(null)}
           onTopUp={(m) => setTopUpFor(m)}
           onSetCommission={(m) => setCommissionFor(m)}
+          onSetEarn={(m) => setEarnPctFor(m)}
         />
         {topUpFor && (
           <TopUpModal master={topUpFor} onClose={() => setTopUpFor(null)} onDone={() => {}} />
