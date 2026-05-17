@@ -8,6 +8,59 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 
+// Every collection where a player's bet amount lands, plus the field
+// that holds the stake. Used for turnover (play) totals — master
+// earn % and the earnings views all read from this single list so
+// nothing gets missed when a new game is added (just add a row here).
+export const TURNOVER_SOURCES = [
+  { col: 'harufBets',        amt: 'betAmount', ts: 'timestamp'  },
+  { col: 'aviatorBets',      amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'sportsBets',       amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'colorBets',        amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'diceBets',         amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'wingame_bets',     amt: 'amount',    ts: 'createdAt'  },
+  { col: 'rouletteBets',     amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'coinFlipHistory',  amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'teenPattiHistory', amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'dtHistory',        amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'abHistory',        amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'lucky7History',    amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'hiLoHistory',      amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'minesHistory',     amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'rouletteHistory',  amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'baccaratHistory',  amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'plinkoHistory',    amt: 'betAmount', ts: 'createdAt'  },
+  { col: 'cards32History',   amt: 'betAmount', ts: 'createdAt'  },
+];
+
+// Sum a master's players' turnover across ALL game collections,
+// optionally bounded to [start, end] (JS Dates). Returns the total
+// stake. Used by both the reconcile (lifetime) and the earnings
+// views (date range).
+export async function sumPlayerTurnover(db, playerIds, start, end) {
+  if (!playerIds || playerIds.length === 0) return 0;
+  const chunks = [];
+  for (let i = 0; i < playerIds.length; i += 30) chunks.push(playerIds.slice(i, i + 30));
+  let total = 0;
+  for (const chunk of chunks) {
+    for (const src of TURNOVER_SOURCES) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const snap = await getDocs(query(collection(db, src.col), where('userId', 'in', chunk)));
+        snap.forEach((d) => {
+          const data = d.data();
+          if (start && end) {
+            const t = data[src.ts]?.toDate?.();
+            if (!t || t < start || t > end) return;
+          }
+          total += Number(data[src.amt] || 0);
+        });
+      } catch { /* empty / missing index — skip */ }
+    }
+  }
+  return Math.round(total * 100) / 100;
+}
+
 // Default "master earn %" — a master automatically earns this share
 // of their players' total PLAY (turnover), credited straight into
 // their points balance. This is SEPARATE from the admin's commission
@@ -29,20 +82,8 @@ export async function reconcileMasterPlayEarnings(db, master, playerIds) {
   const pct = Number(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT);
   if (!masterId || pct <= 0 || !playerIds || playerIds.length === 0) return 0;
 
-  // Firestore `in` caps at 30 — chunk the player list.
-  const chunks = [];
-  for (let i = 0; i < playerIds.length; i += 30) chunks.push(playerIds.slice(i, i + 30));
-
-  let turnover = 0;
-  for (const chunk of chunks) {
-    for (const col of ['harufBets', 'aviatorBets', 'sportsBets']) {
-      try {
-        const snap = await getDocs(query(collection(db, col), where('userId', 'in', chunk)));
-        snap.forEach((d) => { turnover += Number(d.data().betAmount || 0); });
-      } catch { /* a collection might be empty / index missing — skip */ }
-    }
-  }
-  turnover = Math.round(turnover * 100) / 100;
+  // Lifetime turnover across EVERY game collection.
+  const turnover = await sumPlayerTurnover(db, playerIds);
 
   let credited = 0;
   await runTransaction(db, async (tx) => {

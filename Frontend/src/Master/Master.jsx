@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import {
   collection, doc, onSnapshot, query, where, addDoc, setDoc, serverTimestamp,
   orderBy, limit, getDocs, updateDoc, runTransaction,
@@ -14,7 +14,7 @@ import 'react-toastify/dist/ReactToastify.css';
 import { db, auth, app } from '../firebase';
 import useAuthStore from '../store/authStore';
 import { formatCurrency } from '../utils/formatMoney';
-import { buildMasterReferralLink } from '../utils/master';
+import { buildMasterReferralLink, sumPlayerTurnover, reconcileMasterPlayEarnings, DEFAULT_MASTER_EARN_PCT } from '../utils/master';
 import { getUserFunds } from '../utils/userFunds';
 import { playChime } from '../utils/gameSfx';
 import { markets as ALL_MARKETS } from '../marketData';
@@ -36,6 +36,7 @@ const SECTIONS = [
   { id: 'deposits',  label: 'Deposit Approvals', icon: CreditCard,      short: 'Deposit' },
   { id: 'withdraws', label: 'Withdrawal Approvals', icon: DollarSign,   short: 'Withdraw'},
   { id: 'marketBets',label: 'Market Bets',       icon: BarChart3,       short: 'Bets'    },
+  { id: 'earnings',  label: 'My Earnings',       icon: DollarSign,      short: 'Earn'    },
   { id: 'qr',        label: 'My Payment QR',     icon: QrCode,          short: 'QR'      },
   { id: 'activity',  label: 'My Activity',       icon: History,         short: 'Log'     },
   { id: 'link',      label: 'My Referral Link',  icon: LinkIcon,        short: 'Link'    },
@@ -651,6 +652,108 @@ function AddPlayerView({ masterUid, onCreated }) {
         >
           {busy ? 'Creating…' : '+ Create Player'}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// My Earnings — date-range view of how much the master earned from
+// their players' play. Computed live from the players' bets across
+// every game collection. Auto-refreshes every 25s so it stays live;
+// the actual wallet credit happens via the mount/interval reconcile.
+function EarningsView({ master, players }) {
+  const istYmd = (d) => new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
+  const [fromYmd, setFromYmd] = useState(() => istYmd(new Date()));
+  const [toYmd, setToYmd] = useState(() => istYmd(new Date()));
+  const [turnover, setTurnover] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const pct = Number(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT);
+  const playerIds = useMemo(() => players.map((p) => p.id), [players]);
+
+  const range = useMemo(() => {
+    const [fy, fm, fd] = fromYmd.split('-').map(Number);
+    const [ty, tm, td] = toYmd.split('-').map(Number);
+    const start = new Date(Date.UTC(fy, fm - 1, fd, 0, 0, 0) - 5.5 * 3600e3);
+    const end = new Date(Date.UTC(ty, tm - 1, td, 0, 0, 0) - 5.5 * 3600e3 + 864e5 - 1);
+    return { start, end };
+  }, [fromYmd, toYmd]);
+
+  const load = useCallback(async () => {
+    if (playerIds.length === 0) { setTurnover(0); return; }
+    setBusy(true);
+    try {
+      const t = await sumPlayerTurnover(db, playerIds, range.start, range.end);
+      setTurnover(t);
+    } catch {
+      setTurnover(0);
+    } finally {
+      setBusy(false);
+    }
+  }, [playerIds, range.start, range.end]);
+
+  useEffect(() => { load(); }, [load]);
+  // Keep it live — refresh every 25s while this tab is open.
+  useEffect(() => {
+    const id = setInterval(load, 25000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const earned = turnover == null ? null : Math.round(turnover * (pct / 100) * 100) / 100;
+
+  return (
+    <div className="p-4 md:p-6 space-y-4">
+      <h2 className="text-lg font-bold text-white">My Earnings</h2>
+      <p className="text-xs text-gray-400">
+        Tumhare players jitna <b>play</b> karte hain uska <b>{pct}%</b> tumhare points me
+        auto add hota hai. Niche kisi bhi date range ka hisaab dekho. (Live — har 25s update.)
+      </p>
+
+      <div className="rounded-2xl bg-[#0d1228] border border-white/5 p-3 grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">From</label>
+          <input type="date" value={fromYmd} max={toYmd}
+            onChange={(e) => setFromYmd(e.target.value)}
+            className="w-full bg-[#070b1e] border border-white/10 rounded-lg px-2 py-2 text-sm text-white" />
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">To</label>
+          <input type="date" value={toYmd} min={fromYmd} max={istYmd(new Date())}
+            onChange={(e) => setToYmd(e.target.value)}
+            className="w-full bg-[#070b1e] border border-white/10 rounded-lg px-2 py-2 text-sm text-white" />
+        </div>
+        <div className="col-span-2 flex gap-2">
+          <button onClick={() => { const t = istYmd(new Date()); setFromYmd(t); setToYmd(t); }}
+            className="flex-1 bg-white/5 hover:bg-white/10 rounded-lg py-1.5 text-xs">Today</button>
+          <button onClick={() => { setFromYmd(istYmd(new Date(Date.now() - 6 * 864e5))); setToYmd(istYmd(new Date())); }}
+            className="flex-1 bg-white/5 hover:bg-white/10 rounded-lg py-1.5 text-xs">7 days</button>
+          <button onClick={load}
+            className="flex-1 bg-yellow-400 text-black font-bold rounded-lg py-1.5 text-xs">
+            {busy ? '…' : '🔄 Refresh'}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-2xl bg-gradient-to-br from-indigo-600 to-indigo-800 p-5">
+          <p className="text-[11px] uppercase tracking-widest text-white/70">Total Play</p>
+          <p className="text-2xl font-black text-white mt-1">
+            {turnover == null ? '…' : formatCurrency(turnover)}
+          </p>
+        </div>
+        <div className="rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-800 p-5">
+          <p className="text-[11px] uppercase tracking-widest text-white/80">You earned ({pct}%)</p>
+          <p className="text-2xl font-black text-white mt-1">
+            {earned == null ? '…' : formatCurrency(earned)}
+          </p>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/5 p-3 text-xs text-emerald-100">
+        Ye points tumhare wallet me auto credit hote rehte hain (live). Withdraw nahi hote — sirf
+        apne players ko aage de sakte ho. Admin ka apna commission % isse alag hai.
       </div>
     </div>
   );
@@ -1554,6 +1657,32 @@ export default function MasterDashboard() {
     }, () => setPlayers([]));
   }, [user?.uid]);
 
+  // Live wallet credit — reconcile this master's play-earnings on
+  // mount and every 30s while the panel is open. Idempotent (a
+  // turnover marker on the master doc prevents double-credit), so
+  // running it from here AND from the admin panel is safe. This is
+  // what makes the master's points tick up "live" as players play.
+  const reconcileBusy = useRef(false);
+  useEffect(() => {
+    if (!user?.uid) return undefined;
+    const tick = async () => {
+      if (reconcileBusy.current) return;
+      const ids = players.map((p) => p.id);
+      if (ids.length === 0) return;
+      const pct = Number(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT);
+      if (pct <= 0) return;
+      reconcileBusy.current = true;
+      try {
+        await reconcileMasterPlayEarnings(db, { id: user.uid, ...master }, ids);
+      } catch { /* idempotent — safe to ignore, next tick retries */ }
+      finally { reconcileBusy.current = false; }
+    };
+    tick();
+    const id = setInterval(tick, 30000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, players.length, master.playEarnPercent]);
+
   // ── Notification sound + toast on new pending deposits/withdrawals ──
   // Mirrors the admin's notification UX so a master also gets pinged
   // when one of their players submits something. Only fires for docs
@@ -1631,6 +1760,7 @@ export default function MasterDashboard() {
       case 'deposits':   return <DepositApprovalsView master={master} players={players} />;
       case 'withdraws':  return <WithdrawalApprovalsView master={master} players={players} />;
       case 'marketBets': return <MarketBetsView players={players} />;
+      case 'earnings':   return <EarningsView master={master} players={players} />;
       case 'link':      return <LinkView master={master} />;
       default:          return <DashboardView master={master} playerCount={players.length} onJump={switchTab} />;
     }
