@@ -14,7 +14,7 @@ import 'react-toastify/dist/ReactToastify.css';
 import { db, auth, app } from '../firebase';
 import useAuthStore from '../store/authStore';
 import { formatCurrency } from '../utils/formatMoney';
-import { buildMasterReferralLink, sumPlayerTurnover, reconcileMasterPlayEarnings, DEFAULT_MASTER_EARN_PCT } from '../utils/master';
+import { buildMasterReferralLink, sumPlayerTurnover, reconcileMasterPlayEarnings, masterWithdrawable, DEFAULT_MASTER_EARN_PCT } from '../utils/master';
 import { getUserFunds } from '../utils/userFunds';
 import { playChime } from '../utils/gameSfx';
 import { markets as ALL_MARKETS } from '../marketData';
@@ -37,6 +37,7 @@ const SECTIONS = [
   { id: 'withdraws', label: 'Withdrawal Approvals', icon: DollarSign,   short: 'Withdraw'},
   { id: 'marketBets',label: 'Market Bets',       icon: BarChart3,       short: 'Bets'    },
   { id: 'earnings',  label: 'My Earnings',       icon: DollarSign,      short: 'Earn'    },
+  { id: 'adminReq',  label: 'Admin Requests',    icon: CreditCard,      short: 'Admin'   },
   { id: 'qr',        label: 'My Payment QR',     icon: QrCode,          short: 'QR'      },
   { id: 'activity',  label: 'My Activity',       icon: History,         short: 'Log'     },
   { id: 'link',      label: 'My Referral Link',  icon: LinkIcon,        short: 'Link'    },
@@ -800,6 +801,143 @@ function EarningsView({ master, players }) {
           tumhare players ko tumse assign kare (All Users → player → master assign).
         </div>
       )}
+    </div>
+  );
+}
+
+// Master ↔ Admin requests. Master raises "deposit" (I paid you cash,
+// give me points) or "withdrawal" (take points back / settle).
+// Earned (play-commission) points are LOCKED — withdrawal is capped
+// at the bought/deposited portion. Separate from player money.
+function AdminRequestsView({ master }) {
+  const [type, setType] = useState('deposit');
+  const [amount, setAmount] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [reqs, setReqs] = useState([]);
+
+  const balance = Number(master?.balance ?? master?.walletBalance ?? 0);
+  const earnedLocked = Number(master?.lifetimeEarned || 0);
+  const withdrawable = masterWithdrawable(master);
+
+  useEffect(() => {
+    if (!master?.uid) return undefined;
+    const q = query(collection(db, 'masterRequests'), where('masterId', '==', master.uid));
+    return onSnapshot(q, (snap) => {
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      rows.sort((a, b) => (b.createdAt?.toDate?.()?.getTime() || 0) - (a.createdAt?.toDate?.()?.getTime() || 0));
+      setReqs(rows);
+    }, () => setReqs([]));
+  }, [master?.uid]);
+
+  const submit = async () => {
+    const v = Number(amount);
+    if (!Number.isFinite(v) || v <= 0) return toast.error('Valid amount daalo.');
+    if (type === 'withdrawal' && v > withdrawable) {
+      return toast.error(`Sirf ${formatCurrency(withdrawable)} withdraw ho sakta hai. Earned points (${formatCurrency(earnedLocked)}) locked hain — vo sirf players ko de sakte ho.`);
+    }
+    setBusy(true);
+    try {
+      await addDoc(collection(db, 'masterRequests'), {
+        masterId: master.uid,
+        masterName: master.name || null,
+        type,
+        amount: v,
+        note: note.trim() || null,
+        status: 'pending',
+        createdAt: serverTimestamp(),
+      });
+      toast.success(`${type === 'deposit' ? 'Deposit' : 'Withdrawal'} request bhej di — admin approve karega.`);
+      setAmount(''); setNote('');
+    } catch (err) {
+      toast.error('Request fail: ' + (err?.code || err?.message || err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const fmt = (ts) => ts?.toDate?.()?.toLocaleString('en-IN') || '—';
+
+  return (
+    <div className="p-4 md:p-6 space-y-4">
+      <h2 className="text-lg font-bold text-white">Admin Requests</h2>
+      <p className="text-xs text-gray-400">
+        Apne points ke liye admin ko request bhejo. (Players ke deposit/withdrawal isse alag hain.)
+      </p>
+
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-800 p-4">
+          <p className="text-[10px] uppercase tracking-widest text-white/70">My Points</p>
+          <p className="text-xl font-black text-white mt-1">{formatCurrency(balance)}</p>
+        </div>
+        <div className="rounded-2xl bg-gradient-to-br from-amber-600 to-amber-800 p-4">
+          <p className="text-[10px] uppercase tracking-widest text-white/70">Earned (locked)</p>
+          <p className="text-xl font-black text-white mt-1">{formatCurrency(earnedLocked)}</p>
+        </div>
+        <div className="rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 p-4">
+          <p className="text-[10px] uppercase tracking-widest text-white/70">Withdrawable</p>
+          <p className="text-xl font-black text-white mt-1">{formatCurrency(withdrawable)}</p>
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-[#0d1228] border border-white/5 p-4 space-y-3">
+        <div className="grid grid-cols-2 gap-2">
+          <button onClick={() => setType('deposit')}
+            className={`py-3 rounded-xl font-bold text-sm ${type === 'deposit' ? 'bg-emerald-600 text-white' : 'bg-white/5 text-gray-300'}`}>
+            + Deposit (points chahiye)
+          </button>
+          <button onClick={() => setType('withdrawal')}
+            className={`py-3 rounded-xl font-bold text-sm ${type === 'withdrawal' ? 'bg-rose-600 text-white' : 'bg-white/5 text-gray-300'}`}>
+            − Withdrawal (points wapas)
+          </button>
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Amount (₹)</label>
+          <input type="number" min="1" value={amount} onChange={(e) => setAmount(e.target.value)}
+            className="w-full bg-[#070b1e] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white" />
+          {type === 'withdrawal' && (
+            <p className="text-[11px] text-amber-300 mt-1">
+              Max {formatCurrency(withdrawable)}. Earned points withdraw nahi hote — sirf players ko de sakte ho.
+            </p>
+          )}
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Note (optional)</label>
+          <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
+            placeholder={type === 'deposit' ? 'Maine admin ko UPI/cash diya...' : 'Settle / return reason...'}
+            className="w-full bg-[#070b1e] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white" />
+        </div>
+        <button onClick={submit} disabled={busy}
+          className="w-full bg-yellow-400 hover:bg-yellow-300 disabled:opacity-40 text-black font-black rounded-xl py-3">
+          {busy ? 'Sending…' : 'Send request to admin'}
+        </button>
+      </div>
+
+      <div className="rounded-2xl bg-[#0d1228] border border-white/5">
+        <p className="px-4 py-2.5 border-b border-white/5 text-[11px] uppercase tracking-widest text-gray-400 font-bold">My requests</p>
+        {reqs.length === 0 ? (
+          <p className="p-4 text-xs text-gray-500 text-center">Koi request nahi.</p>
+        ) : (
+          <ul className="divide-y divide-white/5">
+            {reqs.map((r) => (
+              <li key={r.id} className="px-4 py-3 flex items-center justify-between text-xs">
+                <div>
+                  <p className="font-bold text-white">
+                    {r.type === 'deposit' ? '+ Deposit' : '− Withdrawal'} {formatCurrency(r.amount)}
+                  </p>
+                  <p className="text-[10px] text-gray-500">{fmt(r.createdAt)}{r.note ? ` · ${r.note}` : ''}</p>
+                  {r.adminComment && <p className="text-[10px] text-rose-300">Admin: {r.adminComment}</p>}
+                </div>
+                <span className={`text-[10px] px-2 py-1 rounded-full font-bold ${
+                  r.status === 'approved' ? 'bg-emerald-500/20 text-emerald-300' :
+                  r.status === 'rejected' ? 'bg-rose-500/20 text-rose-300' :
+                  'bg-amber-500/20 text-amber-300'
+                }`}>{r.status}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
@@ -1814,6 +1952,7 @@ export default function MasterDashboard() {
       case 'withdraws':  return <WithdrawalApprovalsView master={master} players={players} />;
       case 'marketBets': return <MarketBetsView players={players} />;
       case 'earnings':   return <EarningsView master={master} players={players} />;
+      case 'adminReq':   return <AdminRequestsView master={master} />;
       case 'link':      return <LinkView master={master} />;
       default:          return <DashboardView master={master} playerCount={players.length} onJump={switchTab} />;
     }

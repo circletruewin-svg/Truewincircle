@@ -105,6 +105,20 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // Master's own deposit / withdrawal requests TO admin (master
+    // buying more points, or returning bought points). Separate from
+    // player deposits/withdrawals. Master creates own pending
+    // requests + reads own; admin reads all + approves/rejects.
+    match /masterRequests/{reqId} {
+      allow read: if isAdmin() ||
+        (isMaster() && resource.data.masterId == request.auth.uid);
+      allow create: if isMaster() &&
+        request.resource.data.masterId == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.type in ['deposit', 'withdrawal'];
+      allow update, delete: if isAdmin();
+    }
+
     // Pre-staged user accounts. Admin creates a /pendingUsers/{phone}
     // doc from the admin panel (phone format: "+91XXXXXXXXXX"). When the
     // matching phone signs in for the first time, the SignIn / SignUp

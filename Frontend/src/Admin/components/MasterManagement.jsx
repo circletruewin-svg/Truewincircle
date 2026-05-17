@@ -974,6 +974,71 @@ export default function MasterManagement() {
   const [sports, setSports] = useState([]);
   const [settlements, setSettlements] = useState([]);
 
+  // Master's own deposit/withdrawal requests TO admin (separate from
+  // player money). Live list of everything; we surface pending ones.
+  const [masterReqs, setMasterReqs] = useState([]);
+  const [reqBusy, setReqBusy] = useState(null);
+  useEffect(() => {
+    const q = query(collection(db, 'masterRequests'));
+    return onSnapshot(q, (snap) => {
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      rows.sort((a, b) => (b.createdAt?.toDate?.()?.getTime() || 0) - (a.createdAt?.toDate?.()?.getTime() || 0));
+      setMasterReqs(rows);
+    }, () => setMasterReqs([]));
+  }, []);
+
+  const pendingMasterReqs = useMemo(
+    () => masterReqs.filter((r) => r.status === 'pending'),
+    [masterReqs],
+  );
+
+  // Approve a master request: deposit → credit master points,
+  // withdrawal → debit. Atomic, logged to masterLedger.
+  const decideMasterReq = async (req, action) => {
+    setReqBusy(req.id);
+    try {
+      if (action === 'rejected') {
+        const reason = window.prompt('Reject reason (optional):', '') ?? '';
+        await updateDoc(doc(db, 'masterRequests', req.id), {
+          status: 'rejected', adminComment: reason.trim() || null,
+        });
+        toast.info('Request rejected.');
+        return;
+      }
+      const amount = Number(req.amount || 0);
+      if (!(amount > 0)) { toast.error('Invalid amount.'); return; }
+      await runTransaction(db, async (tx) => {
+        const mRef = doc(db, 'users', req.masterId);
+        const rRef = doc(db, 'masterRequests', req.id);
+        const mSnap = await tx.get(mRef);
+        const rSnap = await tx.get(rRef);
+        if (!mSnap.exists()) throw new Error('Master not found.');
+        if (!rSnap.exists() || rSnap.data().status !== 'pending') throw new Error('Already processed.');
+        const cur = Number(mSnap.data().balance ?? mSnap.data().walletBalance ?? 0);
+        const next = req.type === 'deposit' ? cur + amount : cur - amount;
+        if (next < 0) throw new Error(`Master ke paas sirf ${formatCurrency(cur)} hai.`);
+        tx.update(mRef, {
+          balance: Math.round(next * 100) / 100,
+          walletBalance: Math.round(next * 100) / 100,
+        });
+        tx.update(rRef, { status: 'approved' });
+      });
+      await addDoc(collection(db, 'masterLedger'), {
+        type: req.type === 'deposit' ? 'admin_to_master' : 'master_to_admin',
+        masterId: req.masterId,
+        masterName: req.masterName || null,
+        amount,
+        note: `Master ${req.type} request approved`,
+        createdAt: serverTimestamp(),
+      });
+      toast.success(`${req.type === 'deposit' ? 'Credited' : 'Debited'} ${formatCurrency(amount)}.`);
+    } catch (err) {
+      toast.error('Failed: ' + (err?.message || err));
+    } finally {
+      setReqBusy(null);
+    }
+  };
+
   useEffect(() => {
     const qH = query(collection(db, 'harufBets'),   where('timestamp', '>=', Timestamp.fromDate(rangeStart)));
     return onSnapshot(qH, (s) => setHaruf(s.docs.map((d) => ({ id: d.id, ...d.data() }))), () => setHaruf([]));
@@ -1262,6 +1327,49 @@ export default function MasterManagement() {
           <p className="text-xs text-white/80 mt-1">selected period</p>
         </div>
       </div>
+
+      {/* Master's own deposit/withdrawal requests — SEPARATE from
+          player money. Only pending shown here for action. */}
+      {pendingMasterReqs.length > 0 && (
+        <div className="bg-white rounded-2xl shadow border mb-5 overflow-hidden">
+          <div className="bg-amber-50 border-b px-4 py-3">
+            <h3 className="font-black text-amber-900">🏦 Master Requests ({pendingMasterReqs.length})</h3>
+            <p className="text-[11px] text-amber-700">
+              Masters ke apne points ke deposit/withdrawal — players ke paise se alag.
+            </p>
+          </div>
+          <ul className="divide-y">
+            {pendingMasterReqs.map((r) => (
+              <li key={r.id} className="px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-bold text-gray-800">
+                    {r.masterName || r.masterId}
+                    <span className={`ml-2 text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                      r.type === 'deposit' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                    }`}>{r.type === 'deposit' ? '+ DEPOSIT' : '− WITHDRAWAL'}</span>
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {formatCurrency(r.amount)} · {r.createdAt?.toDate?.()?.toLocaleString('en-IN') || '—'}
+                    {r.note ? ` · ${r.note}` : ''}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => decideMasterReq(r, 'approved')}
+                    disabled={reqBusy === r.id}
+                    className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold px-4 py-1.5 rounded text-xs"
+                  >{reqBusy === r.id ? '…' : '✓ Approve'}</button>
+                  <button
+                    onClick={() => decideMasterReq(r, 'rejected')}
+                    disabled={reqBusy === r.id}
+                    className="bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white font-bold px-4 py-1.5 rounded text-xs"
+                  >✗ Reject</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="mb-3">
         <input

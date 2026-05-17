@@ -77,6 +77,17 @@ export async function sumPlayerTurnover(db, playerIds, start, end) {
 // %. Admin can override per master in Master Management.
 export const DEFAULT_MASTER_EARN_PCT = 10;
 
+// How much of a master's balance they're allowed to request a
+// withdrawal of. Earned (play-commission) points are LOCKED — only
+// the bought / admin-deposited portion can be cashed back. We treat
+// lifetimeEarned as a hard floor: withdrawable = balance −
+// lifetimeEarned, never negative. Conservative on purpose.
+export function masterWithdrawable(master) {
+  const bal = Number(master?.balance ?? master?.walletBalance ?? 0);
+  const earned = Number(master?.lifetimeEarned || 0);
+  return Math.max(0, Math.round((bal - earned) * 100) / 100);
+}
+
 // Reconcile a master's play-earnings. Idempotent: a marker
 // (playEarnCreditedTurnover) on the master doc records how much
 // turnover has already been paid out on, so running this repeatedly
@@ -112,10 +123,16 @@ export async function reconcileMasterPlayEarnings(db, master, playerIds) {
     }
     const bal = Number(data.balance ?? data.walletBalance ?? 0);
     const nb = Math.round((bal + earn) * 100) / 100;
+    // lifetimeEarned is the running total of play-commission ever
+    // credited. It only ever goes UP and is used to lock that much
+    // of the balance from master withdrawal requests (earned points
+    // can't be cashed out — only handed to players).
+    const prevLifetime = Number(data.lifetimeEarned || 0);
     tx.update(ref, {
       balance: nb,
       walletBalance: nb,
       playEarnCreditedTurnover: turnover,
+      lifetimeEarned: Math.round((prevLifetime + earn) * 100) / 100,
     });
     credited = earn;
   });
