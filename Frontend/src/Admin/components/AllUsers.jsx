@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot, query, doc, updateDoc, writeBatch, where, setDoc, serverTimestamp, getDoc, deleteDoc, runTransaction, addDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, doc, updateDoc, writeBatch, where, setDoc, serverTimestamp, getDoc, getDocs, deleteDoc, runTransaction, addDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import Loader from '../../components/Loader';
 import UserBettingHistory from './UserBettingHistory';
@@ -535,6 +535,20 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
       // payouts on their behalf. We mint a Firestore user doc directly
       // with a synthetic id, no Firebase Auth account.
       if (createOffline) {
+        // Dedupe — never mint two offline docs for the same phone.
+        if (cleanPhone) {
+          const e164 = '+91' + cleanPhone;
+          const dupSnap = await getDocs(query(
+            collection(db, 'users'),
+            where('phoneNumber', '==', e164),
+          ));
+          if (!dupSnap.empty) {
+            const d = dupSnap.docs[0].data();
+            setCreateBusy(false);
+            setCreateError(`Phone ${e164} se user pehle se hai: "${d.name || '—'}". Duplicate nahi banega.`);
+            return;
+          }
+        }
         const offlineUid = `offline-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
         const userRef = doc(db, 'users', offlineUid);
         await setDoc(userRef, {
@@ -645,6 +659,31 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
     );
     return () => unsubscribe();
   }, []);
+
+  // Permanently delete a user doc — for duplicates / wrong entries
+  // (e.g. the same phone added twice). Confirm-gated and shouts a
+  // warning if the account still holds money so admin doesn't nuke
+  // a real player by accident.
+  const deleteUserAccount = async (user) => {
+    const bal = Number(user.balance ?? user.walletBalance ?? 0);
+    const win = Number(user.winningMoney ?? 0);
+    let msg = `Delete "${user.name || user.phoneNumber || user.id}" permanently?\n\n`;
+    msg += `Phone: ${user.phoneNumber || '—'}\n`;
+    msg += `Balance: ₹${bal} · Winning: ₹${win}\n\n`;
+    if (bal > 0 || win > 0) {
+      msg += `⚠️ Iss account me abhi paisa hai (₹${bal + win})! Delete karne se vo gayab ho jayega. Pakka?`;
+    } else {
+      msg += `Account khali hai (₹0) — safe to delete.`;
+    }
+    if (!window.confirm(msg)) return;
+    try {
+      await deleteDoc(doc(db, 'users', user.id));
+      setUsers((prev) => prev.filter((u) => u.id !== user.id));
+    } catch (err) {
+      console.error('Delete user failed:', err);
+      setError('Delete fail: ' + (err.message || err));
+    }
+  };
 
   // Make-admin is intentionally NOT in the panel — admin promotion is
   // done through the Firebase Console only. Remove-admin stays so a
@@ -1260,6 +1299,15 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
                       >
                         Place Bet
                       </button>
+                      {user.role !== 'admin' && (
+                        <button
+                          onClick={() => deleteUserAccount(user)}
+                          className="bg-red-700 hover:bg-red-800 text-white font-bold py-1 px-3 rounded text-xs"
+                          title="Permanently delete this user (use for duplicates / wrong entries)"
+                        >
+                          Delete
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
