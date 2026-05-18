@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection, onSnapshot, query, where, doc, getDoc, getDocs, setDoc,
   serverTimestamp, runTransaction, addDoc, limit, updateDoc, deleteDoc,
@@ -9,7 +9,8 @@ import { toast } from 'react-toastify';
 import { formatCurrency } from '../../utils/formatMoney';
 import {
   buildMasterReferralLink, generateMasterCode,
-  reconcileMasterPlayEarnings, sumPlayerTurnover, DEFAULT_MASTER_EARN_PCT,
+  reconcileMasterPlayEarnings,
+  sumPlayerTurnoverBreakdown, GAME_LABELS, DEFAULT_MASTER_EARN_PCT,
 } from '../../utils/master';
 
 // ─────────────────────────────────────────────────────────────────
@@ -636,22 +637,25 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
   const [eFrom, setEFrom] = useState(() => istYmd(new Date()));
   const [eTo, setETo] = useState(() => istYmd(new Date()));
   const [ePlay, setEPlay] = useState(null);
+  const [eByUser, setEByUser] = useState({}); // uid → { total, games }
+  const [eOpenUser, setEOpenUser] = useState(null); // which player row is expanded
   const [eBusy, setEBusy] = useState(false);
   const earnPct = Number(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT);
   const adminPct = Number(master.commissionPercent) || 0;
   const ePlayerIds = useMemo(() => players.map((p) => p.id), [players]);
 
   const loadEarnings = async () => {
-    if (ePlayerIds.length === 0) { setEPlay(0); return; }
+    if (ePlayerIds.length === 0) { setEPlay(0); setEByUser({}); return; }
     setEBusy(true);
     try {
       const [fy, fm, fd] = eFrom.split('-').map(Number);
       const [ty, tm, td] = eTo.split('-').map(Number);
       const start = new Date(Date.UTC(fy, fm - 1, fd, 0, 0, 0) - 5.5 * 3600e3);
       const end = new Date(Date.UTC(ty, tm - 1, td, 0, 0, 0) - 5.5 * 3600e3 + 864e5 - 1);
-      const t = await sumPlayerTurnover(db, ePlayerIds, start, end);
-      setEPlay(t);
-    } catch { setEPlay(0); } finally { setEBusy(false); }
+      const { total, byUser } = await sumPlayerTurnoverBreakdown(db, ePlayerIds, start, end);
+      setEPlay(total);
+      setEByUser(byUser);
+    } catch { setEPlay(0); setEByUser({}); } finally { setEBusy(false); }
   };
   useEffect(() => {
     loadEarnings();
@@ -732,6 +736,96 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
         <p className="text-[11px] text-gray-500 mt-3">
           Saare games count (Haruf, WinGame, Aviator, Cricket, Color, Dice, casino sab). Live — har 30s update. Master ki earning uske points me auto credit hoti hai.
         </p>
+
+        {/* Kis player se / kis game se kitni earning — plain table.
+            Player pe click karo to game-wise khul jaata hai. */}
+        <div className="mt-4 border-t pt-4">
+          <p className="text-sm font-bold text-gray-800 mb-2">
+            Kis player se kitni kamai (range me)
+          </p>
+          {ePlay == null ? (
+            <p className="text-xs text-gray-500">Loading…</p>
+          ) : (() => {
+            const rows = players
+              .map((p) => {
+                const u = eByUser[p.id] || { total: 0, games: {} };
+                return {
+                  id: p.id,
+                  name: p.name || p.phoneNumber || p.id,
+                  play: u.total || 0,
+                  earn: Math.round((u.total || 0) * (earnPct / 100) * 100) / 100,
+                  games: u.games || {},
+                };
+              })
+              .sort((a, b) => b.play - a.play);
+            return (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[460px] text-sm">
+                  <thead className="bg-gray-50 border-y text-[10px] uppercase text-gray-500">
+                    <tr>
+                      <th className="text-left px-3 py-2">Player</th>
+                      <th className="text-right px-3 py-2">Khela (play)</th>
+                      <th className="text-right px-3 py-2">Master ki kamai ({earnPct}%)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => {
+                      const open = eOpenUser === r.id;
+                      const gameRows = Object.entries(r.games)
+                        .sort((a, b) => b[1] - a[1]);
+                      return (
+                        <Fragment key={r.id}>
+                          <tr
+                            onClick={() => setEOpenUser(open ? null : r.id)}
+                            className={`border-b cursor-pointer hover:bg-gray-50 ${open ? 'bg-indigo-50' : ''}`}
+                          >
+                            <td className="px-3 py-2 font-semibold text-gray-800">
+                              {r.play > 0 ? (open ? '▲ ' : '▼ ') : ''}{r.name}
+                            </td>
+                            <td className="px-3 py-2 text-right">{formatCurrency(r.play)}</td>
+                            <td className="px-3 py-2 text-right font-bold text-emerald-700">
+                              +{formatCurrency(r.earn)}
+                            </td>
+                          </tr>
+                          {open && gameRows.length > 0 && gameRows.map(([col, amt]) => (
+                            <tr key={r.id + col} className="bg-indigo-50/40 text-xs">
+                              <td className="px-3 py-1.5 pl-8 text-gray-600">
+                                {GAME_LABELS[col] || col}
+                              </td>
+                              <td className="px-3 py-1.5 text-right text-gray-600">
+                                {formatCurrency(amt)}
+                              </td>
+                              <td className="px-3 py-1.5 text-right text-emerald-600">
+                                +{formatCurrency(Math.round(amt * (earnPct / 100) * 100) / 100)}
+                              </td>
+                            </tr>
+                          ))}
+                          {open && gameRows.length === 0 && (
+                            <tr className="bg-indigo-50/40 text-xs">
+                              <td colSpan={3} className="px-3 py-1.5 pl-8 text-gray-500">
+                                Is range me koi game nahi khela.
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                    {rows.length === 0 && (
+                      <tr><td colSpan={3} className="px-3 py-3 text-center text-gray-500">Koi player nahi.</td></tr>
+                    )}
+                  </tbody>
+                  <tfoot>
+                    <tr className="font-bold border-t bg-gray-50">
+                      <td className="px-3 py-2">Total</td>
+                      <td className="px-3 py-2 text-right">{formatCurrency(ePlay || 0)}</td>
+                      <td className="px-3 py-2 text-right text-emerald-700">+{formatCurrency(eEarned || 0)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            );
+          })()}
+        </div>
       </div>
 
       {/* Players list */}
@@ -782,58 +876,39 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
       {/* Ledger */}
       <div className="bg-white rounded-xl shadow border">
         <div className="border-b px-4 py-3">
-          <h3 className="font-bold">Activity (admin ↔ master ↔ players)</h3>
-          <p className="text-xs text-gray-500 mt-0.5">Master ne kis user ko kitne diye/liye — sab yahan.</p>
+          <h3 className="font-bold">History — paise ka aana-jaana</h3>
+          <p className="text-xs text-gray-500 mt-0.5">Har line: kab, kya hua, kitne points (+ aaye / − gaye).</p>
         </div>
         {ledger.length === 0 ? (
-          <p className="p-4 text-sm text-gray-500 text-center">Koi adjustment nahi hua abhi tak.</p>
+          <p className="p-4 text-sm text-gray-500 text-center">Abhi tak kuch nahi hua.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[500px] text-sm">
-              <thead className="bg-gray-50 border-b text-[10px] uppercase text-gray-500">
-                <tr>
-                  <th className="text-left px-3 py-2">When</th>
-                  <th className="text-left px-3 py-2">Type</th>
-                  <th className="text-right px-3 py-2">Amount</th>
-                  <th className="text-left px-3 py-2">Note</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ledger.map((l) => {
-                  const who = l.playerId ? (playerNames[l.playerId] || l.playerId) : null;
-                  const M = {
-                    admin_to_master:        { label: 'Credit (admin → master)',  cr: true },
-                    master_to_admin:        { label: 'Debit (master → admin)',   cr: false },
-                    master_withdraw_request:{ label: 'Master withdrawal (to admin)', cr: false },
-                    master_withdraw_refund: { label: 'Master withdrawal refunded', cr: true },
-                    play_earning:           { label: `Play earning${l.pct ? ` (${l.pct}%)` : ''}`, cr: true },
-                    master_to_player:       { label: who ? `Diye → ${who}` : 'Master → player', cr: false },
-                    player_to_master:       { label: who ? `Liye ← ${who}` : 'Player → master', cr: true },
-                    withdrawal_approve:     { label: who ? `Withdrawal approve · ${who}` : 'Withdrawal approve', cr: true },
-                    withdrawal_reject:      { label: who ? `Withdrawal reject · ${who}` : 'Withdrawal reject', cr: false },
-                  };
-                  const v = M[l.type] || { label: l.type || '—', cr: false };
-                  return (
-                    <tr key={l.id} className="border-b last:border-0">
-                      <td className="px-3 py-2 text-xs">{fmtDate(l.createdAt)}</td>
-                      <td className="px-3 py-2 text-xs">
-                        <span className={`px-2 py-0.5 rounded-full font-semibold ${v.cr ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                          {v.label}
-                        </span>
-                      </td>
-                      <td className={`px-3 py-2 text-right font-bold ${v.cr ? 'text-emerald-700' : 'text-rose-700'}`}>
-                        {v.cr ? '+' : '−'}{formatCurrency(l.amount)}
-                      </td>
-                      <td className="px-3 py-2 text-xs text-gray-500">
-                        {who ? <span className="font-semibold text-gray-700">{who}</span> : null}
-                        {who && l.note ? ' · ' : null}
-                        {l.note || (who ? null : '—')}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="divide-y">
+            {ledger.map((l) => {
+              const who = l.playerId ? (playerNames[l.playerId] || l.playerId) : null;
+              const M = {
+                admin_to_master:        { text: 'Admin ne points diye', cr: true },
+                master_to_admin:        { text: 'Admin ne points wapas liye', cr: false },
+                master_withdraw_request:{ text: 'Master ne admin se withdrawal maanga', cr: false },
+                master_withdraw_refund: { text: 'Master ka withdrawal wapas aaya', cr: true },
+                play_earning:           { text: 'Players ke khelne se auto kamai', cr: true },
+                master_to_player:       { text: `${who || 'Player'} ko points diye`, cr: false },
+                player_to_master:       { text: `${who || 'Player'} se points liye`, cr: true },
+                withdrawal_approve:     { text: `${who || 'Player'} ki withdrawal approve ki`, cr: true },
+                withdrawal_reject:      { text: `${who || 'Player'} ki withdrawal reject ki`, cr: false },
+              };
+              const v = M[l.type] || { text: l.note || l.type || '—', cr: false };
+              return (
+                <div key={l.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                  <div className="min-w-0">
+                    <p className="text-sm text-gray-800">{v.text}</p>
+                    <p className="text-[11px] text-gray-400">{fmtDate(l.createdAt)}</p>
+                  </div>
+                  <div className={`text-sm font-bold whitespace-nowrap ${v.cr ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {v.cr ? '+' : '−'}{formatCurrency(l.amount)}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

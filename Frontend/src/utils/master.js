@@ -71,6 +71,70 @@ export async function sumPlayerTurnover(db, playerIds, start, end) {
   return Math.round(total * 100) / 100;
 }
 
+// Friendly display name for each turnover collection.
+export const GAME_LABELS = {
+  harufBets: 'Haruf', aviatorBets: 'Aviator', sportsBets: 'Cricket / Sports',
+  colorBets: 'Color', diceBets: 'Dice', wingame_bets: 'Win Game (1-12)',
+  rouletteBets: 'Roulette', coinFlipHistory: 'Coin Flip',
+  teenPattiHistory: 'Teen Patti', dtHistory: 'Dragon Tiger',
+  abHistory: 'Andar Bahar', lucky7History: 'Lucky 7', hiLoHistory: 'Hi-Lo',
+  minesHistory: 'Mines', rouletteHistory: 'Roulette', baccaratHistory: 'Baccarat',
+  plinkoHistory: 'Plinko', cards32History: '32 Cards',
+};
+
+// Same data as sumPlayerTurnover, but grouped so the admin can see
+// WHICH player and WHICH game produced the master's earnings.
+// Returns: { total, byUser: { [uid]: { total, games: { [col]: amount } } } }
+export async function sumPlayerTurnoverBreakdown(db, playerIds, start, end) {
+  const empty = { total: 0, byUser: {} };
+  if (!playerIds || playerIds.length === 0) return empty;
+  const chunks = [];
+  for (let i = 0; i < playerIds.length; i += 30) chunks.push(playerIds.slice(i, i + 30));
+
+  const tasks = [];
+  for (const chunk of chunks) {
+    for (const src of TURNOVER_SOURCES) {
+      tasks.push(
+        getDocs(query(collection(db, src.col), where('userId', 'in', chunk)))
+          .then((snap) => {
+            const rows = [];
+            snap.forEach((d) => {
+              const data = d.data();
+              if (start && end) {
+                const t = data[src.ts]?.toDate?.();
+                if (!t || t < start || t > end) return;
+              }
+              rows.push({
+                uid: data.userId,
+                col: src.col,
+                amt: Number(data[src.amt] || 0),
+              });
+            });
+            return rows;
+          })
+          .catch(() => []),
+      );
+    }
+  }
+  const all = (await Promise.all(tasks)).flat();
+  const byUser = {};
+  let total = 0;
+  for (const r of all) {
+    if (!r.uid || !(r.amt > 0)) continue;
+    total += r.amt;
+    if (!byUser[r.uid]) byUser[r.uid] = { total: 0, games: {} };
+    byUser[r.uid].total += r.amt;
+    byUser[r.uid].games[r.col] = (byUser[r.uid].games[r.col] || 0) + r.amt;
+  }
+  const round = (n) => Math.round(n * 100) / 100;
+  total = round(total);
+  for (const u of Object.values(byUser)) {
+    u.total = round(u.total);
+    for (const k of Object.keys(u.games)) u.games[k] = round(u.games[k]);
+  }
+  return { total, byUser };
+}
+
 // Default "master earn %" — a master automatically earns this share
 // of their players' total PLAY (turnover), credited straight into
 // their points balance. This is SEPARATE from the admin's commission
