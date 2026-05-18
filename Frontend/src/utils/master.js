@@ -4,7 +4,7 @@
 // stay aligned.
 
 import {
-  collection, getDocs, query, where, doc, runTransaction, addDoc,
+  collection, getDocs, query, where, doc, runTransaction,
   serverTimestamp,
 } from 'firebase/firestore';
 
@@ -198,22 +198,28 @@ export async function reconcileMasterPlayEarnings(db, master, playerIds) {
       playEarnCreditedTurnover: turnover,
       lifetimeEarned: Math.round((prevLifetime + earn) * 100) / 100,
     });
+
+    // Audit row written INSIDE the same transaction with a
+    // DETERMINISTIC id keyed by the new turnover marker. Reconcile
+    // runs from both the admin and master panels every 30s; the
+    // balance was always idempotent (turnover marker) but the old
+    // ledger addDoc() was outside the txn and could write the same
+    // earning twice. A fixed id makes the audit row idempotent too
+    // — concurrent/duplicate runs overwrite the same doc instead of
+    // creating a second "+₹116"-type ghost line.
+    const ledgerId = `pe_${masterId}_${Math.round(turnover * 100)}`;
+    tx.set(doc(db, 'masterLedger', ledgerId), {
+      type: 'play_earning',
+      masterId,
+      masterName: master.name || null,
+      amount: earn,
+      pct,
+      note: `Auto play-earning @ ${pct}% of turnover`,
+      createdAt: serverTimestamp(),
+    });
     credited = earn;
   });
 
-  if (credited > 0) {
-    try {
-      await addDoc(collection(db, 'masterLedger'), {
-        type: 'play_earning',
-        masterId,
-        masterName: master.name || null,
-        amount: credited,
-        pct,
-        note: `Auto play-earning @ ${pct}% of turnover`,
-        createdAt: serverTimestamp(),
-      });
-    } catch { /* ledger is best-effort */ }
-  }
   // Return rich result so callers can show a clear toast / diagnose.
   return { turnover, credited, pct };
 }

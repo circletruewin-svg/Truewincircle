@@ -625,6 +625,44 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
     () => players.reduce((s, p) => s + Number(p.winningMoney ?? 0), 0),
     [players],
   );
+
+  // Drop duplicate play-earning rows (old bug wrote the same earning
+  // twice into the audit log; the wallet was only ever credited once).
+  // Key = amount + same-second timestamp. Other types are never
+  // de-duped — only the known play_earning ghost.
+  const cleanLedger = useMemo(() => {
+    const seen = new Set();
+    return ledger.filter((l) => {
+      if (l.type !== 'play_earning') return true;
+      const sec = Math.floor((l.createdAt?.toDate?.()?.getTime() || 0) / 1000);
+      const k = `${l.amount}_${sec}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }, [ledger]);
+
+  // Auto "Hisaab" — sab ledger se khud jod ke. Admin ko manually
+  // calculator nahi chalana padega.
+  const hisaab = useMemo(() => {
+    const h = { adminDiya: 0, kamai: 0, playersSeLiya: 0, playersKoDiya: 0, adminKoWapas: 0 };
+    for (const l of cleanLedger) {
+      const a = Number(l.amount || 0);
+      if (l.type === 'admin_to_master' || l.type === 'master_withdraw_refund') h.adminDiya += a;
+      else if (l.type === 'play_earning') h.kamai += a;
+      else if (l.type === 'player_to_master' || l.type === 'withdrawal_approve') h.playersSeLiya += a;
+      else if (l.type === 'master_to_player' || l.type === 'withdrawal_reject') h.playersKoDiya += a;
+      else if (l.type === 'master_to_admin' || l.type === 'master_withdraw_request') h.adminKoWapas += a;
+    }
+    const r = (n) => Math.round(n * 100) / 100;
+    const bacha = r(h.adminDiya + h.kamai + h.playersSeLiya - h.playersKoDiya - h.adminKoWapas);
+    const actual = r(Number(master.balance ?? master.walletBalance ?? 0));
+    return {
+      adminDiya: r(h.adminDiya), kamai: r(h.kamai), playersSeLiya: r(h.playersSeLiya),
+      playersKoDiya: r(h.playersKoDiya), adminKoWapas: r(h.adminKoWapas),
+      bacha, actual, match: Math.abs(bacha - actual) < 1,
+    };
+  }, [cleanLedger, master.balance, master.walletBalance]);
   const fmtDate = (ts) => {
     const d = ts?.toDate?.();
     return d ? d.toLocaleString('en-IN') : '—';
@@ -683,24 +721,61 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
         </div>
       </div>
 
-      {/* Big info cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Stat label="Master Points" value={formatCurrency(master.balance ?? master.walletBalance ?? 0)} tone="from-emerald-600 to-emerald-800" />
-        <Stat label="Players" value={players.length} tone="from-blue-600 to-blue-800" />
-        <Stat label={`Earn % (master)`} value={`${earnPct}%`} tone="from-indigo-600 to-indigo-800" />
-        <Stat label={`Admin % (commission)`} value={`${adminPct}%`} tone="from-slate-600 to-slate-800" />
+      {/* ── HISAAB — sab kuch khud jod ke, ek nazar me ── */}
+      <div className="bg-white rounded-2xl shadow border overflow-hidden">
+        <div className="bg-emerald-600 px-5 py-3">
+          <p className="text-white/80 text-xs font-bold uppercase tracking-wider">Master ka Hisaab</p>
+          <p className="text-white text-3xl font-black mt-0.5">
+            ₹{formatCurrency(hisaab.actual).replace('₹', '')}
+            <span className="text-sm font-semibold text-white/70"> abhi wallet me</span>
+          </p>
+        </div>
+        <div className="p-5 space-y-2.5 text-sm">
+          <div className="flex justify-between"><span className="text-gray-600">Admin ne diya</span><span className="font-bold text-emerald-700">+ {formatCurrency(hisaab.adminDiya)}</span></div>
+          <div className="flex justify-between"><span className="text-gray-600">Players ke khelne se kamai</span><span className="font-bold text-emerald-700">+ {formatCurrency(hisaab.kamai)}</span></div>
+          <div className="flex justify-between"><span className="text-gray-600">Players se wapas liya</span><span className="font-bold text-emerald-700">+ {formatCurrency(hisaab.playersSeLiya)}</span></div>
+          <div className="flex justify-between"><span className="text-gray-600">Players ko diya</span><span className="font-bold text-rose-600">− {formatCurrency(hisaab.playersKoDiya)}</span></div>
+          <div className="flex justify-between"><span className="text-gray-600">Admin ko wapas / withdrawal</span><span className="font-bold text-rose-600">− {formatCurrency(hisaab.adminKoWapas)}</span></div>
+          <div className="border-t pt-2.5 flex justify-between items-center">
+            <span className="font-bold text-gray-800">Hisaab ke hisaab se bachna chahiye</span>
+            <span className="font-black text-lg text-gray-900">{formatCurrency(hisaab.bacha)}</span>
+          </div>
+          {hisaab.match ? (
+            <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2">✓ Wallet aur hisaab match karta hai — sab sahi hai.</p>
+          ) : (
+            <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
+              ⚠ Wallet ({formatCurrency(hisaab.actual)}) aur hisaab ({formatCurrency(hisaab.bacha)}) me {formatCurrency(Math.abs(hisaab.bacha - hisaab.actual))} ka farak — niche History check karein.
+            </p>
+          )}
+        </div>
       </div>
 
-      {/* Quick actions */}
+      {/* Chhoti jaankari */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-white rounded-xl border p-3 text-center">
+          <p className="text-[10px] uppercase text-gray-500">Players</p>
+          <p className="text-xl font-black text-gray-800">{players.length}</p>
+        </div>
+        <div className="bg-white rounded-xl border p-3 text-center">
+          <p className="text-[10px] uppercase text-gray-500">Master kamai %</p>
+          <p className="text-xl font-black text-indigo-700">{earnPct}%</p>
+        </div>
+        <div className="bg-white rounded-xl border p-3 text-center">
+          <p className="text-[10px] uppercase text-gray-500">Admin commission %</p>
+          <p className="text-xl font-black text-slate-700">{adminPct}%</p>
+        </div>
+      </div>
+
+      {/* Buttons — saaf Hinglish */}
       <div className="flex flex-wrap gap-2">
-        <button onClick={() => onSetCommission(master)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold">Set Admin %</button>
-        <button onClick={() => onSetEarn?.(master)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold">Set Earn %</button>
-        <button onClick={() => onTopUp(master)} className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-bold">+ / − Points</button>
+        <button onClick={() => onTopUp(master)} className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-bold">Points do / lo (+ / −)</button>
+        <button onClick={() => onSetEarn?.(master)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold">Master kamai % set</button>
+        <button onClick={() => onSetCommission(master)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold">Admin commission % set</button>
         {master.masterCode && (
           <button
-            onClick={() => navigator.clipboard.writeText(buildMasterReferralLink(master.masterCode)).then(() => toast.success('Link copied'))}
+            onClick={() => navigator.clipboard.writeText(buildMasterReferralLink(master.masterCode)).then(() => toast.success('Link copy ho gaya'))}
             className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-lg text-sm font-bold"
-          >Copy share link</button>
+          >Share link copy</button>
         )}
       </div>
 
@@ -708,8 +783,8 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
       <div className="bg-white rounded-2xl shadow border p-4 md:p-5">
         <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
           <div>
-            <h3 className="text-lg font-black text-gray-800">💵 Earnings</h3>
-            <p className="text-xs text-gray-500">Master ko {earnPct}% milta hai play ka. Admin ko {adminPct}% commission.</p>
+            <h3 className="text-lg font-black text-gray-800">💵 Kamai (date chuno)</h3>
+            <p className="text-xs text-gray-500">Players jitna khelte hain uska {earnPct}% master ko milta hai. (Admin commission {adminPct}%.)</p>
           </div>
           <div className="flex flex-wrap items-end gap-2">
             <div>
@@ -729,12 +804,12 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <Stat label="Total Play (range)" value={ePlay == null ? '…' : formatCurrency(ePlay)} tone="from-indigo-600 to-indigo-800" />
-          <Stat label={`Master earned (${earnPct}%)`} value={eEarned == null ? '…' : formatCurrency(eEarned)} tone="from-emerald-600 to-emerald-800" />
+          <Stat label="Total khela (is range me)" value={ePlay == null ? '…' : formatCurrency(ePlay)} tone="from-indigo-600 to-indigo-800" />
+          <Stat label={`Master ki kamai (${earnPct}%)`} value={eEarned == null ? '…' : formatCurrency(eEarned)} tone="from-emerald-600 to-emerald-800" />
           <Stat label={`Admin commission (${adminPct}%)`} value={eAdminCut == null ? '…' : formatCurrency(eAdminCut)} tone="from-blue-600 to-blue-800" />
         </div>
         <p className="text-[11px] text-gray-500 mt-3">
-          Saare games count (Haruf, WinGame, Aviator, Cricket, Color, Dice, casino sab). Live — har 30s update. Master ki earning uske points me auto credit hoti hai.
+          Saare games gine jaate hain. Har 30 sec auto update. Master ki kamai uske wallet me apne aap jud jaati hai.
         </p>
 
         {/* Kis player se / kis game se kitni earning — plain table.
@@ -879,11 +954,11 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
           <h3 className="font-bold">History — paise ka aana-jaana</h3>
           <p className="text-xs text-gray-500 mt-0.5">Har line: kab, kya hua, kitne points (+ aaye / − gaye).</p>
         </div>
-        {ledger.length === 0 ? (
+        {cleanLedger.length === 0 ? (
           <p className="p-4 text-sm text-gray-500 text-center">Abhi tak kuch nahi hua.</p>
         ) : (
           <div className="divide-y">
-            {ledger.map((l) => {
+            {cleanLedger.map((l) => {
               const who = l.playerId ? (playerNames[l.playerId] || l.playerId) : null;
               const M = {
                 admin_to_master:        { text: 'Admin ne points diye', cr: true },
