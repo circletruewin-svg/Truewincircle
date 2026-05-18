@@ -506,6 +506,10 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
   const [harufBets, setHarufBets] = useState([]);
   const [aviatorBets, setAviatorBets] = useState([]);
   const [sportsBets, setSportsBets] = useState([]);
+  // playerId → display name for the ledger. Seeded from the master's
+  // current players; any other ids (old/offline players no longer in
+  // the list) are fetched from /users on demand and cached.
+  const [playerNames, setPlayerNames] = useState({});
 
   useEffect(() => {
     const pq = query(collection(db, 'users'), where('assignedMasterId', '==', master.id));
@@ -578,6 +582,39 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
       setLedger(docs);
     }, () => setLedger([]));
   }, [master.id]);
+
+  // Resolve player names referenced by the ledger. Current players
+  // give us most names for free; fetch the rest (and cache).
+  useEffect(() => {
+    const base = {};
+    for (const p of players) {
+      base[p.id] = p.name || p.phoneNumber || p.id;
+    }
+    const needed = ledger
+      .map((l) => l.playerId)
+      .filter((id) => id && !base[id]);
+    const missing = [...new Set(needed)].filter((id) => !(id in playerNames));
+    if (missing.length === 0) {
+      if (Object.keys(base).length) {
+        setPlayerNames((prev) => ({ ...base, ...prev }));
+      }
+      return;
+    }
+    (async () => {
+      const entries = await Promise.all(
+        missing.map(async (id) => {
+          try {
+            const s = await getDoc(doc(db, 'users', id));
+            const d = s.exists() ? s.data() : null;
+            return [id, d ? (d.name || d.phoneNumber || id) : id];
+          } catch {
+            return [id, id];
+          }
+        }),
+      );
+      setPlayerNames((prev) => ({ ...base, ...prev, ...Object.fromEntries(entries) }));
+    })();
+  }, [ledger, players]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const totalDeposited = useMemo(
     () => players.reduce((s, p) => s + Number(p.balance ?? p.walletBalance ?? 0), 0),
@@ -745,7 +782,8 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
       {/* Ledger */}
       <div className="bg-white rounded-xl shadow border">
         <div className="border-b px-4 py-3">
-          <h3 className="font-bold">Activity (admin ↔ master ledger)</h3>
+          <h3 className="font-bold">Activity (admin ↔ master ↔ players)</h3>
+          <p className="text-xs text-gray-500 mt-0.5">Master ne kis user ko kitne diye/liye — sab yahan.</p>
         </div>
         {ledger.length === 0 ? (
           <p className="p-4 text-sm text-gray-500 text-center">Koi adjustment nahi hua abhi tak.</p>
@@ -761,18 +799,39 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
                 </tr>
               </thead>
               <tbody>
-                {ledger.map((l) => (
-                  <tr key={l.id} className="border-b last:border-0">
-                    <td className="px-3 py-2 text-xs">{fmtDate(l.createdAt)}</td>
-                    <td className="px-3 py-2 text-xs">
-                      {l.type === 'admin_to_master'
-                        ? <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-semibold">Credit (admin → master)</span>
-                        : <span className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full font-semibold">Debit (master → admin)</span>}
-                    </td>
-                    <td className="px-3 py-2 text-right font-bold">{formatCurrency(l.amount)}</td>
-                    <td className="px-3 py-2 text-xs text-gray-500">{l.note || '—'}</td>
-                  </tr>
-                ))}
+                {ledger.map((l) => {
+                  const who = l.playerId ? (playerNames[l.playerId] || l.playerId) : null;
+                  const M = {
+                    admin_to_master:        { label: 'Credit (admin → master)',  cr: true },
+                    master_to_admin:        { label: 'Debit (master → admin)',   cr: false },
+                    master_withdraw_request:{ label: 'Master withdrawal (to admin)', cr: false },
+                    master_withdraw_refund: { label: 'Master withdrawal refunded', cr: true },
+                    play_earning:           { label: `Play earning${l.pct ? ` (${l.pct}%)` : ''}`, cr: true },
+                    master_to_player:       { label: who ? `Diye → ${who}` : 'Master → player', cr: false },
+                    player_to_master:       { label: who ? `Liye ← ${who}` : 'Player → master', cr: true },
+                    withdrawal_approve:     { label: who ? `Withdrawal approve · ${who}` : 'Withdrawal approve', cr: true },
+                    withdrawal_reject:      { label: who ? `Withdrawal reject · ${who}` : 'Withdrawal reject', cr: false },
+                  };
+                  const v = M[l.type] || { label: l.type || '—', cr: false };
+                  return (
+                    <tr key={l.id} className="border-b last:border-0">
+                      <td className="px-3 py-2 text-xs">{fmtDate(l.createdAt)}</td>
+                      <td className="px-3 py-2 text-xs">
+                        <span className={`px-2 py-0.5 rounded-full font-semibold ${v.cr ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                          {v.label}
+                        </span>
+                      </td>
+                      <td className={`px-3 py-2 text-right font-bold ${v.cr ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        {v.cr ? '+' : '−'}{formatCurrency(l.amount)}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-gray-500">
+                        {who ? <span className="font-semibold text-gray-700">{who}</span> : null}
+                        {who && l.note ? ' · ' : null}
+                        {l.note || (who ? null : '—')}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
