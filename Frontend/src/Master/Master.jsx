@@ -1775,26 +1775,55 @@ function WithdrawalApprovalsView({ master, players }) {
     filter === 'pending' ? items.filter((i) => i.status === 'pending') : items
   ), [items, filter]);
 
-  // Approve = master pays cash externally; system just records the
-  // status change. No balance moves on this side (the user's winning
-  // money was already deducted when they raised the withdrawal).
+  // Approve = master ne player ko cash/UPI se pay kar diya. Us pure
+  // amount ko master ke wallet (balance) me credit kar do — master
+  // chahe to ise admin se withdraw kare ya players ko distribute kare.
+  // Transaction me 'pending' guard double-credit rokta hai.
   const approve = async (w) => {
-    if (!window.confirm(`Confirm karte ho ki tumne ${formatCurrency(w.amount || 0)} cash ${playerMap.get(w.userId)?.name || 'player'} ko de diye?`)) return;
+    const amount = Number(w.amount || 0);
+    if (!(amount > 0)) { toast.error('Amount invalid.'); return; }
+    if (!window.confirm(
+      `Confirm karte ho ki tumne ${formatCurrency(amount)} cash ${playerMap.get(w.userId)?.name || 'player'} ko de diye?\n\n` +
+      `Ye ${formatCurrency(amount)} tumhare wallet me add ho jayenge (admin se withdraw / players ko de sakte ho).`
+    )) return;
     setBusyId(w.id);
     try {
-      await updateDoc(doc(db, 'withdrawals', w.id), { status: 'approved' });
-      toast.success('Marked as paid.');
+      await runTransaction(db, async (tx) => {
+        const wdRef = doc(db, 'withdrawals', w.id);
+        const masterRef = doc(db, 'users', master.uid);
+        const wdSnap = await tx.get(wdRef);
+        const mSnap = await tx.get(masterRef);
+        if (!wdSnap.exists()) throw new Error('Withdrawal nahi mila.');
+        if (wdSnap.data().status !== 'pending') throw new Error('Pehle hi process ho chuka.');
+        const mBal = Number(mSnap.data().balance ?? 0);
+        const newM = Math.round((mBal + amount) * 100) / 100;
+        tx.update(masterRef, { balance: newM, walletBalance: newM });
+        tx.update(wdRef, { status: 'approved' });
+      });
+
+      try {
+        await addDoc(collection(db, 'masterLedger'), {
+          type: 'withdrawal_approve',
+          masterId: master.uid,
+          playerId: w.userId,
+          amount,
+          note: 'Player withdrawal approved · amount credited to master wallet',
+          createdAt: serverTimestamp(),
+        });
+      } catch {}
+
+      toast.success(`Approved · ${formatCurrency(amount)} tumhare wallet me add ho gaye.`);
     } catch (err) {
+      console.error(err);
       toast.error(err.message || 'Approve fail.');
     } finally {
       setBusyId(null);
     }
   };
 
-  // Reject = refund the amount to the player's winningMoney AND
-  // because that movement is a credit to the player, we also need
-  // to debit the master's pool by the same amount. Symmetry keeps
-  // the rules satisfied and the audit log honest.
+  // Reject = player ko amount wapas (winningMoney refund). Master ko
+  // approve par hi credit milta hai, isliye reject par master ke
+  // wallet ko HAATH NAHI lagana (pehle galat se debit hota tha).
   const reject = async (w) => {
     const reason = window.prompt('Reject reason (optional):', '');
     if (reason === null) return;
@@ -1807,22 +1836,14 @@ function WithdrawalApprovalsView({ master, players }) {
     try {
       await runTransaction(db, async (tx) => {
         const wdRef = doc(db, 'withdrawals', w.id);
-        const masterRef = doc(db, 'users', master.uid);
         const playerRef = doc(db, 'users', w.userId);
         const wdSnap = await tx.get(wdRef);
-        const mSnap = await tx.get(masterRef);
         const pSnap = await tx.get(playerRef);
         if (!wdSnap.exists()) throw new Error('Withdrawal nahi mila.');
         if (wdSnap.data().status !== 'pending') throw new Error('Pehle hi process ho chuka.');
 
-        // Master debits, player gets the amount back into winningMoney.
-        const mBal = Number(mSnap.data().balance ?? 0);
-        if (mBal < amount) throw new Error(`Refund ke liye master ke paas sirf ${formatCurrency(mBal)} hai.`);
-        const newM = Math.round((mBal - amount) * 100) / 100;
         const pWin = Number(pSnap.data().winningMoney ?? 0);
         const newPW = Math.round((pWin + amount) * 100) / 100;
-
-        tx.update(masterRef, { balance: newM, walletBalance: newM });
         tx.update(playerRef, { winningMoney: newPW });
 
         const payload = { status: 'rejected' };
@@ -1841,7 +1862,7 @@ function WithdrawalApprovalsView({ master, players }) {
         });
       } catch {}
 
-      toast.info('Rejected · amount refunded to player winnings.');
+      toast.info('Rejected · amount player ko wapas mil gaya.');
     } catch (err) {
       console.error(err);
       toast.error(err.message || 'Reject fail.');
@@ -1854,7 +1875,7 @@ function WithdrawalApprovalsView({ master, players }) {
     <div className="p-4 md:p-6 space-y-3">
       <h2 className="text-lg font-bold text-white">Withdrawal Approvals</h2>
       <p className="text-xs text-gray-400">
-        Player ne winning paise withdraw karne maange. Tum cash ya UPI se unhe pay karo (apne taraf se), phir <b>Approve</b> dabake "paid" mark kar do. Reject karoge to player ko paise wapas mil jayenge (tumhare points se kat ke).
+        Player ne winning paise withdraw karne maange. Tum cash ya UPI se unhe pay karo (apne taraf se), phir <b>Approve</b> dabao — utne hi points tumhare wallet me add ho jayenge (admin se withdraw maang sakte ho ya players ko de sakte ho). <b>Reject</b> karoge to player ko uske paise wapas mil jayenge (tumhare wallet par koi asar nahi).
       </p>
 
       <div className="flex gap-2">
