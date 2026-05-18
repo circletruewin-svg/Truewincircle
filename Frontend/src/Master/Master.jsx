@@ -602,20 +602,51 @@ function AddPlayerView({ masterUid, onCreated }) {
       }
 
       const offlineUid = `offline-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      await setDoc(doc(db, 'users', offlineUid), {
-        name: trimmedName,
-        phoneNumber: cleanPhone ? '+91' + cleanPhone : null,
-        balance: opening,
-        winningMoney: 0,
-        appName: 'truewin',
-        role: 'user',
-        assignedMasterId: masterUid,
-        isOffline: true,
-        createdByMaster: true,
-        createdByUid: masterUid,
-        createdAt: serverTimestamp(),
-        lastActiveAt: serverTimestamp(),
+      const playerRef = doc(db, 'users', offlineUid);
+      const masterRef = doc(db, 'users', masterUid);
+
+      // Opening balance is the master giving points to this player —
+      // so it must come OUT of the master's wallet, exactly like the
+      // Adjust Wallet deposit. Atomic: block if master is short.
+      await runTransaction(db, async (tx) => {
+        const ms = await tx.get(masterRef);
+        if (!ms.exists()) throw new Error('Master doc nahi mila.');
+        const mBalance = Number(ms.data().balance ?? ms.data().walletBalance ?? 0);
+        if (opening > 0 && mBalance < opening) {
+          throw new Error(`Master ke paas sirf ₹${mBalance.toFixed(2)} hai — itna opening balance nahi de sakte.`);
+        }
+        if (opening > 0) {
+          const newM = Math.round((mBalance - opening) * 100) / 100;
+          tx.update(masterRef, { balance: newM, walletBalance: newM });
+        }
+        tx.set(playerRef, {
+          name: trimmedName,
+          phoneNumber: cleanPhone ? '+91' + cleanPhone : null,
+          balance: opening,
+          winningMoney: 0,
+          appName: 'truewin',
+          role: 'user',
+          assignedMasterId: masterUid,
+          isOffline: true,
+          createdByMaster: true,
+          createdByUid: masterUid,
+          createdAt: serverTimestamp(),
+          lastActiveAt: serverTimestamp(),
+        });
       });
+
+      if (opening > 0) {
+        try {
+          await addDoc(collection(db, 'masterLedger'), {
+            type: 'master_to_player',
+            masterId: masterUid,
+            playerId: offlineUid,
+            amount: opening,
+            note: 'Opening balance on player create',
+            createdAt: serverTimestamp(),
+          });
+        } catch (err) { console.warn('masterLedger insert failed:', err); }
+      }
       toast.success(`${trimmedName} create ho gaya.`);
       setName(''); setPhone(''); setBalance('');
       onCreated?.();
