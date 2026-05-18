@@ -30,17 +30,17 @@ import { markets as ALL_MARKETS } from '../marketData';
 // ─────────────────────────────────────────────────────────────────
 
 const SECTIONS = [
-  { id: 'dashboard', label: 'Dashboard',         icon: LayoutDashboard, short: 'Home'    },
-  { id: 'players',   label: 'My Players',        icon: Users,           short: 'Players' },
-  { id: 'addPlayer', label: 'Add Player',        icon: UserPlus,        short: 'Add'     },
-  { id: 'deposits',  label: 'Deposit Approvals', icon: CreditCard,      short: 'Deposit' },
-  { id: 'withdraws', label: 'Withdrawal Approvals', icon: DollarSign,   short: 'Withdraw'},
-  { id: 'marketBets',label: 'Market Bets',       icon: BarChart3,       short: 'Bets'    },
-  { id: 'earnings',  label: 'My Earnings',       icon: DollarSign,      short: 'Earn'    },
-  { id: 'adminReq',  label: 'Admin Requests',    icon: CreditCard,      short: 'Admin'   },
-  { id: 'qr',        label: 'My Payment QR',     icon: QrCode,          short: 'QR'      },
-  { id: 'activity',  label: 'My Activity',       icon: History,         short: 'Log'     },
-  { id: 'link',      label: 'My Referral Link',  icon: LinkIcon,        short: 'Link'    },
+  { id: 'dashboard', label: 'Ghar (Dashboard)',     icon: LayoutDashboard, short: 'Ghar'    },
+  { id: 'players',   label: 'Mere Players',          icon: Users,           short: 'Players' },
+  { id: 'addPlayer', label: 'Naya Player jodo',      icon: UserPlus,        short: 'Naya'    },
+  { id: 'deposits',  label: 'Deposit approve karo',  icon: CreditCard,      short: 'Deposit' },
+  { id: 'withdraws', label: 'Withdrawal approve karo', icon: DollarSign,    short: 'Nikaasi' },
+  { id: 'marketBets',label: 'Market ke bets',        icon: BarChart3,       short: 'Bets'    },
+  { id: 'earnings',  label: 'Meri kamai',            icon: DollarSign,      short: 'Kamai'   },
+  { id: 'adminReq',  label: 'Admin se request',      icon: CreditCard,      short: 'Admin'   },
+  { id: 'qr',        label: 'Mera payment QR',       icon: QrCode,          short: 'QR'      },
+  { id: 'activity',  label: 'Meri activity',         icon: History,         short: 'Log'     },
+  { id: 'link',      label: 'Mera referral link',    icon: LinkIcon,        short: 'Link'    },
 ];
 
 function StatCard({ label, value, accent }) {
@@ -59,10 +59,10 @@ function DashboardView({ master, playerCount, onJump }) {
       <h2 className="text-lg font-bold text-white">Namaste, {master.name || 'Master'}</h2>
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        <StatCard label="My Points"    value={formatCurrency(balance)} accent="from-yellow-600 to-amber-700" />
-        <StatCard label="My Players"   value={playerCount}             accent="from-emerald-600 to-emerald-800" />
+        <StatCard label="Mere points"  value={formatCurrency(balance)} accent="from-yellow-600 to-amber-700" />
+        <StatCard label="Mere players" value={playerCount}             accent="from-emerald-600 to-emerald-800" />
         <StatCard
-          label={Number(master.commissionPercent) > 0 ? `Admin share (${master.commissionPercent}%)` : "Admin share"}
+          label={Number(master.commissionPercent) > 0 ? `Admin ka hissa (${master.commissionPercent}%)` : "Admin ka hissa"}
           value={Number(master.commissionPercent) > 0 ? `${master.commissionPercent}%` : "0%"}
           accent={Number(master.commissionPercent) > 0 ? "from-blue-600 to-blue-800" : "from-fuchsia-600 to-fuchsia-800"}
         />
@@ -77,17 +77,17 @@ function DashboardView({ master, playerCount, onJump }) {
       <div className="grid grid-cols-2 gap-2.5">
         <button onClick={() => onJump('addPlayer')} className="rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3 px-3 text-left">
           <UserPlus className="h-5 w-5 mb-1" />
-          <p className="font-bold text-sm">+ Add Player</p>
+          <p className="font-bold text-sm">+ Naya Player</p>
           <p className="text-[11px] text-emerald-100/80">Naya user banao</p>
         </button>
         <button onClick={() => onJump('players')} className="rounded-xl bg-blue-600 hover:bg-blue-500 py-3 px-3 text-left">
           <Users className="h-5 w-5 mb-1" />
-          <p className="font-bold text-sm">View Players</p>
+          <p className="font-bold text-sm">Players dekho</p>
           <p className="text-[11px] text-blue-100/80">Sab dekho</p>
         </button>
         <button onClick={() => onJump('link')} className="rounded-xl bg-yellow-500 hover:bg-yellow-400 text-black py-3 px-3 text-left">
           <LinkIcon className="h-5 w-5 mb-1" />
-          <p className="font-bold text-sm">Share Link</p>
+          <p className="font-bold text-sm">Link share karo</p>
           <p className="text-[11px] opacity-80">WhatsApp pe bhejo</p>
         </button>
         <button onClick={() => onJump('activity')} className="rounded-xl bg-fuchsia-700 hover:bg-fuchsia-600 py-3 px-3 text-left">
@@ -98,7 +98,7 @@ function DashboardView({ master, playerCount, onJump }) {
       </div>
 
       <div className="rounded-2xl border border-yellow-400/20 bg-[#1a1300] p-4 text-sm text-yellow-100">
-        <p className="font-bold mb-1">Quick note</p>
+        <p className="font-bold mb-1">Zaroori baat</p>
         <ul className="list-disc list-inside text-xs text-yellow-200/80 space-y-1">
           <li>Tumhare points = jitne points apne players ko distribute kar sakte ho.</li>
           <li>Player ke deposit approve karne par tumhare points kat jayenge — uske wallet me jaayenge.</li>
@@ -123,12 +123,12 @@ function PlayersListView({ players, onOpenPlayer }) {
 
   return (
     <div className="p-4 md:p-6 space-y-3">
-      <h2 className="text-lg font-bold text-white">My Players ({players.length})</h2>
+      <h2 className="text-lg font-bold text-white">Mere Players ({players.length})</h2>
 
       <input
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search by name or phone…"
+        placeholder="Naam ya phone se dhundo…"
         className="w-full bg-[#0d1228] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white"
       />
 
@@ -263,12 +263,12 @@ function AdjustWalletModal({ master, player, onClose }) {
     <div className="fixed inset-0 bg-black/70 z-50 flex items-end md:items-center justify-center p-4">
       <div className="w-full max-w-md bg-[#0d1228] border border-white/10 rounded-2xl text-white">
         <div className="border-b border-white/5 p-4 flex justify-between items-center">
-          <h3 className="font-bold text-lg">Adjust Wallet</h3>
+          <h3 className="font-bold text-lg">Wallet adjust karo</h3>
           <button onClick={onClose} className="text-gray-400 text-2xl">×</button>
         </div>
         <div className="p-4 space-y-3">
           <p className="text-sm text-gray-300">
-            <b>{player.name || 'Player'}</b> · current balance:{' '}
+            <b>{player.name || 'Player'}</b> · abhi balance:{' '}
             <span className="text-emerald-300 font-bold">{formatCurrency(playerBalance)}</span>
             {playerWinning > 0 && <> + winning <span className="text-yellow-300">{formatCurrency(playerWinning)}</span></>}
           </p>
@@ -277,11 +277,11 @@ function AdjustWalletModal({ master, player, onClose }) {
             <button
               onClick={() => setDirection('credit_player')}
               className={`py-3 rounded-xl font-bold text-sm ${direction === 'credit_player' ? 'bg-emerald-600 text-white' : 'bg-white/5 text-gray-300'}`}
-            >+ Credit Player</button>
+            >+ Player ko do</button>
             <button
               onClick={() => setDirection('debit_player')}
               className={`py-3 rounded-xl font-bold text-sm ${direction === 'debit_player' ? 'bg-rose-600 text-white' : 'bg-white/5 text-gray-300'}`}
-            >− Debit Player</button>
+            >− Player se lo</button>
           </div>
 
           <div>
@@ -297,12 +297,12 @@ function AdjustWalletModal({ master, player, onClose }) {
           </div>
 
           <div>
-            <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Reason / note (optional)</label>
+            <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Wajah / note (optional)</label>
             <input
               type="text"
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="Cash deposit, refund, etc."
+              placeholder="Cash diya, refund, etc."
               className="w-full bg-[#070b1e] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white"
             />
           </div>
@@ -316,7 +316,7 @@ function AdjustWalletModal({ master, player, onClose }) {
           </div>
         </div>
         <div className="border-t border-white/5 p-4 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 bg-white/10 text-white rounded">Cancel</button>
+          <button onClick={onClose} className="px-4 py-2 bg-white/10 text-white rounded">Radd karo</button>
           <button
             onClick={submit}
             disabled={busy || !amount}
@@ -463,7 +463,7 @@ function PlayerDetailView({ player, master, onBack }) {
             onClick={() => setAdjustOpen(true)}
             className="bg-yellow-400 hover:bg-yellow-300 text-black font-black rounded-xl px-4 py-2 text-sm"
           >
-            Adjust Wallet
+            Wallet adjust karo
           </button>
         </div>
         <div className="grid grid-cols-2 gap-3 mt-3">
@@ -472,7 +472,7 @@ function PlayerDetailView({ player, master, onBack }) {
             <p className="text-xl font-black text-emerald-200">{formatCurrency(balance)}</p>
           </div>
           <div className="rounded-xl bg-yellow-900/30 border border-yellow-700/30 p-3">
-            <p className="text-[10px] uppercase tracking-widest text-yellow-300">Winning</p>
+            <p className="text-[10px] uppercase tracking-widest text-yellow-300">Jeeta hua</p>
             <p className="text-xl font-black text-yellow-200">{formatCurrency(winning)}</p>
           </div>
         </div>
@@ -485,7 +485,7 @@ function PlayerDetailView({ player, master, onBack }) {
       <div className="rounded-2xl bg-[#0d1228] border border-white/5">
         <p className="px-4 py-2.5 border-b border-white/5 text-[11px] uppercase tracking-widest text-gray-400 font-bold">Recent bets</p>
         {bets.length === 0 ? (
-          <p className="p-4 text-xs text-gray-500 text-center">No bets yet.</p>
+          <p className="p-4 text-xs text-gray-500 text-center">Abhi koi bet nahi.</p>
         ) : (
           <ul className="divide-y divide-white/5">
             {bets.slice(0, 15).map((b) => {
@@ -512,9 +512,9 @@ function PlayerDetailView({ player, master, onBack }) {
 
       <div className="grid md:grid-cols-2 gap-3">
         <div className="rounded-2xl bg-[#0d1228] border border-white/5">
-          <p className="px-4 py-2.5 border-b border-white/5 text-[11px] uppercase tracking-widest text-gray-400 font-bold">Deposits</p>
+          <p className="px-4 py-2.5 border-b border-white/5 text-[11px] uppercase tracking-widest text-gray-400 font-bold">Deposit history</p>
           {deposits.length === 0 ? (
-            <p className="p-4 text-xs text-gray-500 text-center">No deposits yet.</p>
+            <p className="p-4 text-xs text-gray-500 text-center">Abhi koi deposit nahi.</p>
           ) : (
             <ul className="divide-y divide-white/5">
               {deposits.slice(0, 10).map((d) => (
@@ -535,9 +535,9 @@ function PlayerDetailView({ player, master, onBack }) {
         </div>
 
         <div className="rounded-2xl bg-[#0d1228] border border-white/5">
-          <p className="px-4 py-2.5 border-b border-white/5 text-[11px] uppercase tracking-widest text-gray-400 font-bold">Withdrawals</p>
+          <p className="px-4 py-2.5 border-b border-white/5 text-[11px] uppercase tracking-widest text-gray-400 font-bold">Withdrawal history</p>
           {withdrawals.length === 0 ? (
-            <p className="p-4 text-xs text-gray-500 text-center">No withdrawals yet.</p>
+            <p className="p-4 text-xs text-gray-500 text-center">Abhi koi withdrawal nahi.</p>
           ) : (
             <ul className="divide-y divide-white/5">
               {withdrawals.slice(0, 10).map((w) => (
@@ -660,7 +660,7 @@ function AddPlayerView({ masterUid, onCreated }) {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      <h2 className="text-lg font-bold text-white">Add new player</h2>
+      <h2 className="text-lg font-bold text-white">Naya player jodo</h2>
       <p className="text-xs text-gray-400">
         Agar user khud OTP se signup nahi kar pa raha to yahan se manually create kar do. Phone optional hai (jab tak OTP login nahi hota, "offline" account rahega).
       </p>
@@ -770,7 +770,7 @@ function EarningsView({ master, players }) {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      <h2 className="text-lg font-bold text-white">My Earnings</h2>
+      <h2 className="text-lg font-bold text-white">Meri kamai</h2>
       <p className="text-xs text-gray-400">
         Tumhare players jitna <b>play</b> karte hain uska <b>{pct}%</b> tumhare points me
         auto add hota hai. Niche kisi bhi date range ka hisaab dekho. (Live — automatic, har 12s.)
@@ -791,12 +791,12 @@ function EarningsView({ master, players }) {
         </div>
         <div className="col-span-2 flex gap-2">
           <button onClick={() => { const t = istYmd(new Date()); setFromYmd(t); setToYmd(t); }}
-            className="flex-1 bg-white/5 hover:bg-white/10 rounded-lg py-1.5 text-xs">Today</button>
+            className="flex-1 bg-white/5 hover:bg-white/10 rounded-lg py-1.5 text-xs">Aaj</button>
           <button onClick={() => { setFromYmd(istYmd(new Date(Date.now() - 6 * 864e5))); setToYmd(istYmd(new Date())); }}
             className="flex-1 bg-white/5 hover:bg-white/10 rounded-lg py-1.5 text-xs">7 days</button>
           <button onClick={load}
             className="flex-1 bg-yellow-400 text-black font-bold rounded-lg py-1.5 text-xs">
-            {busy ? '…' : '🔄 Refresh'}
+            {busy ? '…' : '🔄 Refresh karo'}
           </button>
         </div>
       </div>
@@ -973,7 +973,7 @@ function AdminRequestsView({ master }) {
           <p className="text-xl font-black text-white mt-1">{formatCurrency(earnedLocked)}</p>
         </div>
         <div className="rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 p-4">
-          <p className="text-[10px] uppercase tracking-widest text-white/70">Withdrawable</p>
+          <p className="text-[10px] uppercase tracking-widest text-white/70">Nikaal sakte ho</p>
           <p className="text-xl font-black text-white mt-1">{formatCurrency(withdrawable)}</p>
         </div>
       </div>
@@ -1023,7 +1023,7 @@ function AdminRequestsView({ master }) {
                     className="w-full bg-[#0d1228] border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white" />
                 </div>
                 <div>
-                  <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Confirm account number</label>
+                  <label className="block text-[10px] uppercase tracking-widest text-gray-400 mb-1">Account number dobara likho</label>
                   <input value={accNo2} onChange={(e) => setAccNo2(e.target.value.replace(/\D/g, ''))} inputMode="numeric"
                     className={`w-full bg-[#0d1228] border rounded-lg px-3 py-2.5 text-sm text-white ${accNo2 && accNo2 !== accNo ? 'border-rose-500' : 'border-white/10'}`} />
                   {accNo2 && accNo2 !== accNo && <p className="text-[11px] text-rose-300 mt-1">Account number match nahi kar raha.</p>}
@@ -1105,7 +1105,7 @@ function ActivityView({ masterUid }) {
 
   return (
     <div className="p-4 md:p-6 space-y-3">
-      <h2 className="text-lg font-bold text-white">My Activity</h2>
+      <h2 className="text-lg font-bold text-white">Meri activity</h2>
       <p className="text-xs text-gray-400">Admin ne tumhe kab kitne points credit / debit kiye.</p>
       {entries.length === 0 ? (
         <p className="rounded-2xl border border-white/10 p-6 text-center text-sm text-gray-400 bg-[#0d1228]">
@@ -1225,7 +1225,7 @@ function MarketBetsView({ players }) {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      <h2 className="text-lg font-bold text-white">Market Bets · Risk view</h2>
+      <h2 className="text-lg font-bold text-white">Market ke bets · Risk</h2>
       <p className="text-xs text-gray-400">
         Tumhare players ne kis market me kis number pe kitna lagaya hai. Jis number pe sabse zyada paisa lagega, agar vo khulta hai to tumhe sabse zyada chukana padega (₹90 per ₹1 bet).
       </p>
@@ -1442,7 +1442,7 @@ function PaymentQRView({ master }) {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      <h2 className="text-lg font-bold text-white">My Payment QR</h2>
+      <h2 className="text-lg font-bold text-white">Mera payment QR</h2>
       <p className="text-xs text-gray-400">
         Tumhare players ko Add Cash → Pay page pe ye QR dikhega. Jab tumhe paise mile, deposit approval me jaake confirm karna — tumhare master points us amount se kam ho jayenge aur player ke wallet me jaayenge.
       </p>
@@ -1458,7 +1458,7 @@ function PaymentQRView({ master }) {
             <div className="flex-1 text-xs text-gray-400 break-all">
               <p className="text-[10px] uppercase tracking-widest text-emerald-400 mb-1 font-bold">Active</p>
               <p className="mb-2">Ye QR tumhare saare players ko Pay page pe dikh raha hai.</p>
-              <a href={currentUrl} target="_blank" rel="noreferrer" className="text-blue-300 underline">Open full image</a>
+              <a href={currentUrl} target="_blank" rel="noreferrer" className="text-blue-300 underline">Poori image kholo</a>
               <button onClick={clearQr} className="block mt-3 text-rose-300 hover:text-rose-200 text-xs">Remove QR (revert to admin's default)</button>
             </div>
           </div>
@@ -1471,7 +1471,7 @@ function PaymentQRView({ master }) {
 
       {/* Upload via file picker */}
       <div className="rounded-2xl border border-white/5 bg-[#0d1228] p-4 space-y-3">
-        <p className="text-[11px] uppercase tracking-widest text-gray-400 font-bold">Upload new QR (image)</p>
+        <p className="text-[11px] uppercase tracking-widest text-gray-400 font-bold">Naya QR upload karo (image)</p>
         <p className="text-xs text-gray-500">
           PNG / JPG. Apne UPI app me "QR" share/save karke yahan upload kar do.
         </p>
@@ -1526,7 +1526,7 @@ function LinkView({ master }) {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      <h2 className="text-lg font-bold text-white">My referral link</h2>
+      <h2 className="text-lg font-bold text-white">Mera referral link</h2>
 
       {!master.masterCode ? (
         <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
@@ -1690,7 +1690,7 @@ function DepositApprovalsView({ master, players }) {
   return (
     <div className="p-4 md:p-6 space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-white">Deposit Approvals</h2>
+        <h2 className="text-lg font-bold text-white">Deposit approve karo</h2>
         <div className="text-xs text-gray-400">My points: <span className="text-yellow-300 font-bold">{formatCurrency(masterBalance)}</span></div>
       </div>
       <p className="text-xs text-gray-400">
@@ -1699,7 +1699,7 @@ function DepositApprovalsView({ master, players }) {
 
       <div className="flex gap-2">
         <button onClick={() => setFilter('pending')} className={`text-xs px-3 py-1.5 rounded-full font-bold ${filter === 'pending' ? 'bg-yellow-400 text-black' : 'bg-white/10 text-gray-300'}`}>Pending</button>
-        <button onClick={() => setFilter('all')}     className={`text-xs px-3 py-1.5 rounded-full font-bold ${filter === 'all' ? 'bg-yellow-400 text-black' : 'bg-white/10 text-gray-300'}`}>All</button>
+        <button onClick={() => setFilter('all')}     className={`text-xs px-3 py-1.5 rounded-full font-bold ${filter === 'all' ? 'bg-yellow-400 text-black' : 'bg-white/10 text-gray-300'}`}>Sab</button>
       </div>
 
       {visible.length === 0 ? (
@@ -1738,13 +1738,13 @@ function DepositApprovalsView({ master, players }) {
                         alt="Payment proof"
                         className="rounded-lg max-h-48 w-full object-contain bg-black/40 border border-white/10"
                       />
-                      <span className="block mt-1 text-[11px] text-blue-300 underline">Open full size</span>
+                      <span className="block mt-1 text-[11px] text-blue-300 underline">Poora size kholo</span>
                     </a>
                   </div>
                 )}
                 {tu.utr && <p className="text-[11px] text-gray-400 mt-1">UTR: <span className="font-mono">{tu.utr}</span></p>}
                 {tu.message && <p className="text-[11px] text-gray-400 mt-1">Note: {tu.message}</p>}
-                {tu.adminComment && <p className="text-[11px] text-rose-300 mt-1">Reject reason: {tu.adminComment}</p>}
+                {tu.adminComment && <p className="text-[11px] text-rose-300 mt-1">Reject ki wajah: {tu.adminComment}</p>}
 
                 {isPending && (
                   <div className="grid grid-cols-2 gap-2 mt-3">
@@ -1753,14 +1753,14 @@ function DepositApprovalsView({ master, players }) {
                       disabled={busyId === tu.id || amount > masterBalance}
                       className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 rounded-lg py-2 text-sm font-bold"
                     >
-                      {busyId === tu.id ? '…' : amount > masterBalance ? `Need ${formatCurrency(amount - masterBalance)} more` : '✓ Approve'}
+                      {busyId === tu.id ? '…' : amount > masterBalance ? `${formatCurrency(amount - masterBalance)} aur chahiye` : '✓ Approve karo'}
                     </button>
                     <button
                       onClick={() => reject(tu)}
                       disabled={busyId === tu.id}
                       className="bg-rose-600 hover:bg-rose-500 disabled:opacity-30 rounded-lg py-2 text-sm font-bold"
                     >
-                      ✗ Reject
+                      ✗ Reject karo
                     </button>
                   </div>
                 )}
@@ -1904,14 +1904,14 @@ function WithdrawalApprovalsView({ master, players }) {
 
   return (
     <div className="p-4 md:p-6 space-y-3">
-      <h2 className="text-lg font-bold text-white">Withdrawal Approvals</h2>
+      <h2 className="text-lg font-bold text-white">Withdrawal approve karo</h2>
       <p className="text-xs text-gray-400">
         Player ne winning paise withdraw karne maange. Tum cash ya UPI se unhe pay karo (apne taraf se), phir <b>Approve</b> dabao — utne hi points tumhare wallet me add ho jayenge (admin se withdraw maang sakte ho ya players ko de sakte ho). <b>Reject</b> karoge to player ko uske paise wapas mil jayenge (tumhare wallet par koi asar nahi).
       </p>
 
       <div className="flex gap-2">
         <button onClick={() => setFilter('pending')} className={`text-xs px-3 py-1.5 rounded-full font-bold ${filter === 'pending' ? 'bg-yellow-400 text-black' : 'bg-white/10 text-gray-300'}`}>Pending</button>
-        <button onClick={() => setFilter('all')}     className={`text-xs px-3 py-1.5 rounded-full font-bold ${filter === 'all' ? 'bg-yellow-400 text-black' : 'bg-white/10 text-gray-300'}`}>All</button>
+        <button onClick={() => setFilter('all')}     className={`text-xs px-3 py-1.5 rounded-full font-bold ${filter === 'all' ? 'bg-yellow-400 text-black' : 'bg-white/10 text-gray-300'}`}>Sab</button>
       </div>
 
       {visible.length === 0 ? (
@@ -1964,12 +1964,12 @@ function WithdrawalApprovalsView({ master, players }) {
                       onClick={() => approve(w)}
                       disabled={busyId === w.id}
                       className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 rounded-lg py-2 text-sm font-bold"
-                    >{busyId === w.id ? '…' : '✓ Paid · Approve'}</button>
+                    >{busyId === w.id ? '…' : '✓ Paisa diya · Approve'}</button>
                     <button
                       onClick={() => reject(w)}
                       disabled={busyId === w.id}
                       className="bg-rose-600 hover:bg-rose-500 disabled:opacity-30 rounded-lg py-2 text-sm font-bold"
-                    >✗ Reject · Refund</button>
+                    >✗ Reject · Wapas karo</button>
                   </div>
                 )}
               </div>
