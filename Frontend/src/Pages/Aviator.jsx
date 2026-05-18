@@ -4,10 +4,10 @@ import {
   doc, onSnapshot, addDoc, collection, serverTimestamp,
   query, orderBy, limit,
 } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
 import Navbar from "../components/Navbar";
 import { AviatorPlane } from "../components/GameVisuals";
 import { getAviatorCrashPoint } from "../utils/houseEdge";
+import useAuthStore from "../store/authStore";
 import { creditUserWinnings, debitUserFunds, getUserFunds } from "../utils/userFunds";
 import { formatCurrency } from "../utils/formatMoney";
 import {
@@ -40,8 +40,11 @@ const initialBet = () => ({
 });
 
 export default function Aviator() {
-  const auth = getAuth();
-  const user = auth.currentUser;
+  // Reactive auth — getAuth().currentUser is null right after a page
+  // refresh (session not restored yet) and never updates if captured
+  // once, which left PLACE BET / CASH OUT dead ("Please log in
+  // first."). The store updates when auth restores.
+  const { user } = useAuthStore();
 
   const [balance, setBalance] = useState(0);
   const [multiplier, setMultiplier] = useState(1.0);
