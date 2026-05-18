@@ -958,23 +958,23 @@ function AdminRequestsView({ master }) {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      <h2 className="text-lg font-bold text-white">Admin Requests</h2>
+      <h2 className="text-lg font-bold text-white">Admin se request</h2>
       <p className="text-xs text-gray-400">
         Apne points ke liye admin ko request bhejo. (Players ke deposit/withdrawal isse alag hain.)
       </p>
 
-      <div className="grid grid-cols-3 gap-3">
-        <div className="rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-800 p-4">
-          <p className="text-[10px] uppercase tracking-widest text-white/70">My Points</p>
-          <p className="text-xl font-black text-white mt-1">{formatCurrency(balance)}</p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-800 p-3">
+          <p className="text-[10px] uppercase tracking-wide text-white/70">Mere points</p>
+          <p className="text-lg sm:text-xl font-black text-white mt-1 break-words leading-tight">{formatCurrency(balance)}</p>
         </div>
-        <div className="rounded-2xl bg-gradient-to-br from-amber-600 to-amber-800 p-4">
-          <p className="text-[10px] uppercase tracking-widest text-white/70">Earned (locked)</p>
-          <p className="text-xl font-black text-white mt-1">{formatCurrency(earnedLocked)}</p>
+        <div className="rounded-2xl bg-gradient-to-br from-amber-600 to-amber-800 p-3">
+          <p className="text-[10px] uppercase tracking-wide text-white/70">Locked kamai</p>
+          <p className="text-lg sm:text-xl font-black text-white mt-1 break-words leading-tight">{formatCurrency(earnedLocked)}</p>
         </div>
-        <div className="rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 p-4">
-          <p className="text-[10px] uppercase tracking-widest text-white/70">Nikaal sakte ho</p>
-          <p className="text-xl font-black text-white mt-1">{formatCurrency(withdrawable)}</p>
+        <div className="rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 p-3">
+          <p className="text-[10px] uppercase tracking-wide text-white/70">Nikaal sakte ho</p>
+          <p className="text-lg sm:text-xl font-black text-white mt-1 break-words leading-tight">{formatCurrency(withdrawable)}</p>
         </div>
       </div>
 
