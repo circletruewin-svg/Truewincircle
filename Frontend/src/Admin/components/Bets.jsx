@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, onSnapshot, where, doc, updateDoc, Timestamp } from 'firebase/firestore';
+import { collection, query, onSnapshot, where, doc, getDoc, updateDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Loader2, Trophy } from 'lucide-react';
 import { markets as allMarkets } from '../../marketData';
@@ -44,6 +44,13 @@ const Bets = () => {
   // State for market-based games
   const [markets, setMarkets] = useState([]);
   const [selectedMarket, setSelectedMarket] = useState('');
+
+  // Click-a-number → see which user bet how much on it.
+  const [expandedNumber, setExpandedNumber] = useState(null);
+  // userId → display name cache, lazily filled (bet docs only store
+  // userId, not the name).
+  const [nameCache, setNameCache] = useState({});
+  const [namesLoading, setNamesLoading] = useState(false);
 
   useEffect(() => {
     const marketNames = allMarkets.map(m => m.name);
@@ -140,7 +147,7 @@ const Bets = () => {
       const bets = {};
       if (selectedGame === 'winGame') {
         for (let i = 1; i <= 12; i++) {
-          bets[i] = { number: i, amount: 0, count: 0, users: new Set() };
+          bets[i] = { number: i, amount: 0, count: 0, users: new Set(), userMap: {} };
         }
       }
 
@@ -157,15 +164,27 @@ const Bets = () => {
 
         if (!bets[number]) {
           // If not initialized (e.g., for non-winGame, or an unexpected number), initialize it
-          bets[number] = { number: number, amount: 0, count: 0, users: new Set() };
+          bets[number] = { number: number, amount: 0, count: 0, users: new Set(), userMap: {} };
         }
         bets[number].amount += amount;
         bets[number].count += 1;
         bets[number].users.add(betData.userId);
+
+        const uid = betData.userId || 'unknown';
+        if (!bets[number].userMap[uid]) {
+          bets[number].userMap[uid] = { userId: uid, amount: 0, count: 0 };
+        }
+        bets[number].userMap[uid].amount += amount;
+        bets[number].userMap[uid].count += 1;
       });
 
       const summary = Object.values(bets)
-        .map(b => ({ ...b, userCount: b.users.size }))
+        .map(b => ({
+          ...b,
+          userCount: b.users.size,
+          // Per-user breakdown for this number, biggest staker first.
+          userBets: Object.values(b.userMap).sort((x, y) => y.amount - x.amount),
+        }))
         .sort((a, b) => b.amount - a.amount);
       
       setBetsSummary(summary);
@@ -178,6 +197,12 @@ const Bets = () => {
 
     return () => unsubscribeBets();
   }, [selectedGame, currentRoundId, selectedMarket]);
+
+  // Collapse the per-user panel whenever the data set changes
+  // underneath it (different game / market / round).
+  useEffect(() => {
+    setExpandedNumber(null);
+  }, [selectedGame, selectedMarket, currentRoundId]);
 
   useEffect(() => {
     let interval;
@@ -193,6 +218,41 @@ const Bets = () => {
     const minutes = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Click a number card → toggle its per-user breakdown. Bet docs
+  // only carry userId, so resolve any missing names from /users on
+  // demand and cache them.
+  const toggleExpand = async (number) => {
+    if (expandedNumber === number) {
+      setExpandedNumber(null);
+      return;
+    }
+    setExpandedNumber(number);
+
+    const row = betsSummary.find((b) => b.number === number);
+    const ids = (row?.userBets || [])
+      .map((u) => u.userId)
+      .filter((id) => id && id !== 'unknown' && !(id in nameCache));
+    if (ids.length === 0) return;
+
+    setNamesLoading(true);
+    try {
+      const entries = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const s = await getDoc(doc(db, 'users', id));
+            const d = s.exists() ? s.data() : null;
+            return [id, d ? (d.name || d.phoneNumber || id) : id];
+          } catch {
+            return [id, id];
+          }
+        }),
+      );
+      setNameCache((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
+    } finally {
+      setNamesLoading(false);
+    }
   };
 
   const handleSelectWinner = async (number) => {
@@ -273,15 +333,23 @@ const Bets = () => {
             if (isMostBetted) cardClasses = 'bg-green-100 ring-2 ring-green-400';
             else if (isLeastBetted) cardClasses = 'bg-red-100 ring-2 ring-red-400';
 
+            const isExpanded = expandedNumber === bet.number;
+            if (isExpanded) cardClasses += ' ring-2 ring-blue-400';
+
             return (
-              <div key={bet.number} className={`p-3 rounded-md text-center transition-all ${cardClasses}`}>
+              <div
+                key={bet.number}
+                onClick={() => toggleExpand(bet.number)}
+                title="Click to see which user bet how much on this number"
+                className={`p-3 rounded-md text-center transition-all cursor-pointer hover:brightness-95 ${cardClasses}`}
+              >
                 <div className="flex items-center justify-center gap-2">
                   <p className="text-xl font-bold text-gray-800">{bet.number}</p>
                   {selectedGame === 'winGame' && phase === 'results' && (
                     <Trophy
                       className="cursor-pointer text-yellow-500 hover:text-yellow-700 transition-transform hover:scale-125"
                       size={20}
-                      onClick={() => handleSelectWinner(bet.number)}
+                      onClick={(e) => { e.stopPropagation(); handleSelectWinner(bet.number); }}
                       title={`Declare ${bet.number} as winner`}
                     />
                   )}
@@ -289,10 +357,71 @@ const Bets = () => {
                 <p className="text-sm text-gray-600">Users: {bet.userCount}</p>
                 <p className="text-sm text-gray-600">Bets: {bet.count}</p>
                 <p className="text-sm font-semibold text-gray-800">₹{bet.amount.toFixed(2)}</p>
+                <p className="text-[11px] text-blue-600 mt-1">{isExpanded ? '▲ Hide users' : '▼ Show users'}</p>
               </div>
             );
           })}
         </div>
+
+        {expandedNumber !== null && (() => {
+          const row = betsSummary.find((b) => b.number === expandedNumber);
+          const userBets = row?.userBets || [];
+          return (
+            <div className="mt-4 border border-blue-200 rounded-lg bg-blue-50/60 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold text-gray-800">
+                  Number {expandedNumber} — kis user ne kitna lagaya
+                </h4>
+                <button
+                  onClick={() => setExpandedNumber(null)}
+                  className="text-sm text-gray-500 hover:text-gray-800"
+                >
+                  ✕ Close
+                </button>
+              </div>
+              {namesLoading && (
+                <p className="text-xs text-gray-500 mb-2">Loading user names…</p>
+              )}
+              {userBets.length === 0 ? (
+                <p className="text-sm text-gray-500">Is number par koi bet nahi.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-gray-500 border-b border-blue-200">
+                        <th className="py-1.5 pr-3">#</th>
+                        <th className="py-1.5 pr-3">User</th>
+                        <th className="py-1.5 pr-3 text-right">Total amount</th>
+                        <th className="py-1.5 pr-3 text-right">Bets</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {userBets.map((u, i) => (
+                        <tr key={u.userId} className="border-b border-blue-100 last:border-0">
+                          <td className="py-1.5 pr-3 text-gray-500">{i + 1}</td>
+                          <td className="py-1.5 pr-3 font-medium text-gray-800">
+                            {nameCache[u.userId] || u.userId}
+                          </td>
+                          <td className="py-1.5 pr-3 text-right font-semibold text-gray-900">
+                            ₹{u.amount.toFixed(2)}
+                          </td>
+                          <td className="py-1.5 pr-3 text-right text-gray-600">{u.count}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="font-bold text-gray-900">
+                        <td className="py-1.5 pr-3" colSpan={2}>Total</td>
+                        <td className="py-1.5 pr-3 text-right">₹{(row?.amount || 0).toFixed(2)}</td>
+                        <td className="py-1.5 pr-3 text-right">{row?.count || 0}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </>
     );
   };
