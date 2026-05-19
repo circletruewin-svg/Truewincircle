@@ -57,10 +57,8 @@ const WithdrawApproval = ({ withdrawals, userDetails, handleWithdrawalApproval }
       const t = new Date(v).getTime();
       return Number.isFinite(t) ? t : 0;
     };
-    // Master requests sabse upar (priority), phir newest-first.
-    return [...matched].sort(
-      (a, b) => (b.isMasterReq ? 1 : 0) - (a.isMasterReq ? 1 : 0) || tsOf(b) - tsOf(a),
-    );
+    // Newest first (master rows bhi isi sequence me — sirf colorful).
+    return [...matched].sort((a, b) => tsOf(b) - tsOf(a));
   }, [withdrawals, userDetails, searchTerm]);
 
   return (
