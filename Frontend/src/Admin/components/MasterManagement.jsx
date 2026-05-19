@@ -652,7 +652,17 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
       else if (l.type === 'play_earning') h.kamai += a;
       else if (l.type === 'player_to_master' || l.type === 'withdrawal_approve') h.playersSeLiya += a;
       else if (l.type === 'master_to_player' || l.type === 'withdrawal_reject') h.playersKoDiya += a;
-      else if (l.type === 'master_to_admin' || l.type === 'master_withdraw_request') h.adminKoWapas += a;
+      else if (l.type === 'master_withdraw_request') h.adminKoWapas += a;
+      else if (l.type === 'master_to_admin') {
+        // Master-withdrawal approval writes a master_to_admin AUDIT row,
+        // but the wallet was ALREADY debited at request time (counted
+        // via master_withdraw_request). Counting this too = double
+        // minus → phantom negative. So skip the approval audit; only
+        // a real admin manual "− Points" debit (no pre-deducted note)
+        // actually moved the wallet.
+        const isApprovalAudit = String(l.note || '').includes('pre-deducted');
+        if (!isApprovalAudit) h.adminKoWapas += a;
+      }
     }
     const r = (n) => Math.round(n * 100) / 100;
     const bacha = r(h.adminDiya + h.kamai + h.playersSeLiya - h.playersKoDiya - h.adminKoWapas);
@@ -971,15 +981,24 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
                 withdrawal_approve:     { text: `${who || 'Player'} ki withdrawal approve ki`, cr: true },
                 withdrawal_reject:      { text: `${who || 'Player'} ki withdrawal reject ki`, cr: false },
               };
-              const v = M[l.type] || { text: l.note || l.type || '—', cr: false };
+              let v = M[l.type] || { text: l.note || l.type || '—', cr: false };
+              // Master-withdrawal approval is just a record — paisa to
+              // request ke time hi kat chuka tha. Ise info-only dikhao
+              // (na +, na −) warna 744 do baar gaya hua lagta hai.
+              const isApprovalAudit =
+                l.type === 'master_to_admin' &&
+                String(l.note || '').includes('pre-deducted');
+              if (isApprovalAudit) {
+                v = { text: 'Master ki withdrawal admin ne approve ki (pehle hi kat chuka tha)', info: true };
+              }
               return (
                 <div key={l.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
                   <div className="min-w-0">
                     <p className="text-sm text-gray-800">{v.text}</p>
                     <p className="text-[11px] text-gray-400">{fmtDate(l.createdAt)}</p>
                   </div>
-                  <div className={`text-sm font-bold whitespace-nowrap ${v.cr ? 'text-emerald-600' : 'text-rose-600'}`}>
-                    {v.cr ? '+' : '−'}{formatCurrency(l.amount)}
+                  <div className={`text-sm font-bold whitespace-nowrap ${v.info ? 'text-gray-400' : v.cr ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {v.info ? 'sirf record' : <>{v.cr ? '+' : '−'}{formatCurrency(l.amount)}</>}
                   </div>
                 </div>
               );
