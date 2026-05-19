@@ -181,9 +181,32 @@ export async function reconcileMasterPlayEarnings(db, master, playerIds) {
   const globalPct = Number(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT);
 
   // Per-player turnover in one batched read.
-  const { byUser } = await sumPlayerTurnoverBreakdown(db, playerIds);
+  const { byUser, total: totalTurnover } = await sumPlayerTurnoverBreakdown(db, playerIds);
   const r2 = (n) => Math.round(n * 100) / 100;
   let credited = 0;
+
+  // ── Legacy engine ko STARVE karo ──────────────────────────────
+  // Purana master-level engine (jo abhi bhi kisi stale/prod bundle
+  // me chal sakta hai) `playEarnCreditedTurnover` marker dekh ke
+  // master ko global% credit karta tha. Naya engine per-player
+  // markers use karta hai → dono alag → DOUBLE credit (master ko
+  // 10%+5%=15%). Yahan us purane marker ko total turnover tak
+  // bump kar dete hain → purana engine `turnover <= prev` dekh ke
+  // kabhi credit nahi karega (no-op ho jayega). Naya engine isko
+  // padhta hi nahi, to ispe koi asar nahi.
+  try {
+    await runTransaction(db, async (tx) => {
+      const mRef = doc(db, 'users', masterId);
+      const mSnap = await tx.get(mRef);
+      if (!mSnap.exists()) return;
+      const prevLegacy = Number(mSnap.data().playEarnCreditedTurnover || 0);
+      if (totalTurnover > prevLegacy) {
+        tx.update(mRef, { playEarnCreditedTurnover: r2(totalTurnover) });
+      }
+    });
+  } catch (e) {
+    console.warn('legacy-marker starve skipped:', e?.message || e);
+  }
 
   for (const pid of playerIds) {
     const turnover = r2(byUser[pid]?.total || 0);
