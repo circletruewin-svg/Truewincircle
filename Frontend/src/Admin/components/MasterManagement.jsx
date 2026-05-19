@@ -1078,11 +1078,20 @@ function PlayerSplitModal({ player, masterEarnPct, onClose }) {
     }
     setBusy(true);
     try {
+      // Baseline ABHI fix kar do = is player ka current turnover.
+      // Isse crediting EXACTLY ab se shuru hogi — na purana play
+      // dobara credit, na "pehla play nigla gaya" wala gap.
+      let baseline = 0;
+      try {
+        const { total } = await sumPlayerTurnoverBreakdown(db, [player.id]);
+        baseline = Math.round((total || 0) * 100) / 100;
+      } catch { /* turnover fetch fail → baseline 0 (safe-ish) */ }
       await updateDoc(doc(db, 'users', player.id), {
         splitPlayerPct: Math.round(pp * 100) / 100,
         splitMasterPct: Math.round(mp * 100) / 100,
+        earnDoneTurnover: baseline,
       });
-      toast.success(`${player.name || 'Player'}: player ${pp}% · master ${mp}% set.`);
+      toast.success(`${player.name || 'Player'}: player ${pp}% · master ${mp}% set. Ab se ka play credit hoga.`);
       onClose();
     } catch (err) {
       toast.error('Save fail: ' + (err.message || err));
@@ -1092,11 +1101,17 @@ function PlayerSplitModal({ player, masterEarnPct, onClose }) {
   const clearOverride = async () => {
     setBusy(true);
     try {
+      let baseline = 0;
+      try {
+        const { total } = await sumPlayerTurnoverBreakdown(db, [player.id]);
+        baseline = Math.round((total || 0) * 100) / 100;
+      } catch { /* ignore */ }
       await updateDoc(doc(db, 'users', player.id), {
         splitPlayerPct: null,
         splitMasterPct: null,
+        earnDoneTurnover: baseline,
       });
-      toast.success('Default pe wapas — master ko global earn% milega.');
+      toast.success('Default pe wapas — master ko global earn% milega (ab se ka play).');
       onClose();
     } catch (err) {
       toast.error('Clear fail: ' + (err.message || err));
