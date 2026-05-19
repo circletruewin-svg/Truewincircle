@@ -152,76 +152,124 @@ export function masterWithdrawable(master) {
   return Math.max(0, Math.round((bal - earned) * 100) / 100);
 }
 
-// Reconcile a master's play-earnings. Idempotent: a marker
-// (playEarnCreditedTurnover) on the master doc records how much
-// turnover has already been paid out on, so running this repeatedly
-// only ever credits the *new* play since last run — no double
-// credit even if admin + master panels both call it.
+// Reconcile play-earnings PER PLAYER. For each of the master's
+// players we look at that player's own turnover and split it:
 //
-// Returns the amount freshly credited (0 if nothing new).
+//   • Default (no per-player override): master earns
+//     master.playEarnPercent of that player's play (into the
+//     master's locked earnings). Player gets nothing — same as
+//     the old behaviour.
+//   • Per-player override (admin set splitMasterPct / splitPlayerPct
+//     on the player's user doc from Master Management):
+//        masterCut   = delta × splitMasterPct%  → master (locked earn)
+//        playerCash  = delta × splitPlayerPct%  → player.balance
+//                       (playable only — withdrawal is from
+//                        winningMoney, so this can't be cashed out)
 //
-// NOTE: caller should be the admin panel (admin is auth'd and
-// trusted to write balances). Master panel only displays.
+// Idempotent per PLAYER via an `earnDoneTurnover` marker on the
+// player's user doc. On first ever run for a player the marker is
+// seeded to the player's CURRENT lifetime turnover and nothing is
+// credited — this prevents re-crediting history that the old
+// master-level engine already paid out. Only NEW play from then on
+// is credited. Deterministic ledger ids keep the audit idempotent
+// even when admin + master panels both run this every 30s.
+//
+// Returns { credited } — total freshly credited to the master.
 export async function reconcileMasterPlayEarnings(db, master, playerIds) {
   const masterId = master.id || master.uid;
-  const pct = Number(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT);
-  if (!masterId || pct <= 0 || !playerIds || playerIds.length === 0) return 0;
+  if (!masterId || !playerIds || playerIds.length === 0) return { credited: 0 };
+  const globalPct = Number(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT);
 
-  // Lifetime turnover across EVERY game collection.
-  const turnover = await sumPlayerTurnover(db, playerIds);
-
+  // Per-player turnover in one batched read.
+  const { byUser } = await sumPlayerTurnoverBreakdown(db, playerIds);
+  const r2 = (n) => Math.round(n * 100) / 100;
   let credited = 0;
-  await runTransaction(db, async (tx) => {
-    const ref = doc(db, 'users', masterId);
-    const snap = await tx.get(ref);
-    if (!snap.exists()) return;
-    const data = snap.data();
-    const prevTurnover = Number(data.playEarnCreditedTurnover || 0);
-    if (turnover <= prevTurnover) return; // nothing new
-    const deltaTurnover = turnover - prevTurnover;
-    const earn = Math.round(deltaTurnover * (pct / 100) * 100) / 100;
-    if (earn <= 0) {
-      // Still advance the marker so we don't recompute forever.
-      tx.update(ref, { playEarnCreditedTurnover: turnover });
-      return;
+
+  for (const pid of playerIds) {
+    const turnover = r2(byUser[pid]?.total || 0);
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await runTransaction(db, async (tx) => {
+        const pRef = doc(db, 'users', pid);
+        const mRef = doc(db, 'users', masterId);
+        const pSnap = await tx.get(pRef);
+        const mSnap = await tx.get(mRef);
+        if (!pSnap.exists() || !mSnap.exists()) return;
+        const p = pSnap.data();
+        const m = mSnap.data();
+
+        const markerRaw = p.earnDoneTurnover;
+        // First time we ever see this player → set baseline, credit
+        // nothing (history was handled by the old engine).
+        if (markerRaw == null) {
+          tx.update(pRef, { earnDoneTurnover: turnover });
+          return;
+        }
+        const prev = Number(markerRaw) || 0;
+        if (turnover <= prev) return; // nothing new
+        const delta = r2(turnover - prev);
+
+        const hasOverride =
+          p.splitMasterPct != null || p.splitPlayerPct != null;
+        const mPct = hasOverride ? Number(p.splitMasterPct || 0) : globalPct;
+        const cPct = hasOverride ? Number(p.splitPlayerPct || 0) : 0;
+        const masterCut = r2(delta * (mPct / 100));
+        const playerCash = r2(delta * (cPct / 100));
+
+        const pUpdate = { earnDoneTurnover: turnover };
+        if (playerCash > 0) {
+          const pb = Number(p.balance ?? p.walletBalance ?? 0);
+          const npb = r2(pb + playerCash);
+          pUpdate.balance = npb;
+          pUpdate.walletBalance = npb;
+          pUpdate.cashbackEarned = r2(Number(p.cashbackEarned || 0) + playerCash);
+        }
+        tx.update(pRef, pUpdate);
+
+        if (masterCut > 0) {
+          const mb = Number(m.balance ?? m.walletBalance ?? 0);
+          const nmb = r2(mb + masterCut);
+          tx.update(mRef, {
+            balance: nmb,
+            walletBalance: nmb,
+            lifetimeEarned: r2(Number(m.lifetimeEarned || 0) + masterCut),
+          });
+          const key = Math.round(turnover * 100);
+          tx.set(doc(db, 'masterLedger', `pe_${masterId}_${pid}_${key}`), {
+            type: 'play_earning',
+            masterId,
+            masterName: master.name || null,
+            playerId: pid,
+            amount: masterCut,
+            pct: mPct,
+            note: `Auto play-earning @ ${mPct}% (${p.name || 'player'})`,
+            createdAt: serverTimestamp(),
+          });
+          credited = r2(credited + masterCut);
+        }
+        if (playerCash > 0) {
+          const key = Math.round(turnover * 100);
+          tx.set(doc(db, 'masterLedger', `cb_${masterId}_${pid}_${key}`), {
+            type: 'player_cashback',
+            masterId,
+            masterName: master.name || null,
+            playerId: pid,
+            amount: playerCash,
+            pct: cPct,
+            note: `Player cashback @ ${cPct}% (${p.name || 'player'})`,
+            createdAt: serverTimestamp(),
+          });
+        }
+      });
+    } catch (err) {
+      // One player's failure (e.g., transient permission/contention)
+      // must not block the rest — the next 30s run retries, and the
+      // markers keep it exactly-once.
+      console.warn('per-player earn reconcile skipped for', pid, err?.message || err);
     }
-    const bal = Number(data.balance ?? data.walletBalance ?? 0);
-    const nb = Math.round((bal + earn) * 100) / 100;
-    // lifetimeEarned is the running total of play-commission ever
-    // credited. It only ever goes UP and is used to lock that much
-    // of the balance from master withdrawal requests (earned points
-    // can't be cashed out — only handed to players).
-    const prevLifetime = Number(data.lifetimeEarned || 0);
-    tx.update(ref, {
-      balance: nb,
-      walletBalance: nb,
-      playEarnCreditedTurnover: turnover,
-      lifetimeEarned: Math.round((prevLifetime + earn) * 100) / 100,
-    });
+  }
 
-    // Audit row written INSIDE the same transaction with a
-    // DETERMINISTIC id keyed by the new turnover marker. Reconcile
-    // runs from both the admin and master panels every 30s; the
-    // balance was always idempotent (turnover marker) but the old
-    // ledger addDoc() was outside the txn and could write the same
-    // earning twice. A fixed id makes the audit row idempotent too
-    // — concurrent/duplicate runs overwrite the same doc instead of
-    // creating a second "+₹116"-type ghost line.
-    const ledgerId = `pe_${masterId}_${Math.round(turnover * 100)}`;
-    tx.set(doc(db, 'masterLedger', ledgerId), {
-      type: 'play_earning',
-      masterId,
-      masterName: master.name || null,
-      amount: earn,
-      pct,
-      note: `Auto play-earning @ ${pct}% of turnover`,
-      createdAt: serverTimestamp(),
-    });
-    credited = earn;
-  });
-
-  // Return rich result so callers can show a clear toast / diagnose.
-  return { turnover, credited, pct };
+  return { credited };
 }
 
 // Unique short code stamped on every master account, used in the

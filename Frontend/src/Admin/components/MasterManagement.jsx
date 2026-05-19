@@ -512,6 +512,7 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
   // current players; any other ids (old/offline players no longer in
   // the list) are fetched from /users on demand and cached.
   const [playerNames, setPlayerNames] = useState({});
+  const [splitFor, setSplitFor] = useState(null); // per-player % split modal
 
   useEffect(() => {
     const pq = query(collection(db, 'users'), where('assignedMasterId', '==', master.id));
@@ -959,11 +960,14 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
                   <th className="text-right px-3 py-2">Balance</th>
                   <th className="text-right px-3 py-2">Winning</th>
                   <th className="text-center px-3 py-2">Status</th>
+                  <th className="text-center px-3 py-2">Split %</th>
                   <th className="text-left px-3 py-2">Joined</th>
                 </tr>
               </thead>
               <tbody>
-                {players.map((p) => (
+                {players.map((p) => {
+                  const hasSplit = p.splitMasterPct != null || p.splitPlayerPct != null;
+                  return (
                   <tr key={p.id} className="border-b last:border-0 hover:bg-gray-50">
                     <td className="px-3 py-2 font-semibold">{p.name || '—'}</td>
                     <td className="px-3 py-2 text-xs text-gray-600">{p.phoneNumber || '—'}</td>
@@ -974,9 +978,23 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
                         ? <span className="text-[10px] bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full">SUSPENDED</span>
                         : <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">ACTIVE</span>}
                     </td>
+                    <td className="px-3 py-2 text-center whitespace-nowrap">
+                      {hasSplit ? (
+                        <span className="text-[11px] font-bold text-fuchsia-700">
+                          P {Number(p.splitPlayerPct || 0)}% · M {Number(p.splitMasterPct || 0)}%
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-gray-400">Default ({earnPct}% master)</span>
+                      )}
+                      <button
+                        onClick={() => setSplitFor(p)}
+                        className="ml-2 text-[11px] font-bold text-blue-600 hover:underline"
+                      >Set</button>
+                    </td>
                     <td className="px-3 py-2 text-xs text-gray-600">{fmtDate(p.createdAt)}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1005,6 +1023,7 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
                 player_to_master:       { text: `${who || 'Player'} se points liye`, cr: true },
                 withdrawal_approve:     { text: `${who || 'Player'} ki withdrawal approve ki`, cr: true },
                 withdrawal_reject:      { text: `${who || 'Player'} ki withdrawal reject ki`, cr: false },
+                player_cashback:        { text: `${who || 'Player'} ko khelne ka cashback`, info: true },
               };
               let v = M[l.type] || { text: l.note || l.type || '—', cr: false };
               // master_withdraw_request = sirf record (asli minus to
@@ -1019,14 +1038,113 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
                     <p className="text-sm text-gray-800">{v.text}</p>
                     <p className="text-[11px] text-gray-400">{fmtDate(l.createdAt)}</p>
                   </div>
-                  <div className={`text-sm font-bold whitespace-nowrap ${v.info ? 'text-gray-400' : v.cr ? 'text-emerald-600' : 'text-rose-600'}`}>
-                    {v.info ? 'sirf record' : <>{v.cr ? '+' : '−'}{formatCurrency(l.amount)}</>}
+                  <div className={`text-sm font-bold whitespace-nowrap ${l.type === 'player_cashback' ? 'text-fuchsia-600' : v.info ? 'text-gray-400' : v.cr ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {l.type === 'player_cashback'
+                      ? <>{formatCurrency(l.amount)} → player</>
+                      : v.info ? 'sirf record' : <>{v.cr ? '+' : '−'}{formatCurrency(l.amount)}</>}
                   </div>
                 </div>
               );
             })}
           </div>
         )}
+      </div>
+
+      {splitFor && (
+        <PlayerSplitModal
+          player={splitFor}
+          masterEarnPct={earnPct}
+          onClose={() => setSplitFor(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Per-player earn split. Admin sets, for ONE player under a master,
+// kitna % player ke apne (playable) wallet me wapas aaye aur kitna %
+// master ko. Dono non-withdrawable (sirf khel sakte hain). Clear =
+// default (master ko global earn% milta hai, player ko kuch nahi).
+function PlayerSplitModal({ player, masterEarnPct, onClose }) {
+  const has = player.splitMasterPct != null || player.splitPlayerPct != null;
+  const [playerPct, setPlayerPct] = useState(has ? String(player.splitPlayerPct ?? 0) : '');
+  const [masterPct, setMasterPct] = useState(has ? String(player.splitMasterPct ?? 0) : '');
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    const pp = Number(playerPct), mp = Number(masterPct);
+    if (!Number.isFinite(pp) || !Number.isFinite(mp) || pp < 0 || mp < 0 || pp > 100 || mp > 100) {
+      return toast.error('0–100 ke beech valid % daalo.');
+    }
+    setBusy(true);
+    try {
+      await updateDoc(doc(db, 'users', player.id), {
+        splitPlayerPct: Math.round(pp * 100) / 100,
+        splitMasterPct: Math.round(mp * 100) / 100,
+      });
+      toast.success(`${player.name || 'Player'}: player ${pp}% · master ${mp}% set.`);
+      onClose();
+    } catch (err) {
+      toast.error('Save fail: ' + (err.message || err));
+    } finally { setBusy(false); }
+  };
+
+  const clearOverride = async () => {
+    setBusy(true);
+    try {
+      await updateDoc(doc(db, 'users', player.id), {
+        splitPlayerPct: null,
+        splitMasterPct: null,
+      });
+      toast.success('Default pe wapas — master ko global earn% milega.');
+      onClose();
+    } catch (err) {
+      toast.error('Clear fail: ' + (err.message || err));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white rounded-xl shadow-xl">
+        <div className="border-b p-4 flex justify-between items-center">
+          <h3 className="font-bold text-lg">Player ka % split — {player.name || 'Player'}</h3>
+          <button onClick={onClose} className="text-gray-500 text-2xl">×</button>
+        </div>
+        <div className="p-4 space-y-3 text-sm">
+          <p className="bg-fuchsia-50 border border-fuchsia-200 rounded-lg p-3 text-xs text-fuchsia-900">
+            Ye player jitna <b>khelega</b> uska:
+            <br/>• <b>Player %</b> → is player ke <b>khelne-wale wallet</b> me wapas (withdraw nahi, sirf khel sakta hai)
+            <br/>• <b>Master %</b> → master ke earnings me (withdraw nahi)
+            <br/>Khaali/clear karoge to <b>default</b>: master ko {masterEarnPct}% milega, player ko kuch nahi.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Player % (player ko)</label>
+              <input type="number" min="0" max="100" step="0.5" value={playerPct}
+                onChange={(e) => setPlayerPct(e.target.value)} placeholder="e.g. 8"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Master % (master ko)</label>
+              <input type="number" min="0" max="100" step="0.5" value={masterPct}
+                onChange={(e) => setMasterPct(e.target.value)} placeholder="e.g. 2"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base" />
+            </div>
+          </div>
+        </div>
+        <div className="border-t p-4 flex justify-between gap-2">
+          <button onClick={clearOverride} disabled={busy}
+            className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded font-bold text-sm disabled:opacity-40">
+            Clear (default)
+          </button>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 bg-gray-100 rounded text-sm">Cancel</button>
+            <button onClick={save} disabled={busy}
+              className="px-5 py-2 bg-fuchsia-600 hover:bg-fuchsia-700 text-white font-bold rounded disabled:opacity-40 text-sm">
+              {busy ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
