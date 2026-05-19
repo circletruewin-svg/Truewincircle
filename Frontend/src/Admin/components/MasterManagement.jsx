@@ -654,19 +654,15 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
     const h = { adminDiya: 0, kamaiLedger: 0, playersSeLiya: 0, playersKoDiya: 0, adminKoWapas: 0 };
     for (const l of cleanLedger) {
       const a = Number(l.amount || 0);
-      if (l.type === 'admin_to_master' || l.type === 'master_withdraw_refund') h.adminDiya += a;
+      if (l.type === 'admin_to_master') h.adminDiya += a;
       else if (l.type === 'play_earning') h.kamaiLedger += a;
       else if (l.type === 'player_to_master' || l.type === 'withdrawal_approve') h.playersSeLiya += a;
       else if (l.type === 'master_to_player' || l.type === 'withdrawal_reject') h.playersKoDiya += a;
-      else if (l.type === 'master_withdraw_request') h.adminKoWapas += a;
-      else if (l.type === 'master_to_admin') {
-        // Master-withdrawal approval writes a master_to_admin AUDIT row,
-        // but the wallet was ALREADY debited at request time. Skip the
-        // approval audit; only a real admin manual "− Points" debit
-        // (no pre-deducted note) actually moved the wallet.
-        const isApprovalAudit = String(l.note || '').includes('pre-deducted');
-        if (!isApprovalAudit) h.adminKoWapas += a;
-      }
+      else if (l.type === 'master_to_admin') h.adminKoWapas += a;
+      // master_withdraw_request = sirf placeholder/record (asli debit
+      // approve wale master_to_admin se ginte hain). master_withdraw_refund
+      // ek rejected request ko cancel karta hai (jo hum count nahi karte).
+      // Dono ko jaan-bujh kar skip — warna double/phantom ho jata hai.
     }
     const r = (n) => Math.round(n * 100) / 100;
     // Authoritative lifetime earnings (never misses) — fallback to
@@ -1001,9 +997,9 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
               const who = l.playerId ? (playerNames[l.playerId] || l.playerId) : null;
               const M = {
                 admin_to_master:        { text: 'Admin ne points diye', cr: true },
-                master_to_admin:        { text: 'Admin ne points wapas liye', cr: false },
-                master_withdraw_request:{ text: 'Master ne admin se withdrawal maanga', cr: false },
-                master_withdraw_refund: { text: 'Master ka withdrawal wapas aaya', cr: true },
+                master_to_admin:        { text: 'Master ne admin se withdrawal liya', cr: false },
+                master_withdraw_request:{ text: 'Master ne withdrawal maanga', cr: false },
+                master_withdraw_refund: { text: 'Master ka withdrawal reject — wapas', cr: true },
                 play_earning:           { text: 'Players ke khelne se auto kamai', cr: true },
                 master_to_player:       { text: `${who || 'Player'} ko points diye`, cr: false },
                 player_to_master:       { text: `${who || 'Player'} se points liye`, cr: true },
@@ -1011,14 +1007,11 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
                 withdrawal_reject:      { text: `${who || 'Player'} ki withdrawal reject ki`, cr: false },
               };
               let v = M[l.type] || { text: l.note || l.type || '—', cr: false };
-              // Master-withdrawal approval is just a record — paisa to
-              // request ke time hi kat chuka tha. Ise info-only dikhao
-              // (na +, na −) warna 744 do baar gaya hua lagta hai.
-              const isApprovalAudit =
-                l.type === 'master_to_admin' &&
-                String(l.note || '').includes('pre-deducted');
-              if (isApprovalAudit) {
-                v = { text: 'Master ki withdrawal admin ne approve ki (pehle hi kat chuka tha)', info: true };
+              // master_withdraw_request = sirf record (asli minus to
+              // approve wali "master_to_admin" line se ginte/dikhate
+              // hain). Ise info-only dikhao taaki 744 do baar na lage.
+              if (l.type === 'master_withdraw_request') {
+                v = { text: 'Master ne withdrawal maanga (record — approve par minus hua)', info: true };
               }
               return (
                 <div key={l.id} className="flex items-center justify-between gap-3 px-4 py-2.5">

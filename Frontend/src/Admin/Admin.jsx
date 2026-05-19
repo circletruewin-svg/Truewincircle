@@ -189,9 +189,10 @@ const AdminDashboard = () => {
       setWinners(fetchedWinners);
     });
 
-    // Master ke apne deposit/withdrawal requests — inhe bhi admin ke
-    // main approval screens me dikhana hai (priority + colorful).
-    const masterReqQuery = query(collection(db, 'masterRequests'), where('status', '==', 'pending'));
+    // Master ke apne deposit/withdrawal requests — admin ke MAIN
+    // approval screens me (pending + past dono, jaise user ke aate
+    // hain). Priority + colorful. Toast sirf naye PENDING par.
+    const masterReqQuery = query(collection(db, 'masterRequests'));
     const unsubscribeMasterReqs = onSnapshot(masterReqQuery, (snapshot) => {
       const rows = snapshot.docs
         .map(d => ({ id: d.id, ...d.data() }))
@@ -199,7 +200,9 @@ const AdminDashboard = () => {
       const prevCount = masterReqCountRef.current;
       setMasterReqs(rows);
       const fresh = snapshot.docChanges().filter(c =>
-        c.type === 'added' && isAfterSubscribe(c.doc.data().createdAt));
+        c.type === 'added' &&
+        c.doc.data().status === 'pending' &&
+        isAfterSubscribe(c.doc.data().createdAt));
       if (fresh.length > 0 && prevCount >= 0) {
         playNotificationRef.current?.();
         toast.info(`👑 ${fresh.length} new MASTER request${fresh.length > 1 ? 's' : ''}!`);
