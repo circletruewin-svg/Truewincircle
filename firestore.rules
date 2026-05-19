@@ -108,7 +108,7 @@ service cloud.firestore {
       allow create: if isAdmin() ||
         (isMaster() &&
          request.resource.data.masterId == request.auth.uid &&
-         request.resource.data.type in ['master_to_player', 'player_to_master', 'deposit_approval', 'withdrawal_approval', 'withdrawal_reject', 'play_earning', 'master_withdraw_request']);
+         request.resource.data.type in ['master_to_player', 'player_to_master', 'deposit_approval', 'withdrawal_approval', 'withdrawal_approve', 'withdrawal_reject', 'play_earning', 'player_cashback', 'master_withdraw_request']);
       allow update, delete: if isAdmin();
     }
 

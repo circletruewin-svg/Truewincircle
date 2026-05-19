@@ -2070,8 +2070,10 @@ export default function MasterDashboard() {
       if (reconcileBusy.current) return;
       const ids = players.map((p) => p.id);
       if (ids.length === 0) return;
-      const pct = Number(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT);
-      if (pct <= 0) return;
+      // NOTE: pehle yahan `if (globalPct<=0) return` tha — galat,
+      // kyunki kisi player pe per-player split ho sakta hai bhale
+      // master ka global earn% 0 ho. reconcile khud per-player
+      // handle karta hai, isliye yahan skip nahi karte.
       reconcileBusy.current = true;
       try {
         await reconcileMasterPlayEarnings(db, { id: user.uid, ...master }, ids);

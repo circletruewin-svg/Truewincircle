@@ -1478,10 +1478,11 @@ export default function MasterManagement() {
     let total = 0;
     try {
       for (const m of activeMasters) {
-        const pct = Number(m.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT);
-        if (pct <= 0) continue;
         const ids = playersByMaster[m.id] || [];
         if (ids.length === 0) continue;
+        // pehle yahan `if (globalPct<=0) continue` tha — hata diya:
+        // per-player split tab bhi chal sakta hai jab master ka
+        // global earn% 0 ho. reconcile khud per-player handle karta.
         // eslint-disable-next-line no-await-in-loop
         const res = await reconcileMasterPlayEarnings(db, m, ids);
         total += (res && res.credited) || 0;
