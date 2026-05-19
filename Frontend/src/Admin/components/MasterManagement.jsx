@@ -741,34 +741,20 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
         </div>
       </div>
 
-      {/* ── HISAAB — sab kuch khud jod ke, ek nazar me ── */}
+      {/* ── Master ke paas abhi kitne points — bas yahi sach ── */}
       <div className="bg-white rounded-2xl shadow border overflow-hidden">
-        <div className="bg-emerald-600 px-5 py-3">
-          <p className="text-white/80 text-xs font-bold uppercase tracking-wider">Master ka Hisaab</p>
-          <p className="text-white text-3xl font-black mt-0.5">
-            ₹{formatCurrency(hisaab.actual).replace('₹', '')}
-            <span className="text-sm font-semibold text-white/70"> abhi wallet me (yahi final sahi)</span>
-          </p>
+        <div className={`px-5 py-4 ${hisaab.negative ? 'bg-rose-600' : 'bg-emerald-600'}`}>
+          <p className="text-white/80 text-xs font-bold uppercase tracking-wider">Master ke paas abhi</p>
+          <p className="text-white text-4xl font-black mt-1">{formatCurrency(hisaab.actual)}</p>
         </div>
-        <div className="p-5 space-y-2.5 text-sm">
-          <div className="flex justify-between"><span className="text-gray-600">Admin ne diya</span><span className="font-bold text-emerald-700">+ {formatCurrency(hisaab.adminDiya)}</span></div>
-          <div className="flex justify-between"><span className="text-gray-600">Players ke khelne se kamai</span><span className="font-bold text-emerald-700">+ {formatCurrency(hisaab.kamai)}</span></div>
-          <div className="flex justify-between"><span className="text-gray-600">Players se wapas liya</span><span className="font-bold text-emerald-700">+ {formatCurrency(hisaab.playersSeLiya)}</span></div>
-          <div className="flex justify-between"><span className="text-gray-600">Players ko diya</span><span className="font-bold text-rose-600">− {formatCurrency(hisaab.playersKoDiya)}</span></div>
-          <div className="flex justify-between"><span className="text-gray-600">Admin ko wapas / withdrawal</span><span className="font-bold text-rose-600">− {formatCurrency(hisaab.adminKoWapas)}</span></div>
-          <div className="border-t pt-2.5 flex justify-between items-center">
-            <span className="font-bold text-gray-800">Hisaab se andaaza</span>
-            <span className="font-black text-lg text-gray-900">{formatCurrency(hisaab.bacha)}</span>
-          </div>
+        <div className="p-5">
           {hisaab.negative ? (
-            <p className="text-xs text-rose-700 bg-rose-50 rounded-lg px-3 py-2">
-              ⚠ Wallet negative ({formatCurrency(hisaab.actual)}) hai — ye sach me galat hai. Mujhe screenshot bhejo.
+            <p className="text-sm text-rose-700 bg-rose-50 rounded-lg px-3 py-2.5">
+              ⚠ Ye <b>minus</b> me hai — ye galat hai. Mujhe screenshot bhejo, main check karunga.
             </p>
-          ) : hisaab.match ? (
-            <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2">✓ Wallet aur hisaab match karta hai — sab sahi hai.</p>
           ) : (
-            <p className="text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
-              ℹ️ Wallet me <b>{formatCurrency(hisaab.actual)}</b> hai — <b>yahi final aur sahi hai</b>. History list me purani kuch auto-kamai/withdrawal lines log nahi hui thi (purana bug, ab fix), isliye upar ka andaaza {formatCurrency(hisaab.gap)} kam/zyada dikh sakta hai. <b>Paisa nahi gaya — sirf history adhuri thi.</b> Aage se sab line aayegi.
+            <p className="text-sm text-gray-700">
+              Yahi <b>final aur sahi</b> number hai. Iska poora len-den (admin ne diya, players ko diya, kamai, withdrawal — sab) niche <b>“History — paise ka aana-jaana”</b> me line-by-line dikh raha hai.
             </p>
           )}
         </div>
