@@ -755,9 +755,37 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
             </p>
           ) : (
             <p className="text-sm text-gray-700">
-              Yahi <b>final aur sahi</b> number hai. Iska poora len-den (admin ne diya, players ko diya, kamai, withdrawal — sab) niche <b>“History — paise ka aana-jaana”</b> me line-by-line dikh raha hai.
+              <b>{master.name || 'Master'}</b> ke paas abhi <b>{formatCurrency(hisaab.actual)}</b> hain — yahi final aur sahi hai. Niche saaf-saaf har cheez ka total:
             </p>
           )}
+        </div>
+      </div>
+
+      {/* ── Bade-bade saaf totals — ek nazar me sab samajh aaye ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="rounded-2xl p-4 bg-gradient-to-br from-emerald-500 to-emerald-700 text-white">
+          <p className="text-[11px] uppercase tracking-wider text-white/80">💰 Abhi bache hain</p>
+          <p className="text-3xl font-black mt-1 break-words">{formatCurrency(hisaab.actual)}</p>
+        </div>
+        <div className="rounded-2xl p-4 bg-gradient-to-br from-indigo-500 to-indigo-700 text-white">
+          <p className="text-[11px] uppercase tracking-wider text-white/80">🎮 Khelne se kamaye</p>
+          <p className="text-3xl font-black mt-1 break-words">{formatCurrency(hisaab.kamai)}</p>
+        </div>
+        <div className="rounded-2xl p-4 bg-gradient-to-br from-rose-500 to-rose-700 text-white">
+          <p className="text-[11px] uppercase tracking-wider text-white/80">🏧 Admin se withdrawal liya</p>
+          <p className="text-3xl font-black mt-1 break-words">{formatCurrency(hisaab.adminKoWapas)}</p>
+        </div>
+        <div className="rounded-2xl p-4 bg-gradient-to-br from-amber-500 to-amber-700 text-white">
+          <p className="text-[11px] uppercase tracking-wider text-white/80">🎁 Players ko diye</p>
+          <p className="text-3xl font-black mt-1 break-words">{formatCurrency(hisaab.playersKoDiya)}</p>
+        </div>
+        <div className="rounded-2xl p-4 bg-gradient-to-br from-sky-500 to-sky-700 text-white">
+          <p className="text-[11px] uppercase tracking-wider text-white/80">⬇️ Admin ne diye</p>
+          <p className="text-3xl font-black mt-1 break-words">{formatCurrency(hisaab.adminDiya)}</p>
+        </div>
+        <div className="rounded-2xl p-4 bg-gradient-to-br from-teal-500 to-teal-700 text-white">
+          <p className="text-[11px] uppercase tracking-wider text-white/80">↩️ Players se wapas liye</p>
+          <p className="text-3xl font-black mt-1 break-words">{formatCurrency(hisaab.playersSeLiya)}</p>
         </div>
       </div>
 
