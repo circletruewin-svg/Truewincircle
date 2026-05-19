@@ -208,21 +208,29 @@ const HarufGrid = ({ marketName }) => {
         const userDoc = await transaction.get(userDocRef);
         if (!userDoc.exists()) throw new Error("User does not exist!");
 
-        // For each number we're betting on, look up a deterministic
-        // doc to make sure the user hasn't already placed a bet on
-        // that number for this market today. The id is built from
-        // userId + market + ymd + number so the same user can still
-        // bet on the same number tomorrow, or on a different number
-        // today.
+        // For each number we're betting on we use a deterministic
+        // doc (userId + market + ymd + number). Same number pe dobara
+        // bet lagao to amount ADD ho jaata hai (accumulate) — pehle
+        // ye block kar deta tha ("ek baar hi"). Settlement/turnover
+        // sab betAmount pe chalte hain, to total automatically sahi.
         const reservations = [];
         for (const [num, amount] of placedBets) {
           const betId = `${user.uid}_${safeMarket}_${todayYmd}_${num}`;
           const betRef = doc(db, "harufBets", betId);
           const betSnap = await transaction.get(betRef);
-          if (betSnap.exists()) {
-            throw new Error(`${marketName} me number ${num} pe aap pehle hi bet laga chuke ho aaj. Doosre number pe lagao.`);
-          }
-          reservations.push({ num, amount, betRef });
+          const exists = betSnap.exists();
+          const prev = exists ? betSnap.data() : null;
+          // Agar purana doc settle ho chuka (win/loss) to usme add
+          // mat karo — alag id se naya bet banao (safety).
+          const settled = exists && prev.status && prev.status !== 'pending';
+          reservations.push({
+            num, amount, betRef,
+            exists: exists && !settled,
+            prevAmount: exists && !settled ? Number(prev.betAmount || 0) : 0,
+            settledRef: settled
+              ? doc(db, "harufBets", `${betId}_${Date.now()}`)
+              : null,
+          });
         }
 
         // ── WRITE PHASE ───────────────────────────────────────
@@ -253,10 +261,20 @@ const HarufGrid = ({ marketName }) => {
           winningMoney: Math.round(newWinnings * 100) / 100,
         });
 
-        for (const { num, amount, betRef } of reservations) {
+        for (const { num, amount, betRef, exists, prevAmount, settledRef } of reservations) {
           const roundedAmount = Math.round(amount * 100) / 100;
-          if (roundedAmount > 0) {
-            transaction.set(betRef, {
+          if (roundedAmount <= 0) continue;
+          if (exists) {
+            // Same number pe dobara → purane pending bet me amount ADD.
+            const newTotal = Math.round((prevAmount + roundedAmount) * 100) / 100;
+            transaction.update(betRef, {
+              betAmount: newTotal,
+              timestamp: serverTimestamp(),
+              status: "pending",
+            });
+          } else {
+            // Naya bet (ya purana settle ho chuka tha → alag id).
+            transaction.set(settledRef || betRef, {
               userId: user.uid,
               marketName: marketName,
               betType: "Haruf",
