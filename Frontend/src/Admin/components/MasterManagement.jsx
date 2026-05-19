@@ -642,37 +642,47 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
     });
   }, [ledger]);
 
-  // Auto "Hisaab" — sab ledger se khud jod ke. Admin ko manually
-  // calculator nahi chalana padega.
+  // Auto "Hisaab". NOTE: masterLedger ek best-effort AUDIT log hai —
+  // purane code me play-earning / withdrawal ki kuch lines likhne se
+  // reh jaati thi (wallet hamesha sahi credit hota hai, idempotent
+  // transaction se — log adhura ho sakta hai, paisa nahi). Isliye
+  // "kamai" ke liye master doc ka authoritative `lifetimeEarned`
+  // use karte hain (wallet ke saath hi atomic update hota hai),
+  // ledger sum sirf fallback.
   const hisaab = useMemo(() => {
-    const h = { adminDiya: 0, kamai: 0, playersSeLiya: 0, playersKoDiya: 0, adminKoWapas: 0 };
+    const h = { adminDiya: 0, kamaiLedger: 0, playersSeLiya: 0, playersKoDiya: 0, adminKoWapas: 0 };
     for (const l of cleanLedger) {
       const a = Number(l.amount || 0);
       if (l.type === 'admin_to_master' || l.type === 'master_withdraw_refund') h.adminDiya += a;
-      else if (l.type === 'play_earning') h.kamai += a;
+      else if (l.type === 'play_earning') h.kamaiLedger += a;
       else if (l.type === 'player_to_master' || l.type === 'withdrawal_approve') h.playersSeLiya += a;
       else if (l.type === 'master_to_player' || l.type === 'withdrawal_reject') h.playersKoDiya += a;
       else if (l.type === 'master_withdraw_request') h.adminKoWapas += a;
       else if (l.type === 'master_to_admin') {
         // Master-withdrawal approval writes a master_to_admin AUDIT row,
-        // but the wallet was ALREADY debited at request time (counted
-        // via master_withdraw_request). Counting this too = double
-        // minus → phantom negative. So skip the approval audit; only
-        // a real admin manual "− Points" debit (no pre-deducted note)
-        // actually moved the wallet.
+        // but the wallet was ALREADY debited at request time. Skip the
+        // approval audit; only a real admin manual "− Points" debit
+        // (no pre-deducted note) actually moved the wallet.
         const isApprovalAudit = String(l.note || '').includes('pre-deducted');
         if (!isApprovalAudit) h.adminKoWapas += a;
       }
     }
     const r = (n) => Math.round(n * 100) / 100;
-    const bacha = r(h.adminDiya + h.kamai + h.playersSeLiya - h.playersKoDiya - h.adminKoWapas);
+    // Authoritative lifetime earnings (never misses) — fallback to
+    // ledger sum only for very old masters without the field.
+    const lifeEarned = master.lifetimeEarned != null ? Number(master.lifetimeEarned) : null;
+    const kamai = lifeEarned != null && lifeEarned >= h.kamaiLedger ? lifeEarned : h.kamaiLedger;
+    const bacha = r(h.adminDiya + kamai + h.playersSeLiya - h.playersKoDiya - h.adminKoWapas);
     const actual = r(Number(master.balance ?? master.walletBalance ?? 0));
     return {
-      adminDiya: r(h.adminDiya), kamai: r(h.kamai), playersSeLiya: r(h.playersSeLiya),
+      adminDiya: r(h.adminDiya), kamai: r(kamai), playersSeLiya: r(h.playersSeLiya),
       playersKoDiya: r(h.playersKoDiya), adminKoWapas: r(h.adminKoWapas),
-      bacha, actual, match: Math.abs(bacha - actual) < 1,
+      bacha, actual,
+      match: Math.abs(bacha - actual) < 1,
+      negative: actual < -0.5, // sirf yahi asli red-flag hai
+      gap: r(Math.abs(bacha - actual)),
     };
-  }, [cleanLedger, master.balance, master.walletBalance]);
+  }, [cleanLedger, master.balance, master.walletBalance, master.lifetimeEarned]);
   const fmtDate = (ts) => {
     const d = ts?.toDate?.();
     return d ? d.toLocaleString('en-IN') : '—';
@@ -737,7 +747,7 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
           <p className="text-white/80 text-xs font-bold uppercase tracking-wider">Master ka Hisaab</p>
           <p className="text-white text-3xl font-black mt-0.5">
             ₹{formatCurrency(hisaab.actual).replace('₹', '')}
-            <span className="text-sm font-semibold text-white/70"> abhi wallet me</span>
+            <span className="text-sm font-semibold text-white/70"> abhi wallet me (yahi final sahi)</span>
           </p>
         </div>
         <div className="p-5 space-y-2.5 text-sm">
@@ -747,14 +757,18 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
           <div className="flex justify-between"><span className="text-gray-600">Players ko diya</span><span className="font-bold text-rose-600">− {formatCurrency(hisaab.playersKoDiya)}</span></div>
           <div className="flex justify-between"><span className="text-gray-600">Admin ko wapas / withdrawal</span><span className="font-bold text-rose-600">− {formatCurrency(hisaab.adminKoWapas)}</span></div>
           <div className="border-t pt-2.5 flex justify-between items-center">
-            <span className="font-bold text-gray-800">Hisaab ke hisaab se bachna chahiye</span>
+            <span className="font-bold text-gray-800">Hisaab se andaaza</span>
             <span className="font-black text-lg text-gray-900">{formatCurrency(hisaab.bacha)}</span>
           </div>
-          {hisaab.match ? (
+          {hisaab.negative ? (
+            <p className="text-xs text-rose-700 bg-rose-50 rounded-lg px-3 py-2">
+              ⚠ Wallet negative ({formatCurrency(hisaab.actual)}) hai — ye sach me galat hai. Mujhe screenshot bhejo.
+            </p>
+          ) : hisaab.match ? (
             <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2">✓ Wallet aur hisaab match karta hai — sab sahi hai.</p>
           ) : (
-            <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
-              ⚠ Wallet ({formatCurrency(hisaab.actual)}) aur hisaab ({formatCurrency(hisaab.bacha)}) me {formatCurrency(Math.abs(hisaab.bacha - hisaab.actual))} ka farak — niche History check karein.
+            <p className="text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
+              ℹ️ Wallet me <b>{formatCurrency(hisaab.actual)}</b> hai — <b>yahi final aur sahi hai</b>. History list me purani kuch auto-kamai/withdrawal lines log nahi hui thi (purana bug, ab fix), isliye upar ka andaaza {formatCurrency(hisaab.gap)} kam/zyada dikh sakta hai. <b>Paisa nahi gaya — sirf history adhuri thi.</b> Aage se sab line aayegi.
             </p>
           )}
         </div>
