@@ -132,7 +132,10 @@ const PaymentApproval = ({ payments, userDetails, handlePaymentApproval, handleD
       const t = new Date(v).getTime();
       return Number.isFinite(t) ? t : 0;
     };
-    return [...matched].sort((a, b) => tsOf(b) - tsOf(a));
+    // Master requests sabse upar (priority), phir newest-first.
+    return [...matched].sort(
+      (a, b) => (b.isMasterReq ? 1 : 0) - (a.isMasterReq ? 1 : 0) || tsOf(b) - tsOf(a),
+    );
   }, [payments, userDetails, searchTerm]);
 
   return (
@@ -178,9 +181,12 @@ const PaymentApproval = ({ payments, userDetails, handlePaymentApproval, handleD
                 </tr>
               )}
               {filteredPayments.map(payment => (
-                <tr key={payment.id} className="border-b hover:bg-gray-50">
+                <tr key={payment.id} className={`border-b ${payment.isMasterReq ? 'bg-gradient-to-r from-fuchsia-100 to-amber-100 ring-2 ring-fuchsia-400 hover:from-fuchsia-200' : 'hover:bg-gray-50'}`}>
                   <td className="p-4">
-                    <button onClick={() => setUserInfoModal({ isOpen: true, user: userDetails[payment.userId] })} className="font-medium text-blue-600 hover:underline">
+                    {payment.isMasterReq && (
+                      <span className="inline-block mb-1 px-2 py-0.5 rounded-full bg-fuchsia-600 text-white text-[10px] font-black tracking-wide">👑 MASTER — pehle dekho</span>
+                    )}
+                    <button onClick={() => setUserInfoModal({ isOpen: true, user: userDetails[payment.userId] })} className="font-medium text-blue-600 hover:underline block">
                       {payment.name || userDetails[payment.userId]?.name || 'Unknown User'}
                     </button>
                   </td>

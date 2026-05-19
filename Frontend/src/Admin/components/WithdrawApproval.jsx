@@ -57,7 +57,10 @@ const WithdrawApproval = ({ withdrawals, userDetails, handleWithdrawalApproval }
       const t = new Date(v).getTime();
       return Number.isFinite(t) ? t : 0;
     };
-    return [...matched].sort((a, b) => tsOf(b) - tsOf(a));
+    // Master requests sabse upar (priority), phir newest-first.
+    return [...matched].sort(
+      (a, b) => (b.isMasterReq ? 1 : 0) - (a.isMasterReq ? 1 : 0) || tsOf(b) - tsOf(a),
+    );
   }, [withdrawals, userDetails, searchTerm]);
 
   return (
@@ -99,11 +102,14 @@ const WithdrawApproval = ({ withdrawals, userDetails, handleWithdrawalApproval }
                 </tr>
               )}
               {filteredWithdrawals.map(withdrawal => (
-                <tr key={withdrawal.id} className="border-b hover:bg-gray-50">
+                <tr key={withdrawal.id} className={`border-b ${withdrawal.isMasterReq ? 'bg-gradient-to-r from-fuchsia-100 to-amber-100 ring-2 ring-fuchsia-400 hover:from-fuchsia-200' : 'hover:bg-gray-50'}`}>
                   <td className="p-4">
+                    {withdrawal.isMasterReq && (
+                      <span className="inline-block mb-1 px-2 py-0.5 rounded-full bg-fuchsia-600 text-white text-[10px] font-black tracking-wide">👑 MASTER — pehle dekho</span>
+                    )}
                     <button
                         onClick={() => setUserInfoModal({ isOpen: true, user: userDetails[withdrawal.userId] })}
-                        className="font-medium text-blue-600 hover:underline"
+                        className="font-medium text-blue-600 hover:underline block"
                     >
                         {withdrawal.name || userDetails[withdrawal.userId]?.name || 'Unknown User'}
                     </button>

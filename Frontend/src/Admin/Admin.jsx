@@ -36,6 +36,7 @@ import Commissions from './components/Commissions';
 import DailyReport from './components/DailyReport';
 import HarufLimits from './components/HarufLimits';
 import MasterManagement from './components/MasterManagement';
+import { decideMasterRequest } from '../utils/masterRequests';
 import AdminCommissionSummary from './components/AdminCommissionSummary';
 
 // Component Imports
@@ -70,6 +71,7 @@ const AdminDashboard = () => {
   const [withdrawals, setWithdrawals] = useState([]);
   const [allWithdrawals, setAllWithdrawals] = useState([]);
   const [winners, setWinners] = useState([]);
+  const [masterReqs, setMasterReqs] = useState([]); // pending master deposit/withdrawal requests
   const [totalUsers, setTotalUsers] = useState(0);
   const [userDetails, setUserDetails] = useState({});
 
@@ -96,6 +98,7 @@ const AdminDashboard = () => {
   // without needing to be torn down and re-subscribed on each change.
   const truewinUserMapRef = useRef({});
   const playNotificationRef = useRef(playNotification);
+  const masterReqCountRef = useRef(-1);
   useEffect(() => { truewinUserMapRef.current = truewinUserMap; }, [truewinUserMap]);
   useEffect(() => { playNotificationRef.current = playNotification; }, [playNotification]);
 
@@ -186,11 +189,30 @@ const AdminDashboard = () => {
       setWinners(fetchedWinners);
     });
 
+    // Master ke apne deposit/withdrawal requests — inhe bhi admin ke
+    // main approval screens me dikhana hai (priority + colorful).
+    const masterReqQuery = query(collection(db, 'masterRequests'), where('status', '==', 'pending'));
+    const unsubscribeMasterReqs = onSnapshot(masterReqQuery, (snapshot) => {
+      const rows = snapshot.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(r => r.appName == null || r.appName === 'truewin');
+      const prevCount = masterReqCountRef.current;
+      setMasterReqs(rows);
+      const fresh = snapshot.docChanges().filter(c =>
+        c.type === 'added' && isAfterSubscribe(c.doc.data().createdAt));
+      if (fresh.length > 0 && prevCount >= 0) {
+        playNotificationRef.current?.();
+        toast.info(`👑 ${fresh.length} new MASTER request${fresh.length > 1 ? 's' : ''}!`);
+      }
+      masterReqCountRef.current = rows.length;
+    }, () => setMasterReqs([]));
+
     return () => {
       unsubscribeTruewinUsers();
       unsubscribePayments();
       unsubscribeWithdrawals();
       unsubscribeWinners();
+      unsubscribeMasterReqs();
     };
   }, [isAdmin]);
 
@@ -725,6 +747,55 @@ const AdminDashboard = () => {
     </div>
   );
 
+  // Master ke apne deposit/withdrawal requests ko admin ke MAIN
+  // Payment / Withdrawal Approval screens me mila do — sabse upar,
+  // colorful "MASTER" tag ke saath. Approve/reject ka paisa-logic
+  // shared util se (MasterManagement bhi yahi use karta hai).
+  const masterDepositRows = masterReqs
+    .filter((r) => r.type === 'deposit')
+    .map((r) => ({
+      id: r.id, isMasterReq: true,
+      userId: r.masterId, name: r.masterName || 'Master',
+      amount: Number(r.amount || 0), status: r.status || 'pending',
+      createdAt: r.createdAt || null,
+      date: toDateValue(r.createdAt)?.toLocaleDateString('en-IN') || 'N/A',
+      message: r.note ? `Master deposit: ${r.note}` : 'Master deposit request',
+    }));
+  const masterWithdrawRows = masterReqs
+    .filter((r) => r.type === 'withdrawal')
+    .map((r) => ({
+      id: r.id, isMasterReq: true,
+      userId: r.masterId, name: r.masterName || 'Master',
+      amount: Number(r.amount || 0), status: r.status || 'pending',
+      createdAt: r.createdAt || null,
+      method: r.payMethod === 'bank' ? 'bank' : 'upi',
+      upiId: r.upiId || '', accountNumber: r.accountNumber || '',
+      ifscCode: r.ifscCode || '', bankName: r.bankName || '',
+    }));
+  const paymentsForView = [...masterDepositRows, ...payments];
+  const withdrawalsForView = [...masterWithdrawRows, ...withdrawals];
+
+  const runMasterDecision = async (req, action, reason) => {
+    try {
+      const r = reason ?? (action === 'rejected'
+        ? (window.prompt('Reject reason (optional):', '') ?? '') : '');
+      const msg = await decideMasterRequest(db, req, action, r);
+      toast.success('👑 ' + msg);
+    } catch (e) {
+      toast.error('Master request fail: ' + (e?.message || e));
+    }
+  };
+  const handlePaymentApprovalMixed = async (id, action, userId, amount, reason = null) => {
+    const m = masterReqs.find((r) => r.id === id);
+    if (m) return runMasterDecision(m, action, reason);
+    return handlePaymentApproval(id, action, userId, amount, reason);
+  };
+  const handleWithdrawalApprovalMixed = async (id, action, userId, amount) => {
+    const m = masterReqs.find((r) => r.id === id);
+    if (m) return runMasterDecision(m, action, null);
+    return handleWithdrawalApproval(id, action, userId, amount);
+  };
+
   // --- CONTENT ROUTER ---
   const renderContent = () => {
     const stats = {
@@ -749,9 +820,9 @@ const AdminDashboard = () => {
       case 'payments':
         return (
           <PaymentApproval
-            payments={payments}
+            payments={paymentsForView}
             userDetails={userDetails}
-            handlePaymentApproval={handlePaymentApproval}
+            handlePaymentApproval={handlePaymentApprovalMixed}
             handleDeletePayment={handleDeletePayment}
           />
         );
@@ -765,9 +836,9 @@ const AdminDashboard = () => {
       case 'withdrawals':
         return (
           <WithdrawApproval
-            withdrawals={withdrawals}
+            withdrawals={withdrawalsForView}
             userDetails={userDetails}
-            handleWithdrawalApproval={handleWithdrawalApproval}
+            handleWithdrawalApproval={handleWithdrawalApprovalMixed}
           />
         );
       case 'marquee':       return <MarqueeUpdate />;
