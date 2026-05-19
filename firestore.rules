@@ -388,7 +388,20 @@ service cloud.firestore {
         isAdmin()
       );
       allow read: if request.auth != null;
-      allow update: if isAdmin();
+      // Owner apne HI pending bet me amount badha sakta hai (same
+      // number pe dobara lagao → accumulate). Identity/number/market
+      // immutable, status pending hi rahe, amount ghata nahi sakta.
+      // Settlement (status badalna) sirf admin.
+      allow update: if isAdmin() || (
+        request.auth != null &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == resource.data.userId &&
+        request.resource.data.selectedNumber == resource.data.selectedNumber &&
+        request.resource.data.marketName == resource.data.marketName &&
+        resource.data.get('status', 'pending') == 'pending' &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.betAmount >= resource.data.betAmount
+      );
     }
 
     // Carousel slides
