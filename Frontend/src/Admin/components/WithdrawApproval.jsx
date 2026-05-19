@@ -2,6 +2,22 @@ import React, { useMemo, useState } from 'react';
 import { Check, X, Search } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatMoney';
 
+// IST date + time (chhota time date ke neeche).
+const toDate = (v) => {
+  if (!v) return null;
+  if (v?.toDate) return v.toDate();
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+};
+const fmtIST = (v) => {
+  const d = toDate(v);
+  if (!d) return { date: 'N/A', time: '' };
+  return {
+    date: new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' }).format(d),
+    time: new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }).format(d),
+  };
+};
+
 // Modal for showing detailed user info - Copied from PaymentApproval.jsx
 const UserInfoModal = ({ user, onClose }) => (
   <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -87,14 +103,14 @@ const WithdrawApproval = ({ withdrawals, userDetails, handleWithdrawalApproval }
                 <th className="text-left p-4 font-medium">Method</th>
                 <th className="text-left p-4 font-medium">Details</th> 
                 <th className="text-left p-4 font-medium">Status</th>
-               
+                <th className="text-left p-4 font-medium">Date</th>
                 <th className="text-left p-4 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filteredWithdrawals.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-6 text-center text-gray-500">
+                  <td colSpan={7} className="p-6 text-center text-gray-500">
                     {searchTerm ? 'No withdrawals match your search.' : 'No withdrawals to display.'}
                   </td>
                 </tr>
@@ -136,7 +152,14 @@ const WithdrawApproval = ({ withdrawals, userDetails, handleWithdrawalApproval }
                       {withdrawal.status}
                     </span>
                   </td>
-                 
+                  <td className="p-4 text-gray-600">
+                    {(() => { const t = fmtIST(withdrawal.createdAt); return (
+                      <>
+                        <div>{t.date}</div>
+                        <div className="text-xs text-gray-400">{t.time}</div>
+                      </>
+                    ); })()}
+                  </td>
                   <td className="p-4">
                     {withdrawal.status === 'pending' && (
                       <div className="flex space-x-2">

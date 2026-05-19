@@ -2,6 +2,22 @@ import React, { useMemo, useState } from 'react';
 import { Check, X, Trash2, Eye, Search } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatMoney';
 
+// IST date + time (chhota time date ke neeche dikhane ke liye).
+const toDate = (v) => {
+  if (!v) return null;
+  if (v?.toDate) return v.toDate();
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+};
+const fmtIST = (v) => {
+  const d = toDate(v);
+  if (!d) return { date: 'N/A', time: '' };
+  return {
+    date: new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' }).format(d),
+    time: new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }).format(d),
+  };
+};
+
 // Modal for showing the full payment message
 const MessageModal = ({ message, onClose }) => (
   <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -214,7 +230,14 @@ const PaymentApproval = ({ payments, userDetails, handlePaymentApproval, handleD
                       {payment.status}
                     </span>
                   </td>
-                  <td className="p-4 text-gray-600">{payment.date}</td>
+                  <td className="p-4 text-gray-600">
+                    {(() => { const t = fmtIST(payment.createdAt); return (
+                      <>
+                        <div>{t.date}</div>
+                        <div className="text-xs text-gray-400">{t.time}</div>
+                      </>
+                    ); })()}
+                  </td>
                   <td className="p-4">
                     {payment.status === 'pending' && (
                       <div className="flex space-x-2">
