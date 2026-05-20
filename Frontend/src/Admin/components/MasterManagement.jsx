@@ -324,6 +324,10 @@ function TopUpModal({ master, onClose, onDone }) {
         await updateDoc(stageRef, { balance: Math.round(next * 100) / 100 });
       } else {
         // Active master — atomic update on their real user doc.
+        // Ledger row bhi USI transaction ke andar likhte hain (jaise
+        // approve flow karta hai) taaki balance change + audit dono
+        // ek saath ya dono fail — kabhi balance badle par history me
+        // line na aaye, aisa nahi hoga.
         await runTransaction(db, async (tx) => {
           const masterRef = doc(db, 'users', master.id);
           const snap = await tx.get(masterRef);
@@ -333,23 +337,33 @@ function TopUpModal({ master, onClose, onDone }) {
           if (next < 0) throw new Error(`Cannot debit more than master has (${formatCurrency(current)}).`);
           tx.update(masterRef, {
             balance: Math.round(next * 100) / 100,
-            // Keep legacy field in sync so existing reporting tools that
-            // read walletBalance still see the master's true points.
             walletBalance: Math.round(next * 100) / 100,
+          });
+          const ledgerId = `manual_${master.id}_${Date.now()}`;
+          tx.set(doc(db, 'masterLedger', ledgerId), {
+            type: direction === 'credit' ? 'admin_to_master' : 'master_to_admin',
+            masterId: master.id,
+            masterName: master.name || null,
+            pending: false,
+            amount: value,
+            note: 'Admin manual adjustment',
+            createdAt: serverTimestamp(),
           });
         });
       }
 
-      // Audit ledger — admin → master adjustment. We log for both
-      // active and pending masters so the trail is continuous.
-      await addDoc(collection(db, 'masterLedger'), {
-        type: direction === 'credit' ? 'admin_to_master' : 'master_to_admin',
-        masterId: master.id,
-        masterName: master.name || null,
-        pending: !!master.pending,
-        amount: value,
-        createdAt: serverTimestamp(),
-      });
+      // Pending master (no real user doc yet) — separate audit row.
+      if (master.pending) {
+        await addDoc(collection(db, 'masterLedger'), {
+          type: direction === 'credit' ? 'admin_to_master' : 'master_to_admin',
+          masterId: master.id,
+          masterName: master.name || null,
+          pending: true,
+          amount: value,
+          note: 'Admin manual adjustment (pending master)',
+          createdAt: serverTimestamp(),
+        });
+      }
 
       toast.success(`${direction === 'credit' ? 'Credited' : 'Debited'} ${formatCurrency(value)} ${direction === 'credit' ? 'to' : 'from'} ${master.name || 'master'}.`);
       onDone?.();
@@ -1013,9 +1027,13 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
           <div className="divide-y">
             {cleanLedger.map((l) => {
               const who = l.playerId ? (playerNames[l.playerId] || l.playerId) : null;
+              const noteStr = String(l.note || '');
+              const isReqApprovalCredit = l.type === 'admin_to_master' && /deposit request approved/i.test(noteStr);
+              const isReqApprovalDebit  = l.type === 'master_to_admin' &&
+                (/withdrawal request approved/i.test(noteStr) || /pre-deducted/i.test(noteStr));
               const M = {
-                admin_to_master:        { text: 'Admin ne points diye', cr: true },
-                master_to_admin:        { text: 'Master ne admin se withdrawal liya', cr: false },
+                admin_to_master:        { text: isReqApprovalCredit ? 'Master ka deposit approve kiya' : 'Admin ne points diye (manual)', cr: true },
+                master_to_admin:        { text: isReqApprovalDebit ? 'Master ne admin se withdrawal liya' : 'Admin ne points wapas liye (manual)', cr: false },
                 master_withdraw_request:{ text: 'Master ne withdrawal maanga', cr: false },
                 master_withdraw_refund: { text: 'Master ka withdrawal reject — wapas', cr: true },
                 play_earning:           { text: 'Players ke khelne se auto kamai', cr: true },
