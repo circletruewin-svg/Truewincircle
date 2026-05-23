@@ -50,6 +50,136 @@ const BetBox = ({ num, value, onChange }) => {
 // (or if it doesn't exist yet on a fresh project).
 const HARUF_LIMIT_DEFAULTS = { min: 5, max: 50 };
 
+// ── CROSSING: Andar digits × Bahar digits = saari jodi pairs ek baar
+// me bharo. Cut option same-digit jodi (00, 11, … 99) hata deta hai.
+// Pairs upar wale 100-box jodi grid me daal jaate hain — wahi se
+// Place Bid karne pe normal jodi bet ke roop me lag jaate hain
+// (wallet/rules/settlement sab existing flow, 90× payout).
+const jodiToKey = (jodi) => {
+  const n = parseInt(jodi, 10);
+  return n === 0 ? 100 : n; // "00" → grid key 100 (jaise BetBox display karta hai)
+};
+
+const Crossing = ({ bets, setBets, marketStatus }) => {
+  const [andar, setAndar] = useState(() => new Set());
+  const [bahar, setBahar] = useState(() => new Set());
+  const [perPair, setPerPair] = useState('');
+  const [cut, setCut] = useState(false);
+
+  const toggle = (setter) => (d) => {
+    setter((prev) => {
+      const next = new Set(prev);
+      if (next.has(d)) next.delete(d); else next.add(d);
+      return next;
+    });
+  };
+
+  // Pairs banao: har Andar × har Bahar → jodi string "AB".
+  const pairs = [];
+  const A = [...andar].sort();
+  const B = [...bahar].sort();
+  for (const a of A) {
+    for (const b of B) {
+      if (cut && a === b) continue;
+      pairs.push(`${a}${b}`);
+    }
+  }
+  const perAmt = parseInt(perPair, 10) || 0;
+  const total = pairs.length * perAmt;
+
+  const apply = () => {
+    if (!marketStatus.isOpen) return toast.error('Market band hai.');
+    if (andar.size === 0 || bahar.size === 0) return toast.error('Andar aur Bahar dono me se digits chuno.');
+    if (!perAmt || perAmt <= 0) return toast.error('Per jodi amount daalo.');
+    if (pairs.length === 0) return toast.error('Cut option ne saari jodi hata di — Cut hata do ya digits badlo.');
+
+    setBets((prev) => {
+      const next = { ...prev };
+      for (const j of pairs) {
+        const key = jodiToKey(j);
+        next[key] = String((parseInt(next[key], 10) || 0) + perAmt);
+      }
+      return next;
+    });
+    toast.success(`${pairs.length} jodi me ₹${perAmt}-₹${perAmt} add ho gaya (kul ₹${total}). Niche Place Bid dabao.`);
+    setAndar(new Set()); setBahar(new Set()); setPerPair(''); setCut(false);
+  };
+
+  const Chip = ({ d, picked, onClick, tone }) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`h-9 w-9 rounded-md font-bold text-sm border transition ${
+        picked
+          ? (tone === 'andar' ? 'bg-red-600 text-white border-red-700' : 'bg-blue-600 text-white border-blue-700')
+          : 'bg-white text-gray-700 border-gray-300'
+      }`}
+    >{d}</button>
+  );
+
+  return (
+    <div className="w-full mt-4 px-2">
+      <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-3">
+        <p className="text-center font-bold text-amber-900 mb-2">
+          ✨ Crossing (ek baar me bahut jodi)
+        </p>
+        <p className="text-[11px] text-amber-800 text-center mb-3">
+          Andar digits + Bahar digits chuno → saari pairs me ek-jaisa amount auto lag jayega. Jeetne par <b>90×</b>.
+        </p>
+
+        <p className="text-xs font-semibold text-red-700 mb-1">Andar digits</p>
+        <div className="grid grid-cols-10 gap-1 mb-3">
+          {Array.from({ length: 10 }, (_, i) => (
+            <Chip key={`ca-${i}`} d={i} picked={andar.has(i)} tone="andar" onClick={() => toggle(setAndar)(i)} />
+          ))}
+        </div>
+
+        <p className="text-xs font-semibold text-blue-700 mb-1">Bahar digits</p>
+        <div className="grid grid-cols-10 gap-1 mb-3">
+          {Array.from({ length: 10 }, (_, i) => (
+            <Chip key={`cb-${i}`} d={i} picked={bahar.has(i)} tone="bahar" onClick={() => toggle(setBahar)(i)} />
+          ))}
+        </div>
+
+        <div className="flex items-center gap-3 mb-3">
+          <input
+            type="number"
+            min="1"
+            inputMode="numeric"
+            value={perPair}
+            onChange={(e) => setPerPair(e.target.value)}
+            placeholder="Per jodi ₹"
+            className="flex-1 border border-gray-300 rounded px-2 py-2 text-sm"
+          />
+          <label className="flex items-center gap-1 text-xs text-gray-700 whitespace-nowrap">
+            <input type="checkbox" checked={cut} onChange={(e) => setCut(e.target.checked)} />
+            Cut (00,11,…)
+          </label>
+        </div>
+
+        <div className="bg-white rounded p-2 text-xs text-gray-700 mb-2 flex items-center justify-between">
+          <span>{pairs.length} jodi banengi</span>
+          <span className="font-bold">Kul: ₹{total}</span>
+        </div>
+        {pairs.length > 0 && (
+          <p className="text-[10px] text-gray-500 mb-2 break-all">
+            {pairs.join(', ')}
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={apply}
+          disabled={!marketStatus.isOpen}
+          className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-gray-300 text-white font-bold py-2 rounded"
+        >
+          + Add to bid (upar grid me bhar do)
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const HarufGrid = ({ marketName }) => {
   const [bets, setBets] = useState({});
   const [bettingLoading, setBettingLoading] = useState(false);
@@ -368,6 +498,18 @@ const HarufGrid = ({ marketName }) => {
           ))}
         </div>
       </div>
+
+      {/* ─────────────────────────────────────────────────────────────
+          CROSSING (Jodi) — ek baar me bahut saari jodi pe bet
+          Andar digits × Bahar digits = saari pairs auto-bharti hain
+          upar wale 100-box jodi grid me. Place Bid se hi lagti hain
+          (wallet/rules/settlement sab existing flow).
+         ───────────────────────────────────────────────────────────── */}
+      <Crossing
+        bets={bets}
+        setBets={setBets}
+        marketStatus={marketStatus}
+      />
 
       <div className="fixed bottom-0 left-0 right-0 bg-white p-3 shadow-lg">
         <button
