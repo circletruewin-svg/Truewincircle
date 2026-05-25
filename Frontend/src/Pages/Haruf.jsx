@@ -60,7 +60,7 @@ const jodiToKey = (jodi) => {
   return n === 0 ? 100 : n; // "00" → grid key 100 (jaise BetBox display karta hai)
 };
 
-const Crossing = ({ bets, setBets, marketStatus }) => {
+const Crossing = ({ bets, setBets, marketStatus, limits }) => {
   const [andar, setAndar] = useState(() => new Set());
   const [bahar, setBahar] = useState(() => new Set());
   const [perPair, setPerPair] = useState('');
@@ -92,6 +92,18 @@ const Crossing = ({ bets, setBets, marketStatus }) => {
     if (andar.size === 0 || bahar.size === 0) return toast.error('Andar aur Bahar dono me se digits chuno.');
     if (!perAmt || perAmt <= 0) return toast.error('Per jodi amount daalo.');
     if (pairs.length === 0) return toast.error('Cut option ne saari jodi hata di — Cut hata do ya digits badlo.');
+    const minB = Number(limits?.min) || HARUF_LIMIT_DEFAULTS.min;
+    const maxB = Number(limits?.max) || HARUF_LIMIT_DEFAULTS.max;
+    if (perAmt < minB) return toast.error(`Per jodi minimum ₹${minB} — abhi ₹${perAmt} hai.`);
+    if (perAmt > maxB) return toast.error(`Per jodi maximum ₹${maxB} — abhi ₹${perAmt} hai.`);
+    // Combined check: agar kisi pair pe pehle se amount hai aur add karne ke baad max paar ho jata hai.
+    for (const j of pairs) {
+      const key = jodiToKey(j);
+      const existing = parseInt(bets[key], 10) || 0;
+      if (existing + perAmt > maxB) {
+        return toast.error(`Jodi ${j} pe pehle se ₹${existing} hai — add karne pe ₹${existing + perAmt} ho jayega (max ₹${maxB}). Per jodi kam karo.`);
+      }
+    }
 
     setBets((prev) => {
       const next = { ...prev };
@@ -141,7 +153,7 @@ const Crossing = ({ bets, setBets, marketStatus }) => {
           ))}
         </div>
 
-        <div className="flex items-center gap-3 mb-3">
+        <div className="flex items-center gap-3 mb-1">
           <input
             type="number"
             min="1"
@@ -156,6 +168,9 @@ const Crossing = ({ bets, setBets, marketStatus }) => {
             Cut (00,11,…)
           </label>
         </div>
+        <p className="text-[10px] text-gray-500 mb-3">
+          Per jodi: min ₹{Number(limits?.min) || HARUF_LIMIT_DEFAULTS.min} · max ₹{Number(limits?.max) || HARUF_LIMIT_DEFAULTS.max}
+        </p>
 
         <div className="bg-white rounded p-2 text-xs text-gray-700 mb-2 flex items-center justify-between">
           <span>{pairs.length} jodi banengi</span>
@@ -509,6 +524,7 @@ const HarufGrid = ({ marketName }) => {
         bets={bets}
         setBets={setBets}
         marketStatus={marketStatus}
+        limits={limits}
       />
 
       <div className="fixed bottom-0 left-0 right-0 bg-white p-3 shadow-lg">
