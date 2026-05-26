@@ -211,15 +211,20 @@ export async function reconcileMasterPlayEarnings(db, master, playerIds) {
         const p = pSnap.data();
         const m = mSnap.data();
 
-        const hasOverride = p.splitMasterPct != null || p.splitPlayerPct != null;
-        const overrideMasterPct = hasOverride ? Number(p.splitMasterPct || 0) : null;
-        const overridePlayerPct = hasOverride ? Number(p.splitPlayerPct || 0) : null;
-
-        // Per-category: (markerField, turnover, defaultMasterPct, idTag)
+        // Per-category: (markerField, turnover, defaultMasterPct, idTag,
+        // overrideMasterField, overridePlayerField)
         const cats = [
-          { mark: 'earnDoneTurnoverHaruf',  turn: harufT,  defPct: harufPct,  tag: 'haruf'  },
-          { mark: 'earnDoneTurnoverCasino', turn: casinoT, defPct: casinoPct, tag: 'casino' },
+          { mark: 'earnDoneTurnoverHaruf',  turn: harufT,  defPct: harufPct,  tag: 'haruf',
+            omF: 'splitMasterPctHaruf',  opF: 'splitPlayerPctHaruf'  },
+          { mark: 'earnDoneTurnoverCasino', turn: casinoT, defPct: casinoPct, tag: 'casino',
+            omF: 'splitMasterPctCasino', opF: 'splitPlayerPctCasino' },
         ];
+
+        // Legacy single-pair override (purana model) — agar naye
+        // per-category fields me kuch nahi hai to legacy ko fallback.
+        const legacyM = p.splitMasterPct;
+        const legacyP = p.splitPlayerPct;
+        const legacySet = legacyM != null || legacyP != null;
 
         let pUpdate = {};
         let mDeltaMaster = 0;
@@ -240,8 +245,22 @@ export async function reconcileMasterPlayEarnings(db, master, playerIds) {
           const delta = r2(c.turn - prev);
           pUpdate[c.mark] = c.turn;
 
-          const mPct = hasOverride ? overrideMasterPct : c.defPct;
-          const cPct = hasOverride ? overridePlayerPct : 0;
+          // Per-category override: prefer new field; if null, fall
+          // back to legacy single-pair (if set); else master default.
+          const newM = p[c.omF];
+          const newP = p[c.opF];
+          const newSet = newM != null || newP != null;
+          let mPct, cPct;
+          if (newSet) {
+            mPct = Number(newM || 0);
+            cPct = Number(newP || 0);
+          } else if (legacySet) {
+            mPct = Number(legacyM || 0);
+            cPct = Number(legacyP || 0);
+          } else {
+            mPct = c.defPct;
+            cPct = 0;
+          }
           const masterCut = r2(delta * (mPct / 100));
           const playerCash = r2(delta * (cPct / 100));
 

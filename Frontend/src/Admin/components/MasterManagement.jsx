@@ -981,7 +981,11 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
               </thead>
               <tbody>
                 {players.map((p) => {
-                  const hasSplit = p.splitMasterPct != null || p.splitPlayerPct != null;
+                  // Per-category override status (new model) + legacy fallback.
+                  const hSet = p.splitMasterPctHaruf != null || p.splitPlayerPctHaruf != null;
+                  const cSet = p.splitMasterPctCasino != null || p.splitPlayerPctCasino != null;
+                  const legacySet = p.splitMasterPct != null || p.splitPlayerPct != null;
+                  const hasSplit = hSet || cSet || legacySet;
                   return (
                   <tr key={p.id} className="border-b last:border-0 hover:bg-gray-50">
                     <td className="px-3 py-2 font-semibold">{p.name || '—'}</td>
@@ -995,11 +999,20 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
                     </td>
                     <td className="px-3 py-2 text-center whitespace-nowrap">
                       {hasSplit ? (
-                        <span className="text-[11px] font-bold text-fuchsia-700">
-                          P {Number(p.splitPlayerPct || 0)}% · M {Number(p.splitMasterPct || 0)}%
-                        </span>
+                        <div className="text-[11px] font-bold text-fuchsia-700 leading-tight">
+                          {hSet
+                            ? <div>H: P{Number(p.splitPlayerPctHaruf || 0)}% M{Number(p.splitMasterPctHaruf || 0)}%</div>
+                            : (legacySet
+                              ? <div>H: P{Number(p.splitPlayerPct || 0)}% M{Number(p.splitMasterPct || 0)}%</div>
+                              : <div className="text-gray-400 font-normal">H: default</div>)}
+                          {cSet
+                            ? <div>C: P{Number(p.splitPlayerPctCasino || 0)}% M{Number(p.splitMasterPctCasino || 0)}%</div>
+                            : (legacySet
+                              ? <div>C: P{Number(p.splitPlayerPct || 0)}% M{Number(p.splitMasterPct || 0)}%</div>
+                              : <div className="text-gray-400 font-normal">C: default</div>)}
+                        </div>
                       ) : (
-                        <span className="text-[11px] text-gray-400">Default ({earnPct}% master)</span>
+                        <span className="text-[11px] text-gray-400">Default (H {earnPct}% · C {casinoPct}%)</span>
                       )}
                       <button
                         onClick={() => setSplitFor(p)}
@@ -1072,7 +1085,8 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
       {splitFor && (
         <PlayerSplitModal
           player={splitFor}
-          masterEarnPct={earnPct}
+          defaultHarufPct={earnPct}
+          defaultCasinoPct={casinoPct}
           onClose={() => setSplitFor(null)}
         />
       )}
@@ -1084,22 +1098,30 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
 // kitna % player ke apne (playable) wallet me wapas aaye aur kitna %
 // master ko. Dono non-withdrawable (sirf khel sakte hain). Clear =
 // default (master ko global earn% milta hai, player ko kuch nahi).
-function PlayerSplitModal({ player, masterEarnPct, onClose }) {
-  const has = player.splitMasterPct != null || player.splitPlayerPct != null;
-  const [playerPct, setPlayerPct] = useState(has ? String(player.splitPlayerPct ?? 0) : '');
-  const [masterPct, setMasterPct] = useState(has ? String(player.splitMasterPct ?? 0) : '');
+function PlayerSplitModal({ player, defaultHarufPct, defaultCasinoPct, onClose }) {
+  // Pre-fill: prefer per-category (new), else legacy single-pair (old),
+  // else khaali (default lagega).
+  const legacyM = player.splitMasterPct, legacyP = player.splitPlayerPct;
+  const init = (newField, legacyVal) =>
+    player[newField] != null ? String(player[newField])
+    : (legacyVal != null ? String(legacyVal) : '');
+  const [hPlayer, setHPlayer] = useState(init('splitPlayerPctHaruf', legacyP));
+  const [hMaster, setHMaster] = useState(init('splitMasterPctHaruf', legacyM));
+  const [cPlayer, setCPlayer] = useState(init('splitPlayerPctCasino', legacyP));
+  const [cMaster, setCMaster] = useState(init('splitMasterPctCasino', legacyM));
   const [busy, setBusy] = useState(false);
 
+  const num = (v) => (v === '' || v == null ? null : Number(v));
+  const validPct = (n) => n == null || (Number.isFinite(n) && n >= 0 && n <= 100);
+
   const save = async () => {
-    const pp = Number(playerPct), mp = Number(masterPct);
-    if (!Number.isFinite(pp) || !Number.isFinite(mp) || pp < 0 || mp < 0 || pp > 100 || mp > 100) {
-      return toast.error('0–100 ke beech valid % daalo.');
+    const hp = num(hPlayer), hm = num(hMaster), cp = num(cPlayer), cm = num(cMaster);
+    if (![hp, hm, cp, cm].every(validPct)) {
+      return toast.error('Sab values 0–100 ke beech ya khaali honi chahiye.');
     }
+    // Khaali rakhne par null save hota hai → us category par master ka default lagega.
     setBusy(true);
     try {
-      // Baseline ABHI fix kar do PER CATEGORY (Haruf + Casino alag).
-      // Crediting EXACTLY ab se shuru hogi — na purana play dobara
-      // credit, na "pehla play nigla gaya" wala gap.
       let bHaruf = 0, bCasino = 0;
       try {
         const { byUser } = await sumPlayerTurnoverBreakdown(db, [player.id]);
@@ -1107,14 +1129,22 @@ function PlayerSplitModal({ player, masterEarnPct, onClose }) {
         const total = byUser[player.id]?.total || 0;
         bHaruf  = Math.round((games.harufBets || 0) * 100) / 100;
         bCasino = Math.round((total - bHaruf) * 100) / 100;
-      } catch { /* turnover fetch fail → baseline 0 (safe-ish) */ }
+      } catch { /* baseline 0 fallback */ }
+      const round = (v) => (v == null ? null : Math.round(v * 100) / 100);
       await updateDoc(doc(db, 'users', player.id), {
-        splitPlayerPct: Math.round(pp * 100) / 100,
-        splitMasterPct: Math.round(mp * 100) / 100,
+        splitPlayerPctHaruf: round(hp),
+        splitMasterPctHaruf: round(hm),
+        splitPlayerPctCasino: round(cp),
+        splitMasterPctCasino: round(cm),
+        // Legacy fields clear (taaki fallback me confusion na ho).
+        splitPlayerPct: null,
+        splitMasterPct: null,
         earnDoneTurnoverHaruf: bHaruf,
         earnDoneTurnoverCasino: bCasino,
       });
-      toast.success(`${player.name || 'Player'}: player ${pp}% · master ${mp}% set. Ab se ka play credit hoga.`);
+      const fmt = (cat, m, p) =>
+        m == null && p == null ? `${cat}: default` : `${cat}: P ${p ?? 0}% · M ${m ?? 0}%`;
+      toast.success(`${player.name || 'Player'} — ${fmt('Haruf', hm, hp)} · ${fmt('Casino', cm, cp)}. Ab se ka play credit hoga.`);
       onClose();
     } catch (err) {
       toast.error('Save fail: ' + (err.message || err));
@@ -1133,51 +1163,66 @@ function PlayerSplitModal({ player, masterEarnPct, onClose }) {
         bCasino = Math.round((total - bHaruf) * 100) / 100;
       } catch { /* ignore */ }
       await updateDoc(doc(db, 'users', player.id), {
-        splitPlayerPct: null,
-        splitMasterPct: null,
+        splitPlayerPctHaruf: null, splitMasterPctHaruf: null,
+        splitPlayerPctCasino: null, splitMasterPctCasino: null,
+        splitPlayerPct: null, splitMasterPct: null,
         earnDoneTurnoverHaruf: bHaruf,
         earnDoneTurnoverCasino: bCasino,
       });
-      toast.success('Default pe wapas — master ko global earn% milega (ab se ka play).');
+      toast.success('Default pe wapas — master ke default rates lagenge.');
       onClose();
     } catch (err) {
       toast.error('Clear fail: ' + (err.message || err));
     } finally { setBusy(false); }
   };
 
+  const CatBox = ({ tone, label, defaultPct, playerVal, setPlayerVal, masterVal, setMasterVal }) => (
+    <div className={`rounded-lg p-3 border-2 ${tone === 'haruf' ? 'bg-rose-50 border-rose-200' : 'bg-indigo-50 border-indigo-200'}`}>
+      <p className={`text-xs font-bold mb-2 ${tone === 'haruf' ? 'text-rose-900' : 'text-indigo-900'}`}>{label}</p>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-[10px] uppercase text-gray-600 mb-1">Player %</label>
+          <input type="number" min="0" max="100" step="0.5" value={playerVal}
+            onChange={(e) => setPlayerVal(e.target.value)} placeholder="khaali=default"
+            className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" />
+        </div>
+        <div>
+          <label className="block text-[10px] uppercase text-gray-600 mb-1">Master %</label>
+          <input type="number" min="0" max="100" step="0.5" value={masterVal}
+            onChange={(e) => setMasterVal(e.target.value)} placeholder="khaali=default"
+            className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm" />
+        </div>
+      </div>
+      <p className="text-[10px] text-gray-600 mt-1.5">
+        Khaali chhoda to is category ka default ({defaultPct}% master ko, player ko 0%) lagega.
+      </p>
+    </div>
+  );
+
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-white rounded-xl shadow-xl">
+      <div className="w-full max-w-lg bg-white rounded-xl shadow-xl">
         <div className="border-b p-4 flex justify-between items-center">
           <h3 className="font-bold text-lg">Player ka % split — {player.name || 'Player'}</h3>
           <button onClick={onClose} className="text-gray-500 text-2xl">×</button>
         </div>
         <div className="p-4 space-y-3 text-sm">
           <p className="bg-fuchsia-50 border border-fuchsia-200 rounded-lg p-3 text-xs text-fuchsia-900">
-            Ye player jitna <b>khelega</b> uska:
-            <br/>• <b>Player %</b> → is player ke <b>khelne-wale wallet</b> me wapas (withdraw nahi, sirf khel sakta hai)
-            <br/>• <b>Master %</b> → master ke earnings me (withdraw nahi)
-            <br/>Khaali/clear karoge to <b>default</b>: master ko {masterEarnPct}% milega, player ko kuch nahi.
+            Is player ke liye <b>Haruf</b> aur <b>Casino</b> ka rate alag-alag set kar sakte ho. Jo <b>khaali</b> chhodo us category par master ka default lagega; jo set karo us category ke har play par <b>vahi</b> rate (Player % uske playable wallet me, Master % master ki earning me — dono non-withdrawable).
           </p>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1">Player % (player ko)</label>
-              <input type="number" min="0" max="100" step="0.5" value={playerPct}
-                onChange={(e) => setPlayerPct(e.target.value)} placeholder="e.g. 8"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base" />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1">Master % (master ko)</label>
-              <input type="number" min="0" max="100" step="0.5" value={masterPct}
-                onChange={(e) => setMasterPct(e.target.value)} placeholder="e.g. 2"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base" />
-            </div>
-          </div>
+          <CatBox tone="haruf" label="🎯 Haruf split (Gali/Disawar/etc.)"
+            defaultPct={defaultHarufPct}
+            playerVal={hPlayer} setPlayerVal={setHPlayer}
+            masterVal={hMaster} setMasterVal={setHMaster} />
+          <CatBox tone="casino" label="🎰 Casino split (Aviator/WinGame/etc.)"
+            defaultPct={defaultCasinoPct}
+            playerVal={cPlayer} setPlayerVal={setCPlayer}
+            masterVal={cMaster} setMasterVal={setCMaster} />
         </div>
         <div className="border-t p-4 flex justify-between gap-2">
           <button onClick={clearOverride} disabled={busy}
             className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded font-bold text-sm disabled:opacity-40">
-            Clear (default)
+            Clear sab (default)
           </button>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-4 py-2 bg-gray-100 rounded text-sm">Cancel</button>
