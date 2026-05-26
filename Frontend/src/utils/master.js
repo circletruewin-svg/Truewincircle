@@ -152,48 +152,36 @@ export function masterWithdrawable(master) {
   return Math.max(0, Math.round((bal - earned) * 100) / 100);
 }
 
-// Reconcile play-earnings PER PLAYER. For each of the master's
-// players we look at that player's own turnover and split it:
+// Reconcile play-earnings PER PLAYER, split into TWO categories so
+// admin can set different earn% for Haruf markets vs casino games.
 //
-//   • Default (no per-player override): master earns
-//     master.playEarnPercent of that player's play (into the
-//     master's locked earnings). Player gets nothing — same as
-//     the old behaviour.
-//   • Per-player override (admin set splitMasterPct / splitPlayerPct
-//     on the player's user doc from Master Management):
-//        masterCut   = delta × splitMasterPct%  → master (locked earn)
-//        playerCash  = delta × splitPlayerPct%  → player.balance
-//                       (playable only — withdrawal is from
-//                        winningMoney, so this can't be cashed out)
+//   master.playEarnPercent        → Haruf markets ka earn %
+//   master.playEarnPercentCasino  → baaki saare games (aviator, win
+//                                    game, color, dice, roulette,
+//                                    teen patti, etc.) ka earn %
+//                                    [default 0 — admin opt-in]
 //
-// Idempotent per PLAYER via an `earnDoneTurnover` marker on the
-// player's user doc. On first ever run for a player the marker is
-// seeded to the player's CURRENT lifetime turnover and nothing is
-// credited — this prevents re-crediting history that the old
-// master-level engine already paid out. Only NEW play from then on
-// is credited. Deterministic ledger ids keep the audit idempotent
-// even when admin + master panels both run this every 30s.
+// Per-player override (splitMasterPct/splitPlayerPct on user doc)
+// applies same single rate to BOTH categories (keeps simple).
+//
+// Idempotent per PLAYER per CATEGORY via two markers on the player's
+// user doc: `earnDoneTurnoverHaruf`, `earnDoneTurnoverCasino`. On
+// first encounter both markers are seeded to current category
+// turnover — no retro credit (old engine already covered history).
 //
 // Returns { credited } — total freshly credited to the master.
 export async function reconcileMasterPlayEarnings(db, master, playerIds) {
   const masterId = master.id || master.uid;
   if (!masterId || !playerIds || playerIds.length === 0) return { credited: 0 };
-  const globalPct = Number(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT);
+  const harufPct  = Number(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT);
+  const casinoPct = Number(master.playEarnPercentCasino ?? 0); // default OFF
 
-  // Per-player turnover in one batched read.
+  // Per-player per-game turnover in one batched read.
   const { byUser, total: totalTurnover } = await sumPlayerTurnoverBreakdown(db, playerIds);
   const r2 = (n) => Math.round(n * 100) / 100;
   let credited = 0;
 
-  // ── Legacy engine ko STARVE karo ──────────────────────────────
-  // Purana master-level engine (jo abhi bhi kisi stale/prod bundle
-  // me chal sakta hai) `playEarnCreditedTurnover` marker dekh ke
-  // master ko global% credit karta tha. Naya engine per-player
-  // markers use karta hai → dono alag → DOUBLE credit (master ko
-  // 10%+5%=15%). Yahan us purane marker ko total turnover tak
-  // bump kar dete hain → purana engine `turnover <= prev` dekh ke
-  // kabhi credit nahi karega (no-op ho jayega). Naya engine isko
-  // padhta hi nahi, to ispe koi asar nahi.
+  // Legacy master-level marker bump (purana engine starve).
   try {
     await runTransaction(db, async (tx) => {
       const mRef = doc(db, 'users', masterId);
@@ -209,7 +197,9 @@ export async function reconcileMasterPlayEarnings(db, master, playerIds) {
   }
 
   for (const pid of playerIds) {
-    const turnover = r2(byUser[pid]?.total || 0);
+    const games = byUser[pid]?.games || {};
+    const harufT  = r2(games.harufBets || 0);
+    const casinoT = r2((byUser[pid]?.total || 0) - harufT);
     try {
       // eslint-disable-next-line no-await-in-loop
       await runTransaction(db, async (tx) => {
@@ -221,73 +211,108 @@ export async function reconcileMasterPlayEarnings(db, master, playerIds) {
         const p = pSnap.data();
         const m = mSnap.data();
 
-        const markerRaw = p.earnDoneTurnover;
-        // First time we ever see this player → set baseline, credit
-        // nothing (history was handled by the old engine).
-        if (markerRaw == null) {
-          tx.update(pRef, { earnDoneTurnover: turnover });
-          return;
+        const hasOverride = p.splitMasterPct != null || p.splitPlayerPct != null;
+        const overrideMasterPct = hasOverride ? Number(p.splitMasterPct || 0) : null;
+        const overridePlayerPct = hasOverride ? Number(p.splitPlayerPct || 0) : null;
+
+        // Per-category: (markerField, turnover, defaultMasterPct, idTag)
+        const cats = [
+          { mark: 'earnDoneTurnoverHaruf',  turn: harufT,  defPct: harufPct,  tag: 'haruf'  },
+          { mark: 'earnDoneTurnoverCasino', turn: casinoT, defPct: casinoPct, tag: 'casino' },
+        ];
+
+        let pUpdate = {};
+        let mDeltaMaster = 0;
+        let mDeltaLifetime = 0;
+        let pDeltaBal = 0;
+        let pDeltaCashback = 0;
+        const ledgerWrites = [];
+
+        for (const c of cats) {
+          const markerRaw = p[c.mark];
+          // First time → seed baseline, credit 0 (no retro).
+          if (markerRaw == null) {
+            pUpdate[c.mark] = c.turn;
+            continue;
+          }
+          const prev = Number(markerRaw) || 0;
+          if (c.turn <= prev) continue; // nothing new in this category
+          const delta = r2(c.turn - prev);
+          pUpdate[c.mark] = c.turn;
+
+          const mPct = hasOverride ? overrideMasterPct : c.defPct;
+          const cPct = hasOverride ? overridePlayerPct : 0;
+          const masterCut = r2(delta * (mPct / 100));
+          const playerCash = r2(delta * (cPct / 100));
+
+          if (masterCut > 0) {
+            mDeltaMaster += masterCut;
+            mDeltaLifetime += masterCut;
+            const key = Math.round(c.turn * 100);
+            ledgerWrites.push([
+              `pe_${masterId}_${pid}_${c.tag}_${key}`,
+              {
+                type: 'play_earning',
+                masterId,
+                masterName: master.name || null,
+                playerId: pid,
+                amount: masterCut,
+                pct: mPct,
+                category: c.tag,
+                note: `Auto play-earning @ ${mPct}% (${c.tag} · ${p.name || 'player'})`,
+                createdAt: serverTimestamp(),
+              },
+            ]);
+            credited = r2(credited + masterCut);
+          }
+          if (playerCash > 0) {
+            pDeltaBal += playerCash;
+            pDeltaCashback += playerCash;
+            const key = Math.round(c.turn * 100);
+            ledgerWrites.push([
+              `cb_${masterId}_${pid}_${c.tag}_${key}`,
+              {
+                type: 'player_cashback',
+                masterId,
+                masterName: master.name || null,
+                playerId: pid,
+                amount: playerCash,
+                pct: cPct,
+                category: c.tag,
+                note: `Player cashback @ ${cPct}% (${c.tag} · ${p.name || 'player'})`,
+                createdAt: serverTimestamp(),
+              },
+            ]);
+          }
         }
-        const prev = Number(markerRaw) || 0;
-        if (turnover <= prev) return; // nothing new
-        const delta = r2(turnover - prev);
 
-        const hasOverride =
-          p.splitMasterPct != null || p.splitPlayerPct != null;
-        const mPct = hasOverride ? Number(p.splitMasterPct || 0) : globalPct;
-        const cPct = hasOverride ? Number(p.splitPlayerPct || 0) : 0;
-        const masterCut = r2(delta * (mPct / 100));
-        const playerCash = r2(delta * (cPct / 100));
-
-        const pUpdate = { earnDoneTurnover: turnover };
-        if (playerCash > 0) {
+        // Apply combined player-doc changes.
+        if (pDeltaBal > 0) {
           const pb = Number(p.balance ?? p.walletBalance ?? 0);
-          const npb = r2(pb + playerCash);
+          const npb = r2(pb + pDeltaBal);
           pUpdate.balance = npb;
           pUpdate.walletBalance = npb;
-          pUpdate.cashbackEarned = r2(Number(p.cashbackEarned || 0) + playerCash);
+          pUpdate.cashbackEarned = r2(Number(p.cashbackEarned || 0) + pDeltaCashback);
         }
-        tx.update(pRef, pUpdate);
+        if (Object.keys(pUpdate).length > 0) tx.update(pRef, pUpdate);
 
-        if (masterCut > 0) {
+        // Apply combined master-doc changes.
+        if (mDeltaMaster > 0) {
           const mb = Number(m.balance ?? m.walletBalance ?? 0);
-          const nmb = r2(mb + masterCut);
+          const nmb = r2(mb + mDeltaMaster);
           tx.update(mRef, {
             balance: nmb,
             walletBalance: nmb,
-            lifetimeEarned: r2(Number(m.lifetimeEarned || 0) + masterCut),
+            lifetimeEarned: r2(Number(m.lifetimeEarned || 0) + mDeltaLifetime),
           });
-          const key = Math.round(turnover * 100);
-          tx.set(doc(db, 'masterLedger', `pe_${masterId}_${pid}_${key}`), {
-            type: 'play_earning',
-            masterId,
-            masterName: master.name || null,
-            playerId: pid,
-            amount: masterCut,
-            pct: mPct,
-            note: `Auto play-earning @ ${mPct}% (${p.name || 'player'})`,
-            createdAt: serverTimestamp(),
-          });
-          credited = r2(credited + masterCut);
         }
-        if (playerCash > 0) {
-          const key = Math.round(turnover * 100);
-          tx.set(doc(db, 'masterLedger', `cb_${masterId}_${pid}_${key}`), {
-            type: 'player_cashback',
-            masterId,
-            masterName: master.name || null,
-            playerId: pid,
-            amount: playerCash,
-            pct: cPct,
-            note: `Player cashback @ ${cPct}% (${p.name || 'player'})`,
-            createdAt: serverTimestamp(),
-          });
+
+        // Ledger writes inside the same transaction (idempotent ids).
+        for (const [id, data] of ledgerWrites) {
+          tx.set(doc(db, 'masterLedger', id), data);
         }
       });
     } catch (err) {
-      // One player's failure (e.g., transient permission/contention)
-      // must not block the rest — the next 30s run retries, and the
-      // markers keep it exactly-once.
       console.warn('per-player earn reconcile skipped for', pid, err?.message || err);
     }
   }

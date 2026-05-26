@@ -711,6 +711,7 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
   const [eOpenUser, setEOpenUser] = useState(null); // which player row is expanded
   const [eBusy, setEBusy] = useState(false);
   const earnPct = Number(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT);
+  const casinoPct = Number(master.playEarnPercentCasino ?? 0);
   const adminPct = Number(master.commissionPercent) || 0;
   const ePlayerIds = useMemo(() => players.map((p) => p.id), [players]);
 
@@ -808,7 +809,7 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
         </div>
         <div className="bg-white rounded-xl border p-3 text-center">
           <p className="text-[10px] uppercase text-gray-500">Master kamai %</p>
-          <p className="text-xl font-black text-indigo-700">{earnPct}%</p>
+          <p className="text-base font-black text-indigo-700">Haruf {earnPct}% · Casino {casinoPct}%</p>
         </div>
         <div className="bg-white rounded-xl border p-3 text-center">
           <p className="text-[10px] uppercase text-gray-500">Admin commission %</p>
@@ -1096,18 +1097,22 @@ function PlayerSplitModal({ player, masterEarnPct, onClose }) {
     }
     setBusy(true);
     try {
-      // Baseline ABHI fix kar do = is player ka current turnover.
-      // Isse crediting EXACTLY ab se shuru hogi — na purana play
-      // dobara credit, na "pehla play nigla gaya" wala gap.
-      let baseline = 0;
+      // Baseline ABHI fix kar do PER CATEGORY (Haruf + Casino alag).
+      // Crediting EXACTLY ab se shuru hogi — na purana play dobara
+      // credit, na "pehla play nigla gaya" wala gap.
+      let bHaruf = 0, bCasino = 0;
       try {
-        const { total } = await sumPlayerTurnoverBreakdown(db, [player.id]);
-        baseline = Math.round((total || 0) * 100) / 100;
+        const { byUser } = await sumPlayerTurnoverBreakdown(db, [player.id]);
+        const games = byUser[player.id]?.games || {};
+        const total = byUser[player.id]?.total || 0;
+        bHaruf  = Math.round((games.harufBets || 0) * 100) / 100;
+        bCasino = Math.round((total - bHaruf) * 100) / 100;
       } catch { /* turnover fetch fail → baseline 0 (safe-ish) */ }
       await updateDoc(doc(db, 'users', player.id), {
         splitPlayerPct: Math.round(pp * 100) / 100,
         splitMasterPct: Math.round(mp * 100) / 100,
-        earnDoneTurnover: baseline,
+        earnDoneTurnoverHaruf: bHaruf,
+        earnDoneTurnoverCasino: bCasino,
       });
       toast.success(`${player.name || 'Player'}: player ${pp}% · master ${mp}% set. Ab se ka play credit hoga.`);
       onClose();
@@ -1119,15 +1124,19 @@ function PlayerSplitModal({ player, masterEarnPct, onClose }) {
   const clearOverride = async () => {
     setBusy(true);
     try {
-      let baseline = 0;
+      let bHaruf = 0, bCasino = 0;
       try {
-        const { total } = await sumPlayerTurnoverBreakdown(db, [player.id]);
-        baseline = Math.round((total || 0) * 100) / 100;
+        const { byUser } = await sumPlayerTurnoverBreakdown(db, [player.id]);
+        const games = byUser[player.id]?.games || {};
+        const total = byUser[player.id]?.total || 0;
+        bHaruf  = Math.round((games.harufBets || 0) * 100) / 100;
+        bCasino = Math.round((total - bHaruf) * 100) / 100;
       } catch { /* ignore */ }
       await updateDoc(doc(db, 'users', player.id), {
         splitPlayerPct: null,
         splitMasterPct: null,
-        earnDoneTurnover: baseline,
+        earnDoneTurnoverHaruf: bHaruf,
+        earnDoneTurnoverCasino: bCasino,
       });
       toast.success('Default pe wapas — master ko global earn% milega (ab se ka play).');
       onClose();
@@ -1183,22 +1192,27 @@ function PlayerSplitModal({ player, masterEarnPct, onClose }) {
   );
 }
 
-// Set the master's auto-earn % — what share of their players' total
-// play gets auto-credited into the master's points pool. Separate
-// from the admin commission %. Default 10%.
+// Set the master's auto-earn %. DO categories alag-alag set hote
+// hain — Haruf markets (Gali/Disawar/etc.) ka rate alag, casino
+// games (Aviator/WinGame/Color/etc.) ka alag. Casino default 0%
+// (admin opt-in). Per-player split inse alag override hai.
 function EarnPctModal({ master, onClose }) {
-  const [pct, setPct] = useState(String(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT));
+  const [pctH, setPctH] = useState(String(master.playEarnPercent ?? DEFAULT_MASTER_EARN_PCT));
+  const [pctC, setPctC] = useState(String(master.playEarnPercentCasino ?? 0));
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
-    const n = Number(pct);
-    if (!Number.isFinite(n) || n < 0 || n > 100) return toast.error('0–100 ke beech daalo.');
+    const nh = Number(pctH);
+    const nc = Number(pctC);
+    if (!Number.isFinite(nh) || nh < 0 || nh > 100) return toast.error('Haruf %: 0–100 ke beech daalo.');
+    if (!Number.isFinite(nc) || nc < 0 || nc > 100) return toast.error('Casino %: 0–100 ke beech daalo.');
     setBusy(true);
     try {
       await updateDoc(doc(db, 'users', master.id), {
-        playEarnPercent: Math.round(n * 100) / 100,
+        playEarnPercent: Math.round(nh * 100) / 100,
+        playEarnPercentCasino: Math.round(nc * 100) / 100,
       });
-      toast.success(`Master earn % set to ${n}%`);
+      toast.success(`Earn set — Haruf ${nh}% · Casino ${nc}%`);
       onClose();
     } catch (err) {
       toast.error('Save fail: ' + (err.message || err));
@@ -1214,29 +1228,46 @@ function EarnPctModal({ master, onClose }) {
           <h3 className="font-bold text-lg">Master auto-earn %</h3>
           <button onClick={onClose} className="text-gray-500 text-2xl">×</button>
         </div>
-        <div className="p-4 space-y-3 text-sm">
+        <div className="p-4 space-y-4 text-sm">
           <p>
-            <b>{master.name || '—'}</b> ke players jitna <b>play</b> karenge uska
-            kitna % automatically <b>master ke points me</b> add ho jaye?
+            <b>{master.name || '—'}</b> ke players jitna khelenge uska kitna %
+            <b> automatic master ke points me</b> aaye? Do alag rates set kar
+            sakte ho — ek <b>Haruf markets</b> (Gali/Disawar/etc.) ke liye,
+            doosra <b>casino games</b> (Aviator/WinGame/Color/Dice/etc.) ke liye.
           </p>
-          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-900">
-            Example: players ne ₹1000 ka play kiya, earn % = <b>{pct || 0}%</b> →
-            master ke points me <b>₹{((Number(pct) || 0) * 10).toFixed(2)}</b> auto add.
-            Ye points master withdraw nahi kar sakta — sirf aage players ko de sakta hai.
-            (Admin ka apna commission % isse alag hai.)
+
+          <div className="bg-rose-50 border border-rose-200 rounded-lg p-3">
+            <label className="block text-xs font-bold text-rose-900 mb-1">🎯 Haruf earn % (Gali/Disawar/Faridabad/etc.)</label>
+            <input type="number" min="0" max="100" step="0.5" value={pctH}
+              onChange={(e) => setPctH(e.target.value)}
+              className="w-full border border-rose-300 rounded-lg px-3 py-2 text-base mb-2" />
+            <div className="grid grid-cols-5 gap-2 text-xs">
+              {[0, 5, 10, 15, 20].map((v) => (
+                <button key={`h${v}`} onClick={() => setPctH(String(v))}
+                  className="bg-white hover:bg-rose-100 border border-rose-200 rounded-lg py-1.5">{v}%</button>
+              ))}
+            </div>
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1">Earn % (0–100)</label>
-            <input type="number" min="0" max="100" step="0.5" value={pct}
-              onChange={(e) => setPct(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-base" />
+
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+            <label className="block text-xs font-bold text-indigo-900 mb-1">🎰 Casino earn % (Aviator, WinGame, Color, Dice, casino sab)</label>
+            <input type="number" min="0" max="100" step="0.5" value={pctC}
+              onChange={(e) => setPctC(e.target.value)}
+              className="w-full border border-indigo-300 rounded-lg px-3 py-2 text-base mb-2" />
+            <div className="grid grid-cols-5 gap-2 text-xs">
+              {[0, 2, 5, 10, 15].map((v) => (
+                <button key={`c${v}`} onClick={() => setPctC(String(v))}
+                  className="bg-white hover:bg-indigo-100 border border-indigo-200 rounded-lg py-1.5">{v}%</button>
+              ))}
+            </div>
+            <p className="text-[11px] text-indigo-700 mt-2">
+              Default <b>0%</b> rakho to casino games par master ko kuch nahi milega — sirf Haruf ka earn aayega.
+            </p>
           </div>
-          <div className="grid grid-cols-5 gap-2 text-xs">
-            {[0, 5, 10, 15, 20].map((v) => (
-              <button key={v} onClick={() => setPct(String(v))}
-                className="bg-gray-100 hover:bg-gray-200 rounded-lg py-1.5">{v}%</button>
-            ))}
-          </div>
+
+          <p className="text-[11px] text-gray-500">
+            Note: ye points master withdraw nahi kar sakta, sirf players ko aage de sakta hai. Per-player split (kisi specific player pe alag rate) yahan se alag, players table me "Set" se hota hai.
+          </p>
         </div>
         <div className="border-t p-4 flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded">Cancel</button>
