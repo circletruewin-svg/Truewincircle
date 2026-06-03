@@ -2081,7 +2081,11 @@ export default function MasterDashboard() {
       finally { reconcileBusy.current = false; }
     };
     tick();
-    const id = setInterval(tick, 15000);
+    // Reconcile interval — pehle 15s tha. Bahut zyada reads (18 game
+    // collections × N players har baar). 3 min pe rakha — daily
+    // ~96 cycles → ~80% kam Firestore reads. Reconcile idempotent
+    // hai to badi window safe.
+    const id = setInterval(tick, 3 * 60 * 1000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, players.length, master.playEarnPercent]);

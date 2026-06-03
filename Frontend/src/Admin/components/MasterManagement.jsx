@@ -730,7 +730,9 @@ function MasterDetail({ master, onBack, onTopUp, onSetCommission, onSetEarn }) {
   };
   useEffect(() => {
     loadEarnings();
-    const id = setInterval(loadEarnings, 30000); // live-ish
+    // 30s pehle tha — 18 collections × N players har baar query.
+    // 2 min pe rakha (admin chahe to "🔄" button se manual refresh).
+    const id = setInterval(loadEarnings, 2 * 60 * 1000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eFrom, eTo, ePlayerIds.length]);
@@ -1619,7 +1621,9 @@ export default function MasterManagement() {
       reconciledRef.current = true;
       runReconcile(true);
     }
-    const id = setInterval(() => runReconcile(true), 20000);
+    // Reconcile interval — pehle 20s tha; ab 3 min. Daily reads
+    // ~9x kam (read-heavy ops admin panel se aate the).
+    const id = setInterval(() => runReconcile(true), 3 * 60 * 1000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeMasters, userMasterMap]);
