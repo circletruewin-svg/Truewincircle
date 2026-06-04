@@ -256,7 +256,11 @@ const Table = () => {
       : pendingBetsSnapshot.docs;
 
     if (inSessionDocs.length === 0) {
-        console.log(`No pending Haruf bets found for market ${marketName} in the chosen session.`);
+        const totalPending = pendingBetsSnapshot.size;
+        console.log(`No pending Haruf bets found for market ${marketName} in the chosen session. Total pending across all sessions: ${totalPending}`);
+        if (totalPending > 0) {
+          toast.info(`Is session me koi pending bet nahi mili. (${totalPending} bets doosre session/time me hain — Session date sahi chuna?)`, { autoClose: 6000 });
+        }
         return;
     }
 
@@ -452,6 +456,43 @@ const Table = () => {
       fetchResultsAndHistory(selectedMarket);
     } catch (e) {
       console.error('Edit result failed:', e);
+      toast.error(`Edit fail: ${e.message || e}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────
+  // Re-settle PENDING bets only — agar declare ke baad naye bets aa
+  // gaye ho (jaise crossing repeat / accumulate) ya kisi reason se
+  // pending reh gaye ho, ye button un sab ko same result number ke
+  // hisaab se settle kar dega. Pehle se settled bets ko CHHEDTA NAHI
+  // (processMarketWinners ka filter status=='pending' hai), to safe.
+  // ─────────────────────────────────────────────────────────────────
+  const handleResettlePending = async (resultDoc) => {
+    if (!window.confirm(
+      `Pending bets ko ${resultDoc.marketName} ke result ${resultDoc.number} ke hisaab se settle karna hai?\n\nPehle se settled (win/loss) bets pe koi asar nahi hoga.`
+    )) return;
+    setSubmitting(true);
+    try {
+      let start = resultDoc.sessionStart?.toDate?.();
+      let end = resultDoc.sessionEnd?.toDate?.();
+      if (!start || !end) {
+        const ymd = ymdInIst(resultDoc.date?.toDate?.());
+        [start, end] = istDayRange(ymd);
+      }
+      // Optional: widen window to cover ANY pending bets that may
+      // have slipped just outside the original session (e.g., placed
+      // a few minutes after the saved sessionEnd via accumulate).
+      // Keep small buffer: +30 min on each side.
+      const buf = 30 * 60 * 1000;
+      const wideStart = new Date(start.getTime() - buf);
+      const wideEnd   = new Date(end.getTime() + buf);
+      await processMarketWinners(resultDoc.marketName, resultDoc.number, wideStart, wideEnd);
+      toast.success(`Re-settle ho gaya. Pending bets ${resultDoc.number} ke according win/loss me update.`);
+      fetchResultsAndHistory(selectedMarket);
+    } catch (e) {
+      console.error('Re-settle failed:', e);
       toast.error('Edit failed: ' + (e.message || e));
     } finally {
       setSubmitting(false);
@@ -628,6 +669,12 @@ const Table = () => {
                       {item.number}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-right space-x-2">
+                      <button
+                        onClick={() => handleResettlePending(item)}
+                        disabled={submitting}
+                        className="text-xs bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold px-3 py-1 rounded"
+                        title="Pending bets ko isi result number ke hisaab se settle karo (settled bets ko chhedta nahi)"
+                      >Settle pending</button>
                       <button
                         onClick={() => handleEditResult(item)}
                         disabled={submitting}
