@@ -264,10 +264,23 @@ const Table = () => {
         return;
     }
 
-    try {
+    // Firestore transactions cap at 500 ops. Bahut sare pending bets
+    // ek saath settle karne se "Failed to process" error aata tha.
+    // Isliye chunks me process karte hain — 80 bets per chunk
+    // (worst case 80 bet updates + ~80 user updates + reads ≈ 240 ops,
+    // safe margin under 500). Har chunk apna transaction; status
+    // filter ('pending') idempotent banata hai — agar bich me crash
+    // ho gaya to baad me dobara Settle pending safely chala sakte ho.
+    const CHUNK = 80;
+    let totalSettled = 0;
+    let totalErrors = 0;
+    for (let i = 0; i < inSessionDocs.length; i += CHUNK) {
+      const chunk = inSessionDocs.slice(i, i + CHUNK);
+      try {
+        // eslint-disable-next-line no-await-in-loop
         await runTransaction(db, async (transaction) => {
             // --- READ PHASE ---
-            const betDocRefs = inSessionDocs.map(d => d.ref);
+            const betDocRefs = chunk.map(d => d.ref);
             const betDocs = await Promise.all(betDocRefs.map(ref => transaction.get(ref)));
 
             const userWinnings = {};
@@ -299,9 +312,9 @@ const Table = () => {
                 transaction.update(betUpdate.ref, betUpdate.data);
             });
 
-            for (let i = 0; i < userDocs.length; i++) {
-                const userDoc = userDocs[i];
-                const userId = userIds[i];
+            for (let i2 = 0; i2 < userDocs.length; i2++) {
+                const userDoc = userDocs[i2];
+                const userId = userIds[i2];
                 if (userDoc.exists()) {
                     const currentWinnings = userDoc.data().winningMoney || 0;
                     const amountToCredit = userWinnings[userId];
@@ -309,11 +322,19 @@ const Table = () => {
                     transaction.update(userDoc.ref, { winningMoney: newWinnings });
                 }
             }
+            totalSettled += betsToUpdate.length;
         });
-        toast.success(`Pending bets for ${marketName} processed successfully.`);
-    } catch (e) {
-        console.error(`Transaction failed for processing ${marketName} winners: `, e);
-        toast.error(`Failed to process bets for ${marketName}. Please check logs.`);
+      } catch (e) {
+        console.error(`Chunk ${i / CHUNK + 1} settlement failed for ${marketName}:`, e);
+        totalErrors += chunk.length;
+        // continue with next chunk
+      }
+    }
+
+    if (totalErrors > 0) {
+      toast.error(`${totalSettled} bets settle hue, ${totalErrors} fail. Dobara "Settle pending" dabake retry karo.`, { autoClose: 8000 });
+    } else {
+      toast.success(`${marketName}: ${totalSettled} bets settle ho gaye.`);
     }
   };
 
