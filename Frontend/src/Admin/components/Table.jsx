@@ -461,7 +461,26 @@ const Table = () => {
     }
     const paddedNew = String(parsed).padStart(2, '0');
     if (paddedNew === resultDoc.number) {
-      return toast.info('Same number — kuchh badla nahi.');
+      // Same number → koi reversal nahi, par pending bets agar ho to
+      // settle kar do (jaise re-settle button). User-friendly safety.
+      if (!window.confirm(`Same number (${paddedNew}). Pending bets ko settle karein?`)) return;
+      setSubmitting(true);
+      try {
+        let start = resultDoc.sessionStart?.toDate?.();
+        let end = resultDoc.sessionEnd?.toDate?.();
+        if (!start || !end) {
+          const ymd = ymdInIst(resultDoc.date?.toDate?.());
+          [start, end] = istDayRange(ymd);
+        }
+        await processMarketWinners(resultDoc.marketName, paddedNew, start, end);
+        fetchResultsAndHistory(selectedMarket);
+      } catch (e) {
+        console.error('Re-settle failed:', e);
+        toast.error('Re-settle fail: ' + (e.message || e));
+      } finally {
+        setSubmitting(false);
+      }
+      return;
     }
     if (!window.confirm(
       `Change number ${resultDoc.number} → ${paddedNew}?\n\n` +
