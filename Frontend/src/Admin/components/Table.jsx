@@ -428,7 +428,7 @@ const Table = () => {
 
   // Delete a past result doc + reverse its settlement.
   const handleDeleteResult = async (resultDoc) => {
-    const dateLabel = resultDoc.date?.toDate?.()?.toLocaleDateString('en-IN') || '?';
+    const dateLabel = resultDoc.date?.toDate?.()?.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) || '?';
     if (!window.confirm(
       `Delete result?\n\nMarket: ${resultDoc.marketName}\nDate: ${dateLabel}\nNumber: ${resultDoc.number}\n\n` +
       `Iss session ki saari settled bets pending ho jayengi aur winners ke winningMoney se amount kat jayegi. Sure?`,
@@ -450,7 +450,7 @@ const Table = () => {
   // Change a past result's number: reverse old, update doc, re-settle.
   const handleEditResult = async (resultDoc) => {
     const newNum = window.prompt(
-      `Edit result for ${resultDoc.marketName} (${resultDoc.date?.toDate?.()?.toLocaleDateString('en-IN') || '?'}).\n\n` +
+      `Edit result for ${resultDoc.marketName} (${resultDoc.date?.toDate?.()?.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) || '?'}).\n\n` +
       `Old number: ${resultDoc.number}\nEnter new number (0–99):`,
       String(resultDoc.number || ''),
     );
@@ -676,7 +676,7 @@ const Table = () => {
                 history.map((item) => (
                   <tr key={item.id}>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                      {item.date ? item.date.toDate().toLocaleDateString('en-IN') : 'No date'}
+                      {item.date ? item.date.toDate().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'No date'}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm font-bold text-gray-900">
                       {item.number}
