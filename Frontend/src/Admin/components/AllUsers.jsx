@@ -1756,6 +1756,24 @@ const AllUsers = ({ allPayments = [], allWithdrawals = [] } = {}) => {
 
             {adjustStep === 1 && (
               <>
+                {(() => {
+                  const t = adjustModal.target || {};
+                  const curWallet = Number(t.balance ?? t.walletBalance ?? 0);
+                  const curWinning = Number(t.winningMoney ?? 0);
+                  return (
+                    <div className="mb-3 grid grid-cols-2 gap-2 text-xs">
+                      <div className={`rounded-lg p-2 border ${adjustField === 'balance' ? 'bg-blue-50 border-blue-300' : 'bg-gray-50 border-gray-200'}`}>
+                        <div className="text-gray-500">Wallet balance abhi</div>
+                        <div className="text-base font-bold text-gray-800">{formatCurrency(curWallet)}</div>
+                      </div>
+                      <div className={`rounded-lg p-2 border ${adjustField === 'winningMoney' ? 'bg-blue-50 border-blue-300' : 'bg-gray-50 border-gray-200'}`}>
+                        <div className="text-gray-500">Winning money abhi</div>
+                        <div className="text-base font-bold text-gray-800">{formatCurrency(curWinning)}</div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div className="mb-3">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Field</label>
                   <div className="grid grid-cols-2 gap-2">
