@@ -349,46 +349,39 @@ const Table = () => {
 
   // ─────────────────────────────────────────────────────────────────
   // Reverse a previously-applied result: every win/loss-status bet
-  // inside the result's session window goes back to "pending", and
-  // any winnings already credited to a user's winningMoney are
-  // debited. Used by edit + delete on past results.
+  // for the market goes back to "pending", and any winnings already
+  // credited to a user's winningMoney are debited. Used by edit +
+  // delete on past results, and by the "Force revert" admin button.
   //
-  // The result doc carries sessionStart + sessionEnd for results
-  // written by the new flow; for older docs we fall back to the
-  // doc's `date` field treated as a 24-hour IST window.
+  // NO session-window filter — matches processMarketWinners which
+  // settles ALL pending bets on the market regardless of window.
+  //
+  // Reverses across BOTH bet collections used by admin markets:
+  //   - harufBets  (Haruf + Crossing)  — matched by marketName
+  //   - bets       (Fix Number)        — matched by gameName
   // ─────────────────────────────────────────────────────────────────
-  const reverseSettlement = async (resultDoc) => {
-    let start = resultDoc.sessionStart?.toDate?.();
-    let end   = resultDoc.sessionEnd?.toDate?.();
-    if (!start || !end) {
-      // Legacy result without explicit session — assume single IST
-      // day matching the doc's `date`.
-      const d = resultDoc.date?.toDate?.();
-      if (!d) throw new Error('Result has no usable date.');
-      const ymd = ymdInIst(d);
-      [start, end] = istDayRange(ymd);
-    }
+  const reverseMarketSettlementByName = async (marketName) => {
+    const [harufSnap, betsSnap] = await Promise.all([
+      getDocs(query(collection(db, 'harufBets'), where('marketName', '==', marketName))),
+      getDocs(query(collection(db, 'bets'), where('gameName', '==', marketName))),
+    ]);
 
-    // Find every bet on this market/session that was already settled.
-    const settledQ = query(
-      collection(db, 'harufBets'),
-      where('marketName', '==', resultDoc.marketName),
-      where('betType', '==', 'Haruf'),
-    );
-    const snap = await getDocs(settledQ);
-    const inSession = snap.docs.filter((d) => {
-      const data = d.data();
-      const ts = data.timestamp?.toDate?.();
-      if (!ts) return false;
-      if (ts < start || ts > end) return false;
-      return data.status === 'win' || data.status === 'loss';
-    });
+    const settled = [
+      ...harufSnap.docs.filter((d) => {
+        const s = d.data().status;
+        return s === 'win' || s === 'loss';
+      }),
+      ...betsSnap.docs.filter((d) => {
+        const s = d.data().status;
+        return s === 'win' || s === 'loss';
+      }),
+    ];
 
-    if (inSession.length === 0) return { reversed: 0, debited: 0 };
+    if (settled.length === 0) return { reversed: 0, debited: 0 };
 
     // Aggregate winnings to debit per user.
     const userDebits = new Map();
-    for (const d of inSession) {
+    for (const d of settled) {
       const data = d.data();
       if (data.status === 'win') {
         const w = Number(data.winnings || data.winAmount || 0);
@@ -398,7 +391,7 @@ const Table = () => {
 
     // 1) Reset every bet's status to 'pending', clear winnings.
     //    writeBatch caps at ~500 ops — chunk to be safe.
-    const refs = inSession.map((d) => d.ref);
+    const refs = settled.map((d) => d.ref);
     while (refs.length) {
       const chunk = refs.splice(0, 400);
       const batch = writeBatch(db);
@@ -423,7 +416,37 @@ const Table = () => {
       }
     }
 
-    return { reversed: inSession.length, debited: userDebits.size };
+    return { reversed: settled.length, debited: userDebits.size };
+  };
+
+  const reverseSettlement = async (resultDoc) =>
+    reverseMarketSettlementByName(resultDoc.marketName);
+
+  // Emergency admin action: revert every settled bet on the current
+  // market back to "pending" and debit any credited winnings. Used
+  // when result was deleted before the fix landed, or in any case
+  // where bets are stuck in win/loss but the admin wants them re-
+  // opened. No result doc required.
+  const handleForceRevertMarket = async () => {
+    if (!selectedMarket) return;
+    if (!window.confirm(
+      `Force revert: ${selectedMarket}\n\n` +
+      `Iss market ki SAARI settled bets (win/loss) pending ho jayengi ` +
+      `aur winners ke winningMoney se amount kat jayegi. ` +
+      `Ye tab use karo jab result delete kar chuke ho lekin bets pending ` +
+      `me wapas nahi gayi. Sure?`,
+    )) return;
+    setSubmitting(true);
+    try {
+      const out = await reverseMarketSettlementByName(selectedMarket);
+      toast.success(`${selectedMarket}: ${out.reversed} bets pending, ${out.debited} users debited.`);
+      fetchResultsAndHistory(selectedMarket);
+    } catch (e) {
+      console.error('Force revert failed:', e);
+      toast.error('Force revert failed: ' + (e.message || e));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   // Delete a past result doc + reverse its settlement.
@@ -652,6 +675,25 @@ const Table = () => {
               {timingLoading ? 'Updating Timings...' : 'Update Timings'}
             </button>
         </div>
+      </div>
+
+      <div className="mt-6 bg-orange-50 border border-orange-200 rounded-lg p-4">
+        <h4 className="text-md font-semibold text-orange-900 mb-1">
+          ⚠️ Emergency: Force revert settled bets
+        </h4>
+        <p className="text-xs text-orange-800 mb-3">
+          Agar result delete kar diya tha lekin user ki bets abhi bhi
+          win/loss dikha rahi hai (pending me wapas nahi gayi), toh ye
+          button dabao. <b>{selectedMarket}</b> ki saari settled bets
+          pending ho jayengi aur winners ka credited paisa wapas kat jayega.
+        </p>
+        <button
+          onClick={handleForceRevertMarket}
+          disabled={submitting || !selectedMarket}
+          className="text-sm bg-orange-600 hover:bg-orange-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded"
+        >
+          {submitting ? 'Reverting…' : `Force revert ${selectedMarket} settled bets → pending`}
+        </button>
       </div>
 
       <div className="mt-6">
