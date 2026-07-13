@@ -422,6 +422,143 @@ const Table = () => {
   const reverseSettlement = async (resultDoc) =>
     reverseMarketSettlementByName(resultDoc.marketName);
 
+  // Window-scoped settlement: settle ONLY pending bets whose
+  // timestamp falls inside [start, end] for the given market/number.
+  // Used by the "Re-settle from history" recovery action to walk
+  // through past result docs and re-apply each one within its own
+  // session window without touching bets in other sessions.
+  //
+  // Covers both bet collections:
+  //   - harufBets  (Haruf + Crossing)  — marketName + selectedNumber
+  //   - bets       (Fix Number)        — gameName   + betNumber
+  const settleWindowScoped = async (marketName, winningNumber, start, end) => {
+    const PAYOUT_MULTIPLIER = 90;
+
+    const [harufSnap, fixSnap] = await Promise.all([
+      getDocs(query(
+        collection(db, 'harufBets'),
+        where('marketName', '==', marketName),
+        where('status', '==', 'pending'),
+      )),
+      getDocs(query(
+        collection(db, 'bets'),
+        where('gameName', '==', marketName),
+        where('status', '==', 'pending'),
+      )),
+    ]);
+
+    const inWindow = (d) => {
+      const ts = d.data().timestamp?.toDate?.();
+      if (!ts) return false;
+      return ts >= start && ts <= end;
+    };
+
+    const harufDocs = harufSnap.docs.filter(inWindow).map((d) => ({
+      ref: d.ref, data: d.data(), numField: 'selectedNumber',
+    }));
+    const fixDocs = fixSnap.docs.filter(inWindow).map((d) => ({
+      ref: d.ref, data: d.data(), numField: 'betNumber',
+    }));
+    const all = [...harufDocs, ...fixDocs];
+    if (all.length === 0) return 0;
+
+    const CHUNK = 80;
+    let totalSettled = 0;
+    for (let i = 0; i < all.length; i += CHUNK) {
+      const chunk = all.slice(i, i + CHUNK);
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await runTransaction(db, async (tx) => {
+          const snaps = await Promise.all(chunk.map((c) => tx.get(c.ref)));
+          const userWinnings = {};
+          const updates = [];
+          for (let k = 0; k < snaps.length; k++) {
+            const s = snaps[k];
+            if (!s.exists() || s.data().status !== 'pending') continue;
+            const bet = s.data();
+            const amt = Number(bet.betAmount);
+            if (!Number.isFinite(amt) || amt <= 0) continue;
+            if (!bet.userId || typeof bet.userId !== 'string') continue;
+            let betNumber = bet[chunk[k].numField];
+            if (betNumber == null) continue;
+            betNumber = String(betNumber);
+            betNumber = betNumber === '100' ? '00' : betNumber.padStart(2, '0');
+
+            if (betNumber === winningNumber) {
+              const winnings = Math.round(amt * PAYOUT_MULTIPLIER * 100) / 100;
+              userWinnings[bet.userId] = (userWinnings[bet.userId] || 0) + winnings;
+              updates.push({ ref: s.ref, data: { status: 'win', winnings } });
+            } else {
+              updates.push({ ref: s.ref, data: { status: 'loss', winnings: 0 } });
+            }
+          }
+          const uids = Object.keys(userWinnings);
+          const uRefs = uids.map((id) => doc(db, 'users', id));
+          const uSnaps = uids.length ? await Promise.all(uRefs.map((r) => tx.get(r))) : [];
+          updates.forEach((u) => tx.update(u.ref, u.data));
+          for (let j = 0; j < uSnaps.length; j++) {
+            const uSnap = uSnaps[j];
+            if (!uSnap.exists()) continue;
+            const cur = Number(uSnap.data().winningMoney || 0);
+            tx.update(uSnap.ref, { winningMoney: cur + userWinnings[uids[j]] });
+          }
+          totalSettled += updates.length;
+        });
+      } catch (e) {
+        console.error('Chunk settle failed', e);
+      }
+    }
+    return totalSettled;
+  };
+
+  // Recovery action: walk every past result doc for the current
+  // market in date order and re-run settlement scoped to its own
+  // session window. Fixes the case where "Force revert" over-reverted
+  // and past correctly-settled bets need to come back.
+  //
+  // Bets NOT covered by any historical result stay pending — that's
+  // the deleted-result session the admin wants to leave open.
+  const handleResettleFromHistory = async () => {
+    if (!selectedMarket) return;
+    if (!window.confirm(
+      `Re-settle from history: ${selectedMarket}\n\n` +
+      `Har purani result doc ke hisaab se pending bets ko phir se ` +
+      `settle karega (uski session window ke andar). Jo bet kisi bhi ` +
+      `past result ke window me nahi hai, wo pending hi rahegi. Sure?`,
+    )) return;
+    setSubmitting(true);
+    try {
+      const rs = await getDocs(query(
+        collection(db, 'results'),
+        where('marketName', '==', selectedMarket),
+        orderBy('date', 'asc'),
+      ));
+      let total = 0;
+      for (const rd of rs.docs) {
+        const data = rd.data();
+        const number = String(data.number).padStart(2, '0');
+        let start = data.sessionStart?.toDate?.();
+        let end   = data.sessionEnd?.toDate?.();
+        if (!start || !end) {
+          const d = data.date?.toDate?.();
+          if (!d) continue;
+          const ymd = ymdInIst(d);
+          [start, end] = istDayRange(ymd);
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const n = await settleWindowScoped(selectedMarket, number, start, end);
+        total += n;
+      }
+      toast.success(`${selectedMarket}: ${total} bets re-settled from ${rs.docs.length} past results.`);
+      fetchResultsAndHistory(selectedMarket);
+    } catch (e) {
+      console.error('Re-settle from history failed:', e);
+      toast.error('Re-settle failed: ' + (e.message || e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   // Emergency admin action: revert every settled bet on the current
   // market back to "pending" and debit any credited winnings. Used
   // when result was deleted before the fix landed, or in any case
@@ -677,15 +814,40 @@ const Table = () => {
         </div>
       </div>
 
-      <div className="mt-6 bg-orange-50 border border-orange-200 rounded-lg p-4">
+      <div className="mt-6 bg-green-50 border border-green-300 rounded-lg p-4">
+        <h4 className="text-md font-semibold text-green-900 mb-1">
+          ✅ Recovery: Re-settle from past results
+        </h4>
+        <p className="text-xs text-green-800 mb-3">
+          Agar "Force revert" ne saari purani bets (jo pehle sahi
+          settle thi) galti se pending kar di, toh ye button dabao.
+          <b> {selectedMarket}</b> ki har purani result doc ke hisaab
+          se bets ko phir se settle karega — sirf uske session window
+          ke andar. Jo bet kisi purani result ke window me nahi hai
+          (jaise wo aaj wali jo tune delete kiya tha), wo pending hi
+          rahegi.
+        </p>
+        <button
+          onClick={handleResettleFromHistory}
+          disabled={submitting || !selectedMarket}
+          className="text-sm bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white font-bold px-4 py-2 rounded"
+        >
+          {submitting ? 'Re-settling…' : `Re-settle ${selectedMarket} from past results`}
+        </button>
+      </div>
+
+      <div className="mt-4 bg-orange-50 border border-orange-200 rounded-lg p-4">
         <h4 className="text-md font-semibold text-orange-900 mb-1">
           ⚠️ Emergency: Force revert settled bets
         </h4>
         <p className="text-xs text-orange-800 mb-3">
-          Agar result delete kar diya tha lekin user ki bets abhi bhi
-          win/loss dikha rahi hai (pending me wapas nahi gayi), toh ye
-          button dabao. <b>{selectedMarket}</b> ki saari settled bets
-          pending ho jayengi aur winners ka credited paisa wapas kat jayega.
+          <b>Warning:</b> Ye button <b>{selectedMarket}</b> ki
+          <b> saari</b> settled bets (past days including!) pending
+          me daal deta hai. Sirf tab use karo jab tumhe poori market
+          ka settlement reset karna ho. Agar sirf aaj ka result delete
+          karne ke baad Shiv/etc. ki bets stuck hai, toh naya
+          "Delete result" flow ab automatically pending pe dalta hai
+          — ye button chhedne ki zarurat nahi.
         </p>
         <button
           onClick={handleForceRevertMarket}
