@@ -528,13 +528,19 @@ const Table = () => {
     )) return;
     setSubmitting(true);
     try {
+      // Sort client-side to avoid needing a composite (marketName+date)
+      // Firestore index. All results for one market are cheap to load.
       const rs = await getDocs(query(
         collection(db, 'results'),
         where('marketName', '==', selectedMarket),
-        orderBy('date', 'asc'),
       ));
+      const sortedDocs = [...rs.docs].sort((a, b) => {
+        const da = a.data().date?.toDate?.()?.getTime() || 0;
+        const db_ = b.data().date?.toDate?.()?.getTime() || 0;
+        return da - db_;
+      });
       let total = 0;
-      for (const rd of rs.docs) {
+      for (const rd of sortedDocs) {
         const data = rd.data();
         const number = String(data.number).padStart(2, '0');
         let start = data.sessionStart?.toDate?.();
@@ -549,7 +555,7 @@ const Table = () => {
         const n = await settleWindowScoped(selectedMarket, number, start, end);
         total += n;
       }
-      toast.success(`${selectedMarket}: ${total} bets re-settled from ${rs.docs.length} past results.`);
+      toast.success(`${selectedMarket}: ${total} bets re-settled from ${sortedDocs.length} past results.`);
       fetchResultsAndHistory(selectedMarket);
     } catch (e) {
       console.error('Re-settle from history failed:', e);
