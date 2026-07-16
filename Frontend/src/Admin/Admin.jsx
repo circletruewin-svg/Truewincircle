@@ -55,6 +55,7 @@ import ReferralComponent from './components/Refferal';
 import Table from './components/Table';
 import TransactionSummary from './components/TransactionSummary';
 import { toDateValue } from '../utils/dateHelpers';
+import useWinGameAutoTick from '../utils/useWinGameAutoTick';
 
 // ── NEW ──────────────────────────────────────────────────────────
 import GamesStats from './components/GamesStats';
@@ -77,6 +78,10 @@ const AdminDashboard = () => {
 
   const { user, setUser } = useAuthStore();
   const isAdmin = user?.role === 'admin';
+
+  // Keep the 1-to-12 Win Game rounds ticking even when no player has
+  // the /wingame page open. Runs while admin is on the panel.
+  useWinGameAutoTick(isAdmin);
 
   // --- SOUND NOTIFICATIONS ---
   const {

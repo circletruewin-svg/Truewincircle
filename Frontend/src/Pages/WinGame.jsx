@@ -15,9 +15,9 @@ const RESULTS_DURATION_SECONDS = 1 * 60; // 1 minute
 
 // Probability that the auto-picker will favour the LEAST-bet number
 // (so the house wins everything that round). 1 - this value is the
-// probability of a fair 1/12 random pick. Tuned so the long-run house
-// edge sits around ~40% on the 10x payout.
-const HOUSE_BIAS_PROBABILITY = 0.30;
+// probability of a fair 1/12 random pick. 0.70 = ~70% of rounds go
+// to the house, ~30% are a fair pick that any player might win.
+const HOUSE_BIAS_PROBABILITY = 0.70;
 const WinGame = () => {
     const { user } = useAuthStore();
     
