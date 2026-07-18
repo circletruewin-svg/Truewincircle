@@ -4,6 +4,7 @@ import { db } from '../../firebase';
 import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 import { toast } from 'react-toastify';
 import { formatCurrency } from '../../utils/formatMoney';
+import MarketResultReminder from './MarketResultReminder';
 
 const DashboardView = ({ stats }) => {
   const [jackpotAmount, setJackpotAmount] = useState('');
@@ -114,6 +115,10 @@ const DashboardView = ({ stats }) => {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="mt-8">
+        <MarketResultReminder />
       </div>
 
       <div className="bg-white rounded-lg shadow-sm p-5 mt-8">
