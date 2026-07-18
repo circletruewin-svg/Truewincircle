@@ -312,6 +312,64 @@ const Bets = () => {
     }
   };
 
+  // Nuclear option: sweep pending bets across EVERY market in one go.
+  // For when the phantom-pending cleanup needs to be repeated across
+  // 6-8 markets and clicking through them one by one is painful.
+  // Hits harufBets only — the /bets (Fix Number) collection uses
+  // gameName instead of marketName so it isn't matched here.
+  const handleDeleteAllPendingAllMarkets = async () => {
+    if (deletingPending) return;
+    if (markets.length === 0) return;
+
+    const typed = window.prompt(
+      `⚠️ Delete ALL pending bets across EVERY market?\n\n` +
+      `Ye ${markets.length} markets ki pending bets delete karega ` +
+      `(GALI, DISAWAR, FARIDABAD, DELHI BAZAAR, etc.). ` +
+      `REFUND/DEBIT nahi hoga — sirf phantom docs wipe.\n\n` +
+      `Confirm karne ke liye type karo: DELETE ALL`,
+    );
+    if (typed !== 'DELETE ALL') {
+      toast.info('Cancelled — text match nahi hua.');
+      return;
+    }
+
+    setDeletingPending(true);
+    let grandTotal = 0;
+    const errors = [];
+    for (const market of markets) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const snap = await getDocs(query(
+          collection(db, 'harufBets'),
+          where('marketName', '==', market),
+          where('status', '==', 'pending'),
+        ));
+        if (snap.empty) continue;
+        const refs = snap.docs.map((d) => d.ref);
+        let deletedThisMarket = 0;
+        while (refs.length) {
+          const chunk = refs.splice(0, 400);
+          const batch = writeBatch(db);
+          chunk.forEach((ref) => batch.delete(ref));
+          // eslint-disable-next-line no-await-in-loop
+          await batch.commit();
+          deletedThisMarket += chunk.length;
+        }
+        grandTotal += deletedThisMarket;
+        toast.info(`${market}: ${deletedThisMarket} deleted`);
+      } catch (e) {
+        console.error(`Delete failed on ${market}:`, e);
+        errors.push(market);
+      }
+    }
+    setDeletingPending(false);
+    if (errors.length) {
+      toast.error(`Done — ${grandTotal} deleted. Fail: ${errors.join(', ')}`);
+    } else {
+      toast.success(`✅ ${grandTotal} phantom bets deleted across ${markets.length} markets.`);
+    }
+  };
+
   const handleSelectWinner = async (number) => {
     const config = GAME_CONFIG[selectedGame];
     if (config.type !== 'round-based' || phase !== 'results') {
@@ -382,15 +440,27 @@ const Bets = () => {
             All Bets {GAME_CONFIG[selectedGame]?.type === 'round-based' ? "in this Round" : "for this Market"}
             {selectedGame === 'winGame' && phase === 'results' && <span className="text-sm font-normal text-yellow-600 ml-1">(Select a winner)</span>}
           </h3>
-          {GAME_CONFIG[selectedGame]?.type === 'market-based' && totalBets > 0 && (
-            <button
-              onClick={handleDeleteAllPending}
-              disabled={deletingPending}
-              className="text-xs bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white font-bold px-3 py-2 rounded"
-              title="Ye market ke SAARE pending bets delete karega. Refund/debit nahi hoga. Sirf phantom bets clean karne ke liye."
-            >
-              {deletingPending ? 'Deleting…' : `🗑️ Delete all pending bets on ${selectedMarket}`}
-            </button>
+          {GAME_CONFIG[selectedGame]?.type === 'market-based' && (
+            <div className="flex flex-wrap gap-2">
+              {totalBets > 0 && (
+                <button
+                  onClick={handleDeleteAllPending}
+                  disabled={deletingPending}
+                  className="text-xs bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white font-bold px-3 py-2 rounded"
+                  title="Ye market ke SAARE pending bets delete karega. Refund/debit nahi hoga."
+                >
+                  {deletingPending ? 'Deleting…' : `🗑️ Delete pending on ${selectedMarket}`}
+                </button>
+              )}
+              <button
+                onClick={handleDeleteAllPendingAllMarkets}
+                disabled={deletingPending}
+                className="text-xs bg-red-800 hover:bg-red-900 disabled:opacity-40 text-white font-bold px-3 py-2 rounded"
+                title="Nuclear option: SAARI markets ki pending bets ek saath delete karega."
+              >
+                {deletingPending ? 'Deleting…' : '☢️ Delete pending on ALL markets'}
+              </button>
+            </div>
           )}
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
