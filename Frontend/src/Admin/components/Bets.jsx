@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, onSnapshot, where, doc, getDoc, updateDoc, Timestamp } from 'firebase/firestore';
+import { collection, query, onSnapshot, where, doc, getDoc, updateDoc, Timestamp, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Loader2, Trophy } from 'lucide-react';
 import { markets as allMarkets } from '../../marketData';
+import { toast } from 'react-toastify';
 
 const GAME_CONFIG = {
   winGame: {
@@ -255,6 +256,62 @@ const Bets = () => {
     }
   };
 
+  // Danger action: delete every pending bet on the currently-selected
+  // Haruf/market. Used to clean up phantom pending bets left over by
+  // an earlier Force revert (bets that shouldn't be settled but also
+  // aren't tied to any real user activity). Wallets are already right,
+  // so this doesn't refund or debit anyone — just wipes the docs.
+  const [deletingPending, setDeletingPending] = useState(false);
+  const handleDeleteAllPending = async () => {
+    const config = GAME_CONFIG[selectedGame];
+    if (!config || config.type !== 'market-based' || !selectedMarket) return;
+
+    const count = betsSummary.reduce((s, b) => s + (b.count || 0), 0);
+    const total = totalBets;
+    if (count === 0) {
+      toast.info(`${selectedMarket}: koi pending bet nahi hai.`);
+      return;
+    }
+
+    const typed = window.prompt(
+      `⚠️ Delete ALL pending bets for ${selectedMarket}?\n\n` +
+      `${count} bets · ₹${total.toFixed(2)}\n\n` +
+      `Ye REFUND/DEBIT nahi karega — sirf pending docs delete karega. ` +
+      `Sirf tab use karo jab wallets already sahi hai aur ye phantom bets ` +
+      `hatane hai.\n\n` +
+      `Confirm karne ke liye market ka naam type karo: ${selectedMarket}`,
+    );
+    if (typed !== selectedMarket) {
+      toast.info('Cancelled — naam match nahi hua.');
+      return;
+    }
+
+    setDeletingPending(true);
+    try {
+      const snap = await getDocs(query(
+        collection(db, config.betsCollection),
+        where('marketName', '==', selectedMarket),
+        where('status', '==', 'pending'),
+      ));
+      const refs = snap.docs.map((d) => d.ref);
+      let deleted = 0;
+      while (refs.length) {
+        const chunk = refs.splice(0, 400);
+        const batch = writeBatch(db);
+        chunk.forEach((ref) => batch.delete(ref));
+        // eslint-disable-next-line no-await-in-loop
+        await batch.commit();
+        deleted += chunk.length;
+      }
+      toast.success(`${selectedMarket}: ${deleted} pending bets deleted.`);
+    } catch (e) {
+      console.error('Delete pending failed:', e);
+      toast.error('Delete failed: ' + (e.message || e));
+    } finally {
+      setDeletingPending(false);
+    }
+  };
+
   const handleSelectWinner = async (number) => {
     const config = GAME_CONFIG[selectedGame];
     if (config.type !== 'round-based' || phase !== 'results') {
@@ -320,10 +377,22 @@ const Bets = () => {
           )}
         </div>
 
-        <h3 className="text-xl font-semibold mb-3">
-          All Bets {GAME_CONFIG[selectedGame]?.type === 'round-based' ? "in this Round" : "for this Market"}
-          {selectedGame === 'winGame' && phase === 'results' && <span className="text-sm font-normal text-yellow-600">(Select a winner)</span>}
-        </h3>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <h3 className="text-xl font-semibold">
+            All Bets {GAME_CONFIG[selectedGame]?.type === 'round-based' ? "in this Round" : "for this Market"}
+            {selectedGame === 'winGame' && phase === 'results' && <span className="text-sm font-normal text-yellow-600 ml-1">(Select a winner)</span>}
+          </h3>
+          {GAME_CONFIG[selectedGame]?.type === 'market-based' && totalBets > 0 && (
+            <button
+              onClick={handleDeleteAllPending}
+              disabled={deletingPending}
+              className="text-xs bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white font-bold px-3 py-2 rounded"
+              title="Ye market ke SAARE pending bets delete karega. Refund/debit nahi hoga. Sirf phantom bets clean karne ke liye."
+            >
+              {deletingPending ? 'Deleting…' : `🗑️ Delete all pending bets on ${selectedMarket}`}
+            </button>
+          )}
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
           {betsSummary.map((bet) => {
             const isMostBetted = bet.number === mostBetted.number;
