@@ -377,6 +377,11 @@ service cloud.firestore {
     match /bets/{betId} {
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
       allow read: if request.auth != null;
+      // Settlement (win/loss) needs admin. Admin can also delete a
+      // pending bet during phantom-bet cleanup — settled bets stay
+      // as history records and never get deleted.
+      allow update: if isAdmin();
+      allow delete: if isAdmin() && resource.data.get('status', 'pending') == 'pending';
     }
 
     // Haruf bets (legacy)
@@ -402,6 +407,9 @@ service cloud.firestore {
         request.resource.data.status == 'pending' &&
         request.resource.data.betAmount >= resource.data.betAmount
       );
+      // Admin can delete a phantom pending bet during cleanup.
+      // Settled bets (win/loss) are permanent history — never deleted.
+      allow delete: if isAdmin() && resource.data.get('status', 'pending') == 'pending';
     }
 
     // Carousel slides
