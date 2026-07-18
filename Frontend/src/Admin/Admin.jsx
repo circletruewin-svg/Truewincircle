@@ -21,6 +21,7 @@ import {
   Star,
   Volume2,
   VolumeX,
+  AlertTriangle,
 } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, query, onSnapshot, doc, runTransaction, getDocs, getDoc, where, deleteDoc, updateDoc, addDoc } from 'firebase/firestore';
@@ -59,6 +60,7 @@ import useWinGameAutoTick from '../utils/useWinGameAutoTick';
 
 // ── NEW ──────────────────────────────────────────────────────────
 import GamesStats from './components/GamesStats';
+import MissedCredits from './components/MissedCredits';
 // ─────────────────────────────────────────────────────────────────
 
 
@@ -513,6 +515,7 @@ const AdminDashboard = () => {
           { id: 'commissions',  label: '💰 Commissions',      icon: DollarSign },
           // ── NEW ──────────────────────────────────────────────────────
           { id: 'gamesStats',   label: '🎮 Games Stats',      icon: Star       },
+          { id: 'missedCredits',label: '🔎 Missed Credits',   icon: AlertTriangle },
           { id: 'userSounds',   label: '🔔 User Sounds',      icon: Bell       },
           { id: 'harufLimits',  label: '🎯 Haruf Limits',     icon: Settings   },
           { id: 'masters',      label: '👥 Master Management', icon: UserPlus  },
@@ -561,6 +564,7 @@ const AdminDashboard = () => {
             .replace('commissions', '💰 Commissions')
             .replace('referrals',   'Referrals')
             .replace('gamesStats',  '🎮 Games Stats')
+            .replace('missedCredits','🔎 Missed Credits')
             .replace('harufLimits', '🎯 Haruf Limits')
             .replace('masters',     '👥 Master Management')
           }
@@ -862,6 +866,7 @@ const AdminDashboard = () => {
 
       // ── NEW ────────────────────────────────────────────────────────
       case 'gamesStats':    return <GamesStats />;
+      case 'missedCredits': return <MissedCredits />;
       case 'userSounds':    return <UserSoundsAdmin />;
       case 'harufLimits':   return <HarufLimits />;
       case 'masters':       return <MasterManagement />;
