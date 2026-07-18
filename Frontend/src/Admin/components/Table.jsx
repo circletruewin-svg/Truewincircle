@@ -242,19 +242,22 @@ const Table = () => {
 
     const pendingBetsSnapshot = await getDocs(betsQuery);
 
-    // SIMPLIFIED: result declare karte hi MARKET ke saare pending bets
-    // settle ho jaate hain — koi session-window filter nahi. Admin jab
-    // "Update Result" dabaata hai, vo declare kar raha hai ki is market
-    // ke saare pending bets is number ke hisaab se decide hon.
-    // (sessionStart/sessionEnd ab informational hain — store kiye jaate
-    // hain result doc me par yahan filter nahi karte. Cross-midnight
-    // markets ka logic same hi rahta hai kyunki next session ke bets
-    // pehle declare se pehle place ho hi nahi sakte.)
-    void sessionStart; void sessionEnd;
-    const inSessionDocs = pendingBetsSnapshot.docs;
+    // DATE-SCOPED settlement: only settle bets whose timestamp falls
+    // inside [sessionStart, sessionEnd]. Declaring 18 July's result
+    // no longer sweeps 17 July's still-pending bets — those stay
+    // pending until admin declares 17 July too. Handles cross-midnight
+    // markets (Disawar, Matka Mandi) via the session-start date the
+    // form auto-picks to the previous IST day.
+    const inSessionDocs = (sessionStart && sessionEnd)
+      ? pendingBetsSnapshot.docs.filter((d) => {
+          const ts = d.data().timestamp?.toDate?.();
+          if (!ts) return false;
+          return ts >= sessionStart && ts <= sessionEnd;
+        })
+      : pendingBetsSnapshot.docs;
 
     if (inSessionDocs.length === 0) {
-        toast.info(`${marketName} me koi pending bet nahi.`);
+        toast.info(`${marketName}: is session window (${sessionStart?.toLocaleDateString?.('en-IN', { timeZone: 'Asia/Kolkata' }) || '?'}) me koi pending bet nahi.`);
         return;
     }
 
