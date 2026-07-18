@@ -61,6 +61,7 @@ import useWinGameAutoTick from '../utils/useWinGameAutoTick';
 // ── NEW ──────────────────────────────────────────────────────────
 import GamesStats from './components/GamesStats';
 import MissedCredits from './components/MissedCredits';
+import FraudAlerts from './components/FraudAlerts';
 // ─────────────────────────────────────────────────────────────────
 
 
@@ -516,6 +517,7 @@ const AdminDashboard = () => {
           // ── NEW ──────────────────────────────────────────────────────
           { id: 'gamesStats',   label: '🎮 Games Stats',      icon: Star       },
           { id: 'missedCredits',label: '🔎 Missed Credits',   icon: AlertTriangle },
+          { id: 'fraudAlerts',  label: '🛡️ Fraud Alerts',     icon: AlertTriangle },
           { id: 'userSounds',   label: '🔔 User Sounds',      icon: Bell       },
           { id: 'harufLimits',  label: '🎯 Haruf Limits',     icon: Settings   },
           { id: 'masters',      label: '👥 Master Management', icon: UserPlus  },
@@ -565,6 +567,7 @@ const AdminDashboard = () => {
             .replace('referrals',   'Referrals')
             .replace('gamesStats',  '🎮 Games Stats')
             .replace('missedCredits','🔎 Missed Credits')
+            .replace('fraudAlerts', '🛡️ Fraud Alerts')
             .replace('harufLimits', '🎯 Haruf Limits')
             .replace('masters',     '👥 Master Management')
           }
@@ -867,6 +870,7 @@ const AdminDashboard = () => {
       // ── NEW ────────────────────────────────────────────────────────
       case 'gamesStats':    return <GamesStats />;
       case 'missedCredits': return <MissedCredits />;
+      case 'fraudAlerts':   return <FraudAlerts />;
       case 'userSounds':    return <UserSoundsAdmin />;
       case 'harufLimits':   return <HarufLimits />;
       case 'masters':       return <MasterManagement />;
