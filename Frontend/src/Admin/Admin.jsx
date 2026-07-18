@@ -511,12 +511,13 @@ const AdminDashboard = () => {
           { id: 'socialLinks',  label: 'Social Links',        icon: LinkIcon   },
           { id: 'winGameBets',  label: 'Win Game Bets',       icon: Trophy     },
           { id: 'profitLoss',   label: 'Profit & Loss',       icon: TrendingUp },
-          { id: 'transactions', label: 'Transactions',        icon: CreditCard },
-          { id: 'dailyReport',  label: '📊 Daily Report',     icon: TrendingUp },
-          { id: 'commissions',  label: '💰 Commissions',      icon: DollarSign },
+          // Hidden tabs (data underlying still present in code):
+          // { id: 'transactions', label: 'Transactions',        icon: CreditCard },
+          // { id: 'dailyReport',  label: '📊 Daily Report',     icon: TrendingUp },
+          // { id: 'commissions',  label: '💰 Commissions',      icon: DollarSign },
+          // { id: 'missedCredits',label: '🔎 Missed Credits',   icon: AlertTriangle },
           // ── NEW ──────────────────────────────────────────────────────
           { id: 'gamesStats',   label: '🎮 Games Stats',      icon: Star       },
-          { id: 'missedCredits',label: '🔎 Missed Credits',   icon: AlertTriangle },
           { id: 'fraudAlerts',  label: '🛡️ Fraud Alerts',     icon: AlertTriangle },
           { id: 'userSounds',   label: '🔔 User Sounds',      icon: Bell       },
           { id: 'harufLimits',  label: '🎯 Haruf Limits',     icon: Settings   },
