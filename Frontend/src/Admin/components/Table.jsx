@@ -351,32 +351,53 @@ const Table = () => {
   };
 
   // ─────────────────────────────────────────────────────────────────
-  // Reverse a previously-applied result: every win/loss-status bet
-  // for the market goes back to "pending", and any winnings already
-  // credited to a user's winningMoney are debited. Used by edit +
-  // delete on past results, and by the "Force revert" admin button.
+  // Reverse a previously-applied result: only the win/loss-status
+  // bets whose timestamp falls INSIDE the deleted result's session
+  // window go back to "pending", and any winnings credited to those
+  // specific users' winningMoney get debited. Bets from other days
+  // that were correctly settled by OTHER results are left alone.
   //
-  // NO session-window filter — matches processMarketWinners which
-  // settles ALL pending bets on the market regardless of window.
+  // Same window logic as processMarketWinners — deleting 18 July's
+  // result only reverses 18 July's bets, not 17 July's.
   //
-  // Reverses across BOTH bet collections used by admin markets:
+  // Covers both bet collections:
   //   - harufBets  (Haruf + Crossing)  — matched by marketName
   //   - bets       (Fix Number)        — matched by gameName
   // ─────────────────────────────────────────────────────────────────
-  const reverseMarketSettlementByName = async (marketName) => {
+  const reverseSettlement = async (resultDoc) => {
+    const marketName = resultDoc.marketName;
+
+    // Session window comes from the result doc. Legacy results without
+    // an explicit window fall back to the doc's `date` treated as a
+    // single IST day.
+    let start = resultDoc.sessionStart?.toDate?.();
+    let end   = resultDoc.sessionEnd?.toDate?.();
+    if (!start || !end) {
+      const d = resultDoc.date?.toDate?.();
+      if (!d) throw new Error('Result has no usable date.');
+      const ymd = ymdInIst(d);
+      [start, end] = istDayRange(ymd);
+    }
+
     const [harufSnap, betsSnap] = await Promise.all([
       getDocs(query(collection(db, 'harufBets'), where('marketName', '==', marketName))),
       getDocs(query(collection(db, 'bets'), where('gameName', '==', marketName))),
     ]);
 
+    const inWindow = (d) => {
+      const ts = d.data().timestamp?.toDate?.();
+      if (!ts) return false;
+      return ts >= start && ts <= end;
+    };
+
     const settled = [
       ...harufSnap.docs.filter((d) => {
         const s = d.data().status;
-        return s === 'win' || s === 'loss';
+        return (s === 'win' || s === 'loss') && inWindow(d);
       }),
       ...betsSnap.docs.filter((d) => {
         const s = d.data().status;
-        return s === 'win' || s === 'loss';
+        return (s === 'win' || s === 'loss') && inWindow(d);
       }),
     ];
 
@@ -422,8 +443,62 @@ const Table = () => {
     return { reversed: settled.length, debited: userDebits.size };
   };
 
-  const reverseSettlement = async (resultDoc) =>
-    reverseMarketSettlementByName(resultDoc.marketName);
+  // Kept for the (currently hidden) Force revert button — reverses
+  // every settled bet on the market without a window filter. Do not
+  // use from Delete result / Edit result flows.
+  const reverseMarketSettlementByName = async (marketName) => {
+    const [harufSnap, betsSnap] = await Promise.all([
+      getDocs(query(collection(db, 'harufBets'), where('marketName', '==', marketName))),
+      getDocs(query(collection(db, 'bets'), where('gameName', '==', marketName))),
+    ]);
+
+    const settled = [
+      ...harufSnap.docs.filter((d) => {
+        const s = d.data().status;
+        return s === 'win' || s === 'loss';
+      }),
+      ...betsSnap.docs.filter((d) => {
+        const s = d.data().status;
+        return s === 'win' || s === 'loss';
+      }),
+    ];
+
+    if (settled.length === 0) return { reversed: 0, debited: 0 };
+
+    const userDebits = new Map();
+    for (const d of settled) {
+      const data = d.data();
+      if (data.status === 'win') {
+        const w = Number(data.winnings || data.winAmount || 0);
+        if (w > 0) userDebits.set(data.userId, (userDebits.get(data.userId) || 0) + w);
+      }
+    }
+
+    const refs = settled.map((d) => d.ref);
+    while (refs.length) {
+      const chunk = refs.splice(0, 400);
+      const batch = writeBatch(db);
+      chunk.forEach((ref) => batch.update(ref, { status: 'pending', winnings: 0 }));
+      await batch.commit();
+    }
+
+    for (const [userId, amount] of userDebits) {
+      try {
+        await runTransaction(db, async (tx) => {
+          const uRef = doc(db, 'users', userId);
+          const uSnap = await tx.get(uRef);
+          if (!uSnap.exists()) return;
+          const current = Number(uSnap.data().winningMoney || 0);
+          const next = Math.max(0, Math.round((current - amount) * 100) / 100);
+          tx.update(uRef, { winningMoney: next });
+        });
+      } catch (e) {
+        console.error('Failed to debit user', userId, e);
+      }
+    }
+
+    return { reversed: settled.length, debited: userDebits.size };
+  };
 
   // Window-scoped settlement: settle ONLY pending bets whose
   // timestamp falls inside [start, end] for the given market/number.
