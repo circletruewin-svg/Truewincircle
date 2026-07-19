@@ -53,6 +53,10 @@ const Bets = () => {
   const [nameCache, setNameCache] = useState({});
   const [namesLoading, setNamesLoading] = useState(false);
 
+  // Timestamp filter — helps admin tell REAL (today's) pending bets
+  // apart from PHANTOM (older accumulated) pending bets.
+  const [dateFilter, setDateFilter] = useState('all'); // all|today|yesterday|last3|last7
+
   useEffect(() => {
     const marketNames = allMarkets.map(m => m.name);
     setMarkets(marketNames);
@@ -144,7 +148,22 @@ const Bets = () => {
 
     setLoading(true);
     const unsubscribeBets = onSnapshot(betsQuery, (snapshot) => {
-      // Initialize bets object with all numbers from 1 to 12 for 'winGame'
+      // Cutoff for the date filter — computed once per snapshot.
+      // Anything before `cutoff` is filtered out; use -Infinity for
+      // "all". Times are in local (admin's) tz but bet timestamps
+      // are Firestore Timestamps that round-trip via .toDate().
+      let cutoff = null;
+      const now = new Date();
+      if (dateFilter === 'today') {
+        cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      } else if (dateFilter === 'yesterday') {
+        cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      } else if (dateFilter === 'last3') {
+        cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 3);
+      } else if (dateFilter === 'last7') {
+        cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+      }
+
       const bets = {};
       if (selectedGame === 'winGame') {
         for (let i = 1; i <= 12; i++) {
@@ -157,14 +176,17 @@ const Bets = () => {
         const betData = doc.data();
         const number = betData[config.numberField];
         const amount = betData[config.amountField];
-        
+
         if (number === undefined || amount === undefined) return;
-        if (selectedGame === 'winGame' && (typeof number !== 'number' || number < 1 || number > 12)) return; // Validate number for winGame
+        if (selectedGame === 'winGame' && (typeof number !== 'number' || number < 1 || number > 12)) return;
+
+        // Date filter — skip bets older than the cutoff.
+        const ts = betData.timestamp?.toDate?.() || betData.createdAt?.toDate?.() || null;
+        if (cutoff && (!ts || ts < cutoff)) return;
 
         total += amount;
 
         if (!bets[number]) {
-          // If not initialized (e.g., for non-winGame, or an unexpected number), initialize it
           bets[number] = { number: number, amount: 0, count: 0, users: new Set(), userMap: {} };
         }
         bets[number].amount += amount;
@@ -173,21 +195,25 @@ const Bets = () => {
 
         const uid = betData.userId || 'unknown';
         if (!bets[number].userMap[uid]) {
-          bets[number].userMap[uid] = { userId: uid, amount: 0, count: 0 };
+          bets[number].userMap[uid] = { userId: uid, amount: 0, count: 0, latestTs: null, oldestTs: null };
         }
         bets[number].userMap[uid].amount += amount;
         bets[number].userMap[uid].count += 1;
+        if (ts) {
+          const cur = bets[number].userMap[uid];
+          if (!cur.latestTs || ts > cur.latestTs) cur.latestTs = ts;
+          if (!cur.oldestTs || ts < cur.oldestTs) cur.oldestTs = ts;
+        }
       });
 
       const summary = Object.values(bets)
         .map(b => ({
           ...b,
           userCount: b.users.size,
-          // Per-user breakdown for this number, biggest staker first.
           userBets: Object.values(b.userMap).sort((x, y) => y.amount - x.amount),
         }))
         .sort((a, b) => b.amount - a.amount);
-      
+
       setBetsSummary(summary);
       setTotalBets(total);
       setLoading(false);
@@ -197,7 +223,7 @@ const Bets = () => {
     });
 
     return () => unsubscribeBets();
-  }, [selectedGame, currentRoundId, selectedMarket]);
+  }, [selectedGame, currentRoundId, selectedMarket, dateFilter]);
 
   // Collapse the per-user panel whenever the data set changes
   // underneath it (different game / market / round).
@@ -532,21 +558,41 @@ const Bets = () => {
                         <th className="py-1.5 pr-3">User</th>
                         <th className="py-1.5 pr-3 text-right">Total amount</th>
                         <th className="py-1.5 pr-3 text-right">Bets</th>
+                        <th className="py-1.5 pr-3 text-right">Placed</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {userBets.map((u, i) => (
-                        <tr key={u.userId} className="border-b border-blue-100 last:border-0">
-                          <td className="py-1.5 pr-3 text-gray-500">{i + 1}</td>
-                          <td className="py-1.5 pr-3 font-medium text-gray-800">
-                            {nameCache[u.userId] || u.userId}
-                          </td>
-                          <td className="py-1.5 pr-3 text-right font-semibold text-gray-900">
-                            ₹{u.amount.toFixed(2)}
-                          </td>
-                          <td className="py-1.5 pr-3 text-right text-gray-600">{u.count}</td>
-                        </tr>
-                      ))}
+                      {userBets.map((u, i) => {
+                        const now = new Date();
+                        const latest = u.latestTs;
+                        const ageMs = latest ? (now - latest) : null;
+                        const ageH = ageMs != null ? ageMs / (60 * 60 * 1000) : null;
+                        // Colour code: <24h = today, 1-2 days = yellow, older = red
+                        const ageClass = ageH == null ? 'text-gray-400'
+                          : ageH < 24 ? 'text-green-700 font-semibold'
+                          : ageH < 72 ? 'text-yellow-700'
+                          : 'text-red-700 font-semibold';
+                        const ageLabel = latest
+                          ? latest.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' })
+                          : '—';
+                        const ageHint = ageH == null ? '' : ageH < 24 ? 'aaj' : ageH < 48 ? 'kal' : `${Math.floor(ageH / 24)}d purani`;
+                        return (
+                          <tr key={u.userId} className="border-b border-blue-100 last:border-0">
+                            <td className="py-1.5 pr-3 text-gray-500">{i + 1}</td>
+                            <td className="py-1.5 pr-3 font-medium text-gray-800">
+                              {nameCache[u.userId] || u.userId}
+                            </td>
+                            <td className="py-1.5 pr-3 text-right font-semibold text-gray-900">
+                              ₹{u.amount.toFixed(2)}
+                            </td>
+                            <td className="py-1.5 pr-3 text-right text-gray-600">{u.count}</td>
+                            <td className={`py-1.5 pr-3 text-right ${ageClass}`}>
+                              <div className="text-[11px]">{ageLabel}</div>
+                              {ageHint && <div className="text-[10px] opacity-70">{ageHint}</div>}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                     <tfoot>
                       <tr className="font-bold text-gray-900">
@@ -587,7 +633,31 @@ const Bets = () => {
                     )}
                 </>
             ) : (
-                 <p className="text-sm text-gray-500">Market: {selectedMarket || 'N/A'}</p>
+                 <>
+                    <p className="text-sm text-gray-500">Market: {selectedMarket || 'N/A'}</p>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {[
+                        ['all',       'All'],
+                        ['today',     'Aaj'],
+                        ['yesterday', 'Kal se'],
+                        ['last3',     '3 din'],
+                        ['last7',     '7 din'],
+                      ].map(([key, label]) => (
+                        <button
+                          key={key}
+                          onClick={() => setDateFilter(key)}
+                          className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${
+                            dateFilter === key
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
+                          }`}
+                        >{label}</button>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      💡 "Aaj" pe click karke real (recent) bets dekho — jo dikhengi wo actual users ki hai. All me sab dikhega including phantom.
+                    </p>
+                 </>
             )}
         </div>
         
