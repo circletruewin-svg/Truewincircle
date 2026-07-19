@@ -338,6 +338,130 @@ const Bets = () => {
     }
   };
 
+  // Surgical: delete pending bets on the current market that were
+  // placed BEFORE a cutoff date (today 00:00 by default). Keeps
+  // today's real bets intact so admin can settle them normally later.
+  // Wallets not touched — same "phantom docs wipe only" contract as
+  // the full delete.
+  const handleDeleteOldPending = async () => {
+    const config = GAME_CONFIG[selectedGame];
+    if (!config || config.type !== 'market-based' || !selectedMarket) return;
+
+    // Cutoff = today 00:00 local time. Anything with timestamp
+    // before this is considered "old / phantom" and gets deleted;
+    // today's bets stay put.
+    const now = new Date();
+    const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    setDeletingPending(true);
+    try {
+      const snap = await getDocs(query(
+        collection(db, config.betsCollection),
+        where('marketName', '==', selectedMarket),
+        where('status', '==', 'pending'),
+      ));
+      const oldRefs = [];
+      let keepingCount = 0;
+      snap.docs.forEach((d) => {
+        const ts = d.data().timestamp?.toDate?.() || d.data().createdAt?.toDate?.() || null;
+        if (!ts || ts < cutoff) oldRefs.push(d.ref);
+        else keepingCount += 1;
+      });
+
+      if (oldRefs.length === 0) {
+        toast.info(`${selectedMarket}: koi purani phantom pending bet nahi. Aaj ki ${keepingCount} bets untouched.`);
+        setDeletingPending(false);
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `${selectedMarket}: ${oldRefs.length} purani phantom bets delete karein?\n\n` +
+        `Aaj ki ${keepingCount} real bets pending pe hi rahengi — unhe result declare karke settle kar dena.\n\n` +
+        `Wallet balance touch nahi hoga.`,
+      );
+      if (!confirmed) {
+        setDeletingPending(false);
+        return;
+      }
+
+      let deleted = 0;
+      while (oldRefs.length) {
+        const chunk = oldRefs.splice(0, 400);
+        const batch = writeBatch(db);
+        chunk.forEach((ref) => batch.delete(ref));
+        // eslint-disable-next-line no-await-in-loop
+        await batch.commit();
+        deleted += chunk.length;
+      }
+      toast.success(`${selectedMarket}: ${deleted} phantom deleted, ${keepingCount} aaj wali pending pe safe.`);
+    } catch (e) {
+      console.error('Delete old pending failed:', e);
+      toast.error('Delete failed: ' + (e.message || e));
+    } finally {
+      setDeletingPending(false);
+    }
+  };
+
+  // Same as above, but sweeps across every market — keeps today's
+  // real bets on all markets while wiping the phantom accumulation.
+  const handleDeleteOldPendingAllMarkets = async () => {
+    if (deletingPending || markets.length === 0) return;
+    const now = new Date();
+    const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const confirmed = window.confirm(
+      `Purani phantom bets delete karein SAARI markets se?\n\n` +
+      `${markets.length} markets pe (GALI, DISAWAR, FARIDABAD, etc.) ` +
+      `aaj se pehle wali pending bets wipe hongi. Aaj wali bets pending pe hi rahengi. ` +
+      `Wallet balance kisi ka nahi badlega.`,
+    );
+    if (!confirmed) return;
+
+    setDeletingPending(true);
+    let grandOld = 0;
+    let grandKept = 0;
+    const errors = [];
+    for (const market of markets) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const snap = await getDocs(query(
+          collection(db, 'harufBets'),
+          where('marketName', '==', market),
+          where('status', '==', 'pending'),
+        ));
+        const oldRefs = [];
+        let kept = 0;
+        snap.docs.forEach((d) => {
+          const ts = d.data().timestamp?.toDate?.() || d.data().createdAt?.toDate?.() || null;
+          if (!ts || ts < cutoff) oldRefs.push(d.ref);
+          else kept += 1;
+        });
+        grandKept += kept;
+        if (oldRefs.length === 0) continue;
+
+        let deletedThisMarket = 0;
+        while (oldRefs.length) {
+          const chunk = oldRefs.splice(0, 400);
+          const batch = writeBatch(db);
+          chunk.forEach((ref) => batch.delete(ref));
+          // eslint-disable-next-line no-await-in-loop
+          await batch.commit();
+          deletedThisMarket += chunk.length;
+        }
+        grandOld += deletedThisMarket;
+        toast.info(`${market}: ${deletedThisMarket} old · ${kept} aaj kept`);
+      } catch (e) {
+        console.error(`Delete old failed on ${market}:`, e);
+        errors.push(market);
+      }
+    }
+    setDeletingPending(false);
+    if (errors.length) {
+      toast.error(`Done — ${grandOld} deleted, ${grandKept} kept. Fail: ${errors.join(', ')}`);
+    } else {
+      toast.success(`✅ ${grandOld} phantom wiped, ${grandKept} aaj wali safe pending pe.`);
+    }
+  };
+
   // Nuclear option: sweep pending bets across EVERY market in one go.
   // For when the phantom-pending cleanup needs to be repeated across
   // 6-8 markets and clicking through them one by one is painful.
@@ -468,23 +592,39 @@ const Bets = () => {
           </h3>
           {GAME_CONFIG[selectedGame]?.type === 'market-based' && (
             <div className="flex flex-wrap gap-2">
+              <button
+                onClick={handleDeleteOldPending}
+                disabled={deletingPending}
+                className="text-xs bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold px-3 py-2 rounded"
+                title={`${selectedMarket} pe aaj se pehle wali pending bets delete karega. Aaj wali safe.`}
+              >
+                {deletingPending ? 'Deleting…' : `🧹 Delete OLD pending on ${selectedMarket} (aaj wali safe)`}
+              </button>
+              <button
+                onClick={handleDeleteOldPendingAllMarkets}
+                disabled={deletingPending}
+                className="text-xs bg-blue-800 hover:bg-blue-900 disabled:opacity-40 text-white font-bold px-3 py-2 rounded"
+                title="Saari markets pe aaj se pehle wali pending bets delete karega. Aaj wali safe."
+              >
+                {deletingPending ? 'Deleting…' : '🧹 Delete OLD pending on ALL markets (aaj wali safe)'}
+              </button>
               {totalBets > 0 && (
                 <button
                   onClick={handleDeleteAllPending}
                   disabled={deletingPending}
                   className="text-xs bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white font-bold px-3 py-2 rounded"
-                  title="Ye market ke SAARE pending bets delete karega. Refund/debit nahi hoga."
+                  title="⚠️ Ye market ke SAARE pending bets delete karega — aaj wali bhi. Sirf tab jab full clean karna ho."
                 >
-                  {deletingPending ? 'Deleting…' : `🗑️ Delete pending on ${selectedMarket}`}
+                  {deletingPending ? 'Deleting…' : `🗑️ Delete ALL pending on ${selectedMarket}`}
                 </button>
               )}
               <button
                 onClick={handleDeleteAllPendingAllMarkets}
                 disabled={deletingPending}
                 className="text-xs bg-red-800 hover:bg-red-900 disabled:opacity-40 text-white font-bold px-3 py-2 rounded"
-                title="Nuclear option: SAARI markets ki pending bets ek saath delete karega."
+                title="Nuclear: SAARI markets ki SAARI pending bets — aaj wali bhi."
               >
-                {deletingPending ? 'Deleting…' : '☢️ Delete pending on ALL markets'}
+                {deletingPending ? 'Deleting…' : '☢️ Delete ALL pending on ALL markets'}
               </button>
             </div>
           )}
